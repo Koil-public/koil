@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "modrinthProject": "koil",
-  "githubJarBaseUrl": "https://github.com/SpiritXIV/koil-online-data/raw/main",
+  "githubJarBaseUrl": "https://github.com/Koil-public/koil-online-data/raw/main",
   "balanceMargin": 10,
   "updateTypes": {
     "ui": {

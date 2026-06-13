@@ -88,7 +88,6 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     private final List<ClickableWidget> sodiumWidgets = new ArrayList<>();
     private final Map<ClickableWidget, String> sodiumWidgetLabels = new IdentityHashMap<>();
     private final Map<ClickableWidget, ConfigFallbackEntry> sodiumConfigEntries = new IdentityHashMap<>();
-    private final Set<SimpleOption<?>> wideSodiumSimpleOptions = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<ClickableWidget> dirtyConfigWidgets = Collections.newSetFromMap(new IdentityHashMap<>());
     private final List<HintHitbox> hintHitboxes = new ArrayList<>();
     private Screen sodiumScreen;
@@ -393,7 +392,6 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         this.sodiumWidgets.clear();
         this.sodiumWidgetLabels.clear();
         this.sodiumConfigEntries.clear();
-        this.wideSodiumSimpleOptions.clear();
         this.dirtyConfigWidgets.clear();
         this.sodiumIntegratedIntoOptionList = false;
         this.sodiumDiagnosticLogged = false;
@@ -837,11 +835,11 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             return null;
         }
         Object value = sodiumOptionValue(option);
-        String label = displayLabel(readOptionName(option));
+        String label = readOptionName(option);
         if (label.isBlank()) {
-            label = displayLabel(fallbackLabel == null ? "Sodium Option" : fallbackLabel);
+            label = fallbackLabel == null ? "Sodium Option" : fallbackLabel;
         }
-        String key = label.isBlank() ? "Sodium Option" : label;
+        String key = "koil.video.sodium." + normalizeSettingPath(label);
         if (value instanceof Boolean bool) {
             String finalLabel = label;
             return SimpleOption.ofBoolean(key, SimpleOption.emptyTooltip(), (optionText, next) ->
@@ -856,14 +854,12 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             int max = readIntField(control, "max", Math.max(min + 1, integerValue + 10));
             Object formatter = readObjectField(control, "mode");
             String finalLabel = label;
-            SimpleOption<Integer> sliderOption = new SimpleOption<>(key, SimpleOption.emptyTooltip(), (optionText, next) ->
+            return new SimpleOption<>(key, SimpleOption.emptyTooltip(), (optionText, next) ->
                     Text.literal(finalLabel + ": " + formatSodiumSliderValue(formatter, next)),
                     new SimpleOption.ValidatingIntSliderCallbacks(min, max), integerValue, next -> {
                 setSodiumOptionValue(option, next);
                 applySodiumOptionNow(option);
             });
-            this.wideSodiumSimpleOptions.add(sliderOption);
-            return sliderOption;
         }
         if (value instanceof Enum<?> enumValue) {
             Object[] allowedArray = sodiumAllowedValues(control, enumValue.getClass());
@@ -926,7 +922,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             logSodiumWarning("Sodium option '" + readOptionName(option) + "' uses unsupported control " + control.getClass().getName() + ".");
         }
         if (widget != null) {
-            String label = displayLabel(readOptionName(option));
+            String label = readOptionName(option);
             if (!label.isBlank() && (widget.getMessage() == null || widget.getMessage().getString().isBlank())) {
                 try {
                     widget.setMessage(Text.literal(label));
@@ -981,7 +977,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     }
 
     private Text sodiumOptionButtonText(Object option, Object value, Object[] allowedValues, Text[] names) {
-        String label = displayLabel(readOptionName(option));
+        String label = readOptionName(option);
         String valueText = sodiumValueText(value, allowedValues, names);
         return Text.literal(label.isBlank() ? valueText : label + ": " + valueText);
     }
@@ -1601,20 +1597,13 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         }
         try {
             int vanillaRows = list.children().size();
-            for (int i = 0; i < options.size();) {
+            for (int i = 0; i < options.size(); i += 2) {
                 SimpleOption<?> first = options.get(i);
-                if (this.wideSodiumSimpleOptions.contains(first)) {
-                    list.addSingleOptionEntry(first);
-                    i++;
-                    continue;
-                }
-                if (i + 1 < options.size() && !this.wideSodiumSimpleOptions.contains(options.get(i + 1))) {
+                if (i + 1 < options.size()) {
                     SimpleOption<?> second = options.get(i + 1);
                     list.addOptionEntry(first, second);
-                    i += 2;
                 } else {
                     list.addSingleOptionEntry(first);
-                    i++;
                 }
             }
             this.sodiumListLeft = list.getRowLeft();
@@ -1676,44 +1665,19 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         this.sodiumListLeft = this.width / 2 - 155;
         this.sodiumListTop = sodiumStartY();
         this.sodiumListBottom = Math.max(this.sodiumListTop + ROW_HEIGHT, this.height - 34);
-        int rows = 0;
-        int column = 0;
-        for (ClickableWidget widget : widgets) {
-            if (isWideSodiumWidget(widget)) {
-                if (column != 0) {
-                    rows++;
-                    column = 0;
-                }
-                rows++;
-                continue;
-            }
-            if (column == 0) {
-                column = 1;
-            } else {
-                rows++;
-                column = 0;
-            }
-        }
-        if (column != 0) {
-            rows++;
-        }
+        int rows = (widgets.size() + 1) / 2;
         this.sodiumContentHeight = Math.max(0, rows * ROW_HEIGHT);
         this.sodiumScroll = clamp(this.sodiumScroll, 0.0D, maxSodiumScroll());
-        int row = 0;
-        column = 0;
-        for (ClickableWidget widget : widgets) {
-            boolean wide = isWideSodiumWidget(widget);
-            if (wide && column != 0) {
-                row++;
-                column = 0;
-            }
+        for (int i = 0; i < widgets.size(); i++) {
+            ClickableWidget widget = widgets.get(i);
+            int row = i / 2;
+            int column = i % 2;
             int y = this.sodiumListTop + row * ROW_HEIGHT - (int) Math.round(this.sodiumScroll);
-            int x = wide ? this.sodiumListLeft : this.sodiumListLeft + column * (BUTTON_WIDTH + COLUMN_GAP);
-            int widgetWidth = wide ? this.sodiumListWidth : BUTTON_WIDTH;
+            int x = this.sodiumListLeft + column * (BUTTON_WIDTH + COLUMN_GAP);
             widget.setX(x);
             widget.setY(y);
             try {
-                widget.setWidth(widgetWidth);
+                widget.setWidth(BUTTON_WIDTH);
             } catch (Throwable ignored) {
             }
             if (widget.getHeight() <= 0) {
@@ -1723,20 +1687,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                 trySetIntField(widget, "height", BUTTON_HEIGHT);
             }
             widget.visible = y + widget.getHeight() >= this.sodiumListTop && y <= this.sodiumListBottom;
-            if (wide) {
-                row++;
-                column = 0;
-            } else if (column == 0) {
-                column = 1;
-            } else {
-                row++;
-                column = 0;
-            }
         }
-    }
-
-    private boolean isWideSodiumWidget(ClickableWidget widget) {
-        return widget instanceof SodiumIntegerSliderWidget || widget instanceof TextFieldWidget;
     }
 
     private int sodiumStartY() {
@@ -2286,10 +2237,10 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                     field.setAccessible(true);
                     Object value = field.get(page);
                     if (value instanceof Text text) {
-                        return displayLabel(text.getString());
+                        return cleanLabel(text.getString());
                     }
                     if (value instanceof String string) {
-                        return displayLabel(string);
+                        return cleanLabel(string);
                     }
                 } catch (Throwable ignored) {
                 }
@@ -2301,15 +2252,15 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     private String readOptionName(Object option) {
         String fromMethod = invokeStringMethod(option, "getName");
         if (!fromMethod.isBlank()) {
-            return displayLabel(fromMethod);
+            return cleanLabel(fromMethod);
         }
         fromMethod = invokeStringMethod(option, "name");
         if (!fromMethod.isBlank()) {
-            return displayLabel(fromMethod);
+            return cleanLabel(fromMethod);
         }
         fromMethod = invokeStringMethod(option, "getTitle");
         if (!fromMethod.isBlank()) {
-            return displayLabel(fromMethod);
+            return cleanLabel(fromMethod);
         }
         for (Class<?> type = option.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
             for (Field field : safeFields(type)) {
@@ -2324,10 +2275,10 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                     field.setAccessible(true);
                     Object value = field.get(option);
                     if (value instanceof Text text) {
-                        return displayLabel(text.getString());
+                        return cleanLabel(text.getString());
                     }
                     if (value instanceof String string) {
-                        return displayLabel(string);
+                        return cleanLabel(string);
                     }
                 } catch (Throwable ignored) {
                 }
@@ -2480,9 +2431,9 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     private String labelForWidget(ClickableWidget widget) {
         String stored = this.sodiumWidgetLabels.get(widget);
         if (stored != null) {
-            return displayLabel(stored);
+            return stored;
         }
-        return displayLabel(widget.getMessage() == null ? "" : widget.getMessage().getString());
+        return cleanLabel(widget.getMessage() == null ? "" : widget.getMessage().getString());
     }
 
     private String captureLabel(NativeCapture capture) {
@@ -2493,74 +2444,17 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         ClickableWidget widget = capture.widget();
         if (widget != null) {
             try {
-                label = displayLabel(widget.getMessage() == null ? "" : widget.getMessage().getString());
+                label = cleanLabel(widget.getMessage() == null ? "" : widget.getMessage().getString());
             } catch (Throwable ignored) {
             }
         }
         if (label.isBlank()) {
-            label = displayLabel(capture.fallbackLabel());
+            label = cleanLabel(capture.fallbackLabel());
         }
         if (label.isBlank()) {
-            label = displayLabel(capture.pageName());
+            label = cleanLabel(capture.pageName());
         }
         return label;
-    }
-
-    private String displayLabel(String label) {
-        String clean = cleanLabel(label);
-        if (clean.isBlank()) {
-            return "";
-        }
-        int colon = clean.indexOf(':');
-        if (colon > 0) {
-            String left = displayLabelPart(clean.substring(0, colon));
-            String right = clean.substring(colon + 1).trim();
-            return right.isBlank() ? left : left + ": " + right;
-        }
-        return displayLabelPart(clean);
-    }
-
-    private String displayLabelPart(String label) {
-        String clean = cleanLabel(label);
-        if (clean.isBlank()) {
-            return "";
-        }
-        String lower = clean.toLowerCase(Locale.ROOT);
-        String[] prefixes = {
-                "koil.video.sodium.",
-                "koil.video.",
-                "sodium.options.pages.",
-                "sodium.options.",
-                "sodium.option.",
-                "sodium-extra.options.",
-                "sodiumextra.options.",
-                "reeses-sodium-options.options.",
-                "reeses_sodium_options.options.",
-                "options."
-        };
-        for (String prefix : prefixes) {
-            if (lower.startsWith(prefix)) {
-                clean = clean.substring(prefix.length());
-                lower = clean.toLowerCase(Locale.ROOT);
-                break;
-            }
-        }
-        if (looksLikeTranslationKey(clean)) {
-            int lastDot = Math.max(clean.lastIndexOf('.'), clean.lastIndexOf('/'));
-            if (lastDot >= 0 && lastDot + 1 < clean.length()) {
-                clean = clean.substring(lastDot + 1);
-            }
-            return humanizeKey(clean);
-        }
-        return clean;
-    }
-
-    private boolean looksLikeTranslationKey(String value) {
-        String clean = cleanLabel(value);
-        return !clean.isBlank()
-                && clean.indexOf(' ') < 0
-                && (clean.contains(".") || clean.contains("_") || clean.contains("-"))
-                && clean.matches("[A-Za-z0-9_./-]+");
     }
 
     private String cleanLabel(String label) {
@@ -2620,7 +2514,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         @Override
         protected void updateMessage() {
             int current = valueFromSlider();
-            String label = displayLabel(readOptionName(this.option));
+            String label = readOptionName(this.option);
             String valueText = formatSodiumSliderValue(this.formatter, current);
             setMessage(Text.literal(label.isBlank() ? valueText : label + ": " + valueText));
         }

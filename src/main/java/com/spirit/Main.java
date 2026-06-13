@@ -104,35 +104,35 @@ public class Main implements ModInitializer {
             applyResolvedDesignPaths();
             return;
         }
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/config.json", "config.json", "./koil/sys", 16);
-        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/config.json", "config.json", "./koil/sys", 16);
-        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/sys.json", "sys.json", "./koil/sys", 16);
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/koil.json", "koil.json", "./config", 16);
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/key.json", "key.json", "./koil/sys", 16);
-        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/catcher.json", "catcher.json", "./koil/sys", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/config.json", "config.json", "./koil/sys", 16);
+        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/config.json", "config.json", "./koil/sys", 16);
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json", "sys.json", "./koil/sys", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/koil.json", "koil.json", "./config", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/key.json", "key.json", "./koil/sys", 16);
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/catcher.json", "catcher.json", "./koil/sys", 16);
         String requestedTheme = resolveRequestedTheme();
         String themeSavePath = "./koil/sys/design/" + requestedTheme + "/";
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/design.json", "design.json", themeSavePath, 16);
-        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/design.json", "design.json", themeSavePath, 16);
-        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/data.json", "data.json", "./koil/sys", 16);
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/content/sys/design/files/music.json", "music.json", themeSavePath + "files", 16);
-        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/content/sys/design/files/music.json", "music.json", themeSavePath + "files", 16);
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/content/sys/design/files/background.json", "background.json", themeSavePath + "files", 16);
-        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/content/sys/design/files/background.json", "background.json", themeSavePath + "files", 16);
-        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/wiki/help_book.json", "help_book.json", "./koil/wiki", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/design.json", "design.json", themeSavePath, 16);
+        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/design.json", "design.json", themeSavePath, 16);
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data.json", "data.json", "./koil/sys", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/music.json", "music.json", themeSavePath + "files", 16);
+        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/music.json", "music.json", themeSavePath + "files", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/background.json", "background.json", themeSavePath + "files", 16);
+        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/background.json", "background.json", themeSavePath + "files", 16);
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/wiki/help_book.json", "help_book.json", "./koil/wiki", 16);
         WebFileDownloader.assetsUpdater(Path.of("./koil/sys/key.json"), Path.of("./koil/sys/catcher.json"), "./koil");
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/validDigits.json", "validDigits.json", "./koil/auth", 16);
-        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/validDigits.json", "validDigits.json", "./koil/auth", 16);
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/validSerial.json", "validSerial.json", "./koil/auth", 16);
-        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/validSerial.json", "validSerial.json", "./koil/auth", 16);
-        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/verifiedAuthors.json", "verifiedAuthors.json", "./koil/auth", 16);
-        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/verifiedAuthors.json", "verifiedAuthors.json", "./koil/auth", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json", "validDigits.json", "./koil/auth", 16);
+        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json", "validDigits.json", "./koil/auth", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json", "validSerial.json", "./koil/auth", 16);
+        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json", "validSerial.json", "./koil/auth", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json", "verifiedAuthors.json", "./koil/auth", 16);
+        WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json", "verifiedAuthors.json", "./koil/auth", 16);
 
 
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.getSession() != null) {
             WebFileDownloader.downloadFile(
-                    "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/data/player_data/" + client.getSession().getUsername() + "/uuid.json",
+                    "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data/player_data/" + client.getSession().getUsername() + "/uuid.json",
                     "player_data.json",
                     "./koil/sys/cache/player_data",
                     16

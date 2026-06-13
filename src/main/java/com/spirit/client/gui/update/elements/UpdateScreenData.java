@@ -28,7 +28,7 @@ import static com.spirit.Main.version;
 import static com.spirit.koil.api.design.uiColorVal.*;
 
 public final class UpdateScreenData {
-    public static final String DATA_URL = "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/data.json";
+    public static final String DATA_URL = "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data.json";
     public static final Path DATA_PATH = Paths.get("./koil/sys/data.json");
     public static final String DEFAULT_MODRINTH_PROJECT = "koil";
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -90,7 +90,7 @@ public final class UpdateScreenData {
             data.modrinthProject = DEFAULT_MODRINTH_PROJECT;
         }
         if (data.githubJarBaseUrl == null || data.githubJarBaseUrl.isBlank()) {
-            data.githubJarBaseUrl = "https://github.com/SpiritXIV/koil-online-data/raw/main";
+            data.githubJarBaseUrl = "https://github.com/Koil-public/koil-online-data/raw/main";
         }
         if (data.balanceMargin <= 0) {
             data.balanceMargin = 10;
@@ -930,7 +930,7 @@ public final class UpdateScreenData {
         return "{\n" +
                 "  \"schemaVersion\": 2,\n" +
                 "  \"modrinthProject\": \"koil\",\n" +
-                "  \"githubJarBaseUrl\": \"https://github.com/SpiritXIV/koil-online-data/raw/main\",\n" +
+                "  \"githubJarBaseUrl\": \"https://github.com/Koil-public/koil-online-data/raw/main\",\n" +
                 "  \"balanceMargin\": 10,\n" +
                 "  \"updateTypes\": {\n" +
                 "    \"ui\": { \"label\": \"UI Integration and UI Development\", \"color\": \"#a7003a\", \"toast\": \"koil_update_toasts.png:red\" },\n" +

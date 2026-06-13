@@ -50,7 +50,7 @@ public class KoilButton extends Screen {
 
     @Inject(at = @At("RETURN"), method = "init")
     private void addModsButton(CallbackInfo ci) {
-        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/sys.json", "sys.json", "./koil/sys", 16);
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json", "sys.json", "./koil/sys", 16);
         File koil_texture = new File(uiImageDirectory, "koil.png");
         File koil_update_texture = new File(uiImageDirectory, "koil_update.png");
         ImageTextureService.markFilePersistent(koil_texture);

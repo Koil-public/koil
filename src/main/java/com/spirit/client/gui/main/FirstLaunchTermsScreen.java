@@ -30,20 +30,20 @@ public class FirstLaunchTermsScreen extends Screen {
     private static final int WARNING_FOOTER_HEIGHT = 102;
     private static final int WARNING_BUTTON_HEIGHT = 20;
     private static final List<String> DOWNLOAD_URLS = List.of(
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/config.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/sys.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/koil.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/key.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/catcher.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/design.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/data.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/content/sys/design/files/music.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/content/sys/design/files/background.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/wiki/help_book.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/store/membership.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/validDigits.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/validSerial.json",
-            "https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/auth/verifiedAuthors.json"
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/config.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/koil.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/key.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/catcher.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/design.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/music.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/background.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/wiki/help_book.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/store/membership.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json",
+            "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json"
     );
 
     private Step step = Step.TERMS;

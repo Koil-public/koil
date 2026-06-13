@@ -70,7 +70,7 @@ public class FundingScreen extends Screen {
         super.init();
         this.openedAt = System.currentTimeMillis();
         this.lastTierAnimationTime = this.openedAt;
-        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/SpiritXIV/koil-online-data/main/store/membership.json", "membership.json", "./koil/sys/store", 16);
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/store/membership.json", "membership.json", "./koil/sys/store", 16);
         initHome();
         loadTiers();
     }
