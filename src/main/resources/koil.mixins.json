@@ -37,7 +37,6 @@
     "client.gui.revamp.MixinTabNavigationWidget",
     "client.gui.revamp.MixinTitleScreen",
     "client.gui.revamp.MixinWarningScreen",
-    "client.gui.revamp.accessor.EntryListWidgetAccessor",
     "client.gui.revamp.accessor.MultiplayerServerListWidgetAccessor",
     "client.gui.revamp.accessor.WorldListWidgetWorldEntryAccessor",
     "client.gui.revamp.listWidget.MixinEntryListWidget",

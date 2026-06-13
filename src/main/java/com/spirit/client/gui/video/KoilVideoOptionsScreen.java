@@ -5,7 +5,7 @@ import com.spirit.koil.api.performance.PerformanceProfileMode;
 import com.spirit.koil.api.performance.PerformanceRecommendation;
 import com.spirit.koil.api.performance.PerformanceRecommendationEngine;
 import com.spirit.koil.api.performance.PerformanceSnapshot;
-import com.spirit.mixin.client.gui.revamp.accessor.EntryListWidgetAccessor;
+import com.mojang.serialization.Codec;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.loader.api.FabricLoader;
@@ -16,10 +16,10 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.option.VideoOptionsScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.client.gui.widget.EntryListWidget;
 import net.minecraft.client.gui.widget.OptionListWidget;
 import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.option.SimpleOption;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 
@@ -85,11 +85,10 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
 
     private final Map<String, PerformanceRecommendation> recommendationsByKey = new LinkedHashMap<>();
     private final List<PerformanceRecommendation> latestRecommendations = new ArrayList<>();
-    private final List<ClickableWidget> combinedOptionWidgets = new ArrayList<>();
-    private final List<ClickableWidget> vanillaOptionWidgets = new ArrayList<>();
     private final List<ClickableWidget> sodiumWidgets = new ArrayList<>();
     private final Map<ClickableWidget, String> sodiumWidgetLabels = new IdentityHashMap<>();
     private final Map<ClickableWidget, ConfigFallbackEntry> sodiumConfigEntries = new IdentityHashMap<>();
+    private final Set<SimpleOption<?>> wideSodiumSimpleOptions = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<ClickableWidget> dirtyConfigWidgets = Collections.newSetFromMap(new IdentityHashMap<>());
     private final List<HintHitbox> hintHitboxes = new ArrayList<>();
     private Screen sodiumScreen;
@@ -150,7 +149,9 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         updateSodiumWidgetLayout();
         super.render(context, mouseX, mouseY, delta);
         hideShaderPackButtons();
-        renderSodiumWidgets(context, mouseX, mouseY, delta);
+        if (!this.sodiumIntegratedIntoOptionList) {
+            renderSodiumWidgets(context, mouseX, mouseY, delta);
+        }
         renderHintBadges(context, mouseX, mouseY);
         renderHintTooltip(context, mouseX, mouseY);
     }
@@ -158,6 +159,9 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         updateSodiumWidgetLayout();
+        if (this.sodiumIntegratedIntoOptionList) {
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
         if (button == 0 && maxSodiumScroll() > 0 && isOverSodiumScrollbar(mouseX, mouseY)) {
             int thumbY = sodiumScrollbarThumbY();
             int thumbHeight = sodiumScrollbarThumbHeight();
@@ -172,8 +176,8 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             return true;
         }
         if (inside(mouseX, mouseY, this.sodiumListLeft - 8, this.sodiumListTop, this.sodiumListWidth + 16, this.sodiumListBottom - this.sodiumListTop)) {
-            for (int i = this.combinedOptionWidgets.size() - 1; i >= 0; i--) {
-                ClickableWidget widget = this.combinedOptionWidgets.get(i);
+            for (int i = this.sodiumWidgets.size() - 1; i >= 0; i--) {
+                ClickableWidget widget = this.sodiumWidgets.get(i);
                 if (!widget.visible || !widget.active || !inside(mouseX, mouseY, widget.getX(), widget.getY(), widget.getWidth(), widget.getHeight())) {
                     continue;
                 }
@@ -188,6 +192,9 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (this.sodiumIntegratedIntoOptionList) {
+            return super.mouseReleased(mouseX, mouseY, button);
+        }
         if (button == 0 && this.sodiumScrollbarDragging) {
             this.sodiumScrollbarDragging = false;
             return true;
@@ -199,7 +206,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                 return true;
             }
         }
-        for (ClickableWidget widget : this.combinedOptionWidgets) {
+        for (ClickableWidget widget : this.sodiumWidgets) {
             if (widget.visible && widget.mouseReleased(mouseX, mouseY, button)) {
                 return true;
             }
@@ -209,6 +216,9 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        if (this.sodiumIntegratedIntoOptionList) {
+            return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+        }
         if (button == 0 && this.sodiumScrollbarDragging) {
             setSodiumScrollFromThumbTop((int) mouseY - this.sodiumScrollbarDragOffset);
             updateSodiumWidgetLayout();
@@ -223,6 +233,9 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
         updateSodiumWidgetLayout();
+        if (this.sodiumIntegratedIntoOptionList) {
+            return super.mouseScrolled(mouseX, mouseY, amount);
+        }
         if (maxSodiumScroll() > 0 && inside(mouseX, mouseY, this.sodiumListLeft - 8, this.sodiumListTop, this.sodiumListWidth + 16, this.sodiumListBottom - this.sodiumListTop)) {
             this.sodiumScroll = clamp(this.sodiumScroll - amount * ROW_HEIGHT, 0.0D, maxSodiumScroll());
             updateSodiumWidgetLayout();
@@ -236,7 +249,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         if (this.activeSodiumWidget != null && this.activeSodiumWidget.keyPressed(keyCode, scanCode, modifiers)) {
             return true;
         }
-        for (ClickableWidget widget : this.combinedOptionWidgets) {
+        for (ClickableWidget widget : this.sodiumWidgets) {
             if (widget.visible && widget.isFocused() && widget.keyPressed(keyCode, scanCode, modifiers)) {
                 return true;
             }
@@ -249,7 +262,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         if (this.activeSodiumWidget != null && this.activeSodiumWidget.charTyped(chr, modifiers)) {
             return true;
         }
-        for (ClickableWidget widget : this.combinedOptionWidgets) {
+        for (ClickableWidget widget : this.sodiumWidgets) {
             if (widget.visible && widget.isFocused() && widget.charTyped(chr, modifiers)) {
                 return true;
             }
@@ -280,10 +293,8 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
 
     private void installSodiumOptionWidgets() {
         removeOldSodiumWidgets();
-        this.vanillaOptionWidgets.addAll(collectVanillaVideoOptionWidgets());
         if (!FabricLoader.getInstance().isModLoaded("sodium")) {
             logSodiumInfo("Sodium is not loaded; Koil video options will only show vanilla video settings.");
-            installCombinedVideoOptionList();
             return;
         }
         this.sodiumScreen = createSodiumScreen();
@@ -314,8 +325,8 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         logSodiumInfo("Captured " + captures.size() + " raw Sodium-compatible video option widgets/pages before filtering.");
         captures.sort(Comparator
                 .comparing((NativeCapture capture) -> capture.pageName() == null ? "" : capture.pageName())
-                .thenComparingInt(capture -> capture.widget().getY())
-                .thenComparingInt(capture -> capture.widget().getX())
+                .thenComparingInt(capture -> capture.widget() == null ? 0 : capture.widget().getY())
+                .thenComparingInt(capture -> capture.widget() == null ? 0 : capture.widget().getX())
                 .thenComparing(capture -> captureLabel(capture)));
 
         Set<String> added = new LinkedHashSet<>();
@@ -324,7 +335,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             ClickableWidget widget = capture.widget();
             String label = captureLabel(capture);
             String base = stripValue(label);
-            String fallbackKey = widget.getClass().getName() + "@" + widget.getX() + "," + widget.getY();
+            String fallbackKey = widget == null ? "simple-option:" + label : widget.getClass().getName() + "@" + widget.getX() + "," + widget.getY();
             String key = normalize(capture.pageName()) + ":" + normalize(base.isBlank() ? fallbackKey : base);
             if (shouldHideWidget(label, widget) || isSodiumPageSelector(label, capture.pageNames())) {
                 continue;
@@ -336,14 +347,25 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                 continue;
             }
             capturesToAdd.add(capture);
-            this.sodiumWidgetLabels.put(widget, label);
+            if (widget != null) {
+                this.sodiumWidgetLabels.put(widget, label);
+            }
         }
 
         addSodiumConfigFallbackCaptures(capturesToAdd, added, vanillaKeys, capturesToAdd.isEmpty());
         logSodiumInfo("Prepared " + capturesToAdd.size() + " Sodium-compatible video option widgets after filtering and config fallback.");
 
+        List<SimpleOption<?>> simpleOptionsToAdd = new ArrayList<>();
         for (NativeCapture capture : capturesToAdd) {
+            if (capture.simpleOption() != null) {
+                simpleOptionsToAdd.add(capture.simpleOption());
+                continue;
+            }
             ClickableWidget widget = capture.widget();
+            if (widget == null) {
+                logSodiumWarning("Skipping Sodium capture '" + captureLabel(capture) + "' because it has no widget or vanilla-compatible SimpleOption.");
+                continue;
+            }
             try {
                 widget.visible = true;
                 this.sodiumWidgets.add(widget);
@@ -351,42 +373,30 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                 logSodiumError("Failed to prepare Sodium option widget '" + captureLabel(capture) + "' for rendering.", throwable);
             }
         }
-        installCombinedVideoOptionList();
+        this.sodiumIntegratedIntoOptionList = addSodiumSimpleOptionsToVanillaList(simpleOptionsToAdd);
+        if (!this.sodiumIntegratedIntoOptionList) {
+            logSodiumError("Sodium-compatible SimpleOptions could not be added to the vanilla OptionListWidget. Using emergency fallback renderer so settings remain reachable.", null);
+            layoutSodiumWidgets(this.sodiumWidgets);
+        } else {
+            this.sodiumWidgets.clear();
+            logSodiumInfo("Added " + simpleOptionsToAdd.size() + " Sodium-compatible settings directly to the vanilla video OptionListWidget.");
+        }
     }
 
     private void removeOldSodiumWidgets() {
-        for (ClickableWidget widget : this.combinedOptionWidgets) {
+        for (ClickableWidget widget : this.sodiumWidgets) {
             try {
                 this.remove(widget);
             } catch (Throwable ignored) {
             }
         }
-        this.combinedOptionWidgets.clear();
-        this.vanillaOptionWidgets.clear();
         this.sodiumWidgets.clear();
         this.sodiumWidgetLabels.clear();
         this.sodiumConfigEntries.clear();
+        this.wideSodiumSimpleOptions.clear();
         this.dirtyConfigWidgets.clear();
         this.sodiumIntegratedIntoOptionList = false;
         this.sodiumDiagnosticLogged = false;
-    }
-
-    private void installCombinedVideoOptionList() {
-        detachVanillaOptionList();
-        this.combinedOptionWidgets.clear();
-        for (ClickableWidget widget : this.vanillaOptionWidgets) {
-            if (!this.combinedOptionWidgets.contains(widget)) {
-                this.combinedOptionWidgets.add(widget);
-            }
-        }
-        for (ClickableWidget widget : this.sodiumWidgets) {
-            if (!this.combinedOptionWidgets.contains(widget)) {
-                this.combinedOptionWidgets.add(widget);
-            }
-        }
-        this.sodiumIntegratedIntoOptionList = false;
-        layoutSodiumWidgets(this.combinedOptionWidgets);
-        logSodiumInfo("Installed combined video option list with " + this.vanillaOptionWidgets.size() + " vanilla widgets and " + this.sodiumWidgets.size() + " Sodium-compatible widgets.");
     }
 
     private void applySodiumChanges() {
@@ -544,7 +554,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             String keyBase = stripValue(label).isBlank() ? widget.getClass().getName() + "@" + widget.getX() + "," + widget.getY() : stripValue(label);
             String key = normalize(pageName) + ":" + normalize(keyBase);
             if (seen.add(key)) {
-                captures.add(new NativeCapture(widget, pageName, pageNames, label));
+                captures.add(new NativeCapture(widget, null, pageName, pageNames, label));
             }
         }
     }
@@ -569,9 +579,9 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                     syntheticIndex++;
                     continue;
                 }
-                ClickableWidget widget = createWidgetFromSodiumOption(option, 0, 0, BUTTON_WIDTH, BUTTON_HEIGHT);
-                if (widget != null) {
-                    captures.add(new NativeCapture(widget, pageName, pageNames, label));
+                SimpleOption<?> simpleOption = createSimpleOptionFromSodiumOption(option, label);
+                if (simpleOption != null) {
+                    captures.add(new NativeCapture(null, simpleOption, pageName, pageNames, label));
                 } else {
                     logSodiumWarning("Could not create a vanilla-compatible widget for Sodium option '" + label + "' from page '" + pageName + "'.");
                 }
@@ -604,9 +614,9 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                     syntheticIndex++;
                     continue;
                 }
-                ClickableWidget widget = createWidgetFromSodiumOption(option, 0, 0, BUTTON_WIDTH, BUTTON_HEIGHT);
-                if (widget != null) {
-                    captures.add(new NativeCapture(widget, pageName, pageNames, label));
+                SimpleOption<?> simpleOption = createSimpleOptionFromSodiumOption(option, label);
+                if (simpleOption != null) {
+                    captures.add(new NativeCapture(null, simpleOption, pageName, pageNames, label));
                 } else {
                     logSodiumWarning("Could not create a vanilla-compatible widget for direct Sodium option '" + label + "' from page '" + pageName + "'.");
                 }
@@ -816,6 +826,91 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         return invokeObject(value, "getControl", "control") != null || hasNoArgMethod(value, "getName") || hasNoArgMethod(value, "getTitle");
     }
 
+    private SimpleOption<?> createSimpleOptionFromSodiumOption(Object option, String fallbackLabel) {
+        Object control = invokeObject(option, "getControl", "control");
+        if (control == null) {
+            logSodiumWarning("Skipping Sodium option '" + fallbackLabel + "' because it has no readable control object.");
+            return null;
+        }
+        if (!sodiumOptionAvailable(option)) {
+            logSodiumInfo("Skipping unavailable Sodium option '" + fallbackLabel + "'.");
+            return null;
+        }
+        Object value = sodiumOptionValue(option);
+        String label = displayLabel(readOptionName(option));
+        if (label.isBlank()) {
+            label = displayLabel(fallbackLabel == null ? "Sodium Option" : fallbackLabel);
+        }
+        String key = label.isBlank() ? "Sodium Option" : label;
+        if (value instanceof Boolean bool) {
+            String finalLabel = label;
+            return SimpleOption.ofBoolean(key, SimpleOption.emptyTooltip(), (optionText, next) ->
+                    Text.literal(finalLabel + ": " + (Boolean.TRUE.equals(next) ? "ON" : "OFF")), bool, next -> {
+                setSodiumOptionValue(option, next);
+                applySodiumOptionNow(option);
+            });
+        }
+        String controlClass = control.getClass().getName().toLowerCase(Locale.ROOT);
+        if (value instanceof Integer integerValue && controlClass.contains("slider")) {
+            int min = readIntField(control, "min", Math.max(0, integerValue - 10));
+            int max = readIntField(control, "max", Math.max(min + 1, integerValue + 10));
+            Object formatter = readObjectField(control, "mode");
+            String finalLabel = label;
+            SimpleOption<Integer> sliderOption = new SimpleOption<>(key, SimpleOption.emptyTooltip(), (optionText, next) ->
+                    Text.literal(finalLabel + ": " + formatSodiumSliderValue(formatter, next)),
+                    new SimpleOption.ValidatingIntSliderCallbacks(min, max), integerValue, next -> {
+                setSodiumOptionValue(option, next);
+                applySodiumOptionNow(option);
+            });
+            this.wideSodiumSimpleOptions.add(sliderOption);
+            return sliderOption;
+        }
+        if (value instanceof Enum<?> enumValue) {
+            Object[] allowedArray = sodiumAllowedValues(control, enumValue.getClass());
+            Text[] names = sodiumAllowedNames(control);
+            List<Object> allowed = new ArrayList<>();
+            if (allowedArray != null) {
+                Collections.addAll(allowed, allowedArray);
+            }
+            if (allowed.isEmpty()) {
+                Collections.addAll(allowed, enumValue.getClass().getEnumConstants());
+            }
+            if (allowed.isEmpty()) {
+                logSodiumWarning("Skipping Sodium enum option '" + label + "' because no allowed values were readable.");
+                return null;
+            }
+            String finalLabel = label;
+            Codec<Object> codec = Codec.STRING.xmap(name -> sodiumValueFromCodecName(allowed, name), this::sodiumCodecName);
+            return new SimpleOption<>(key, SimpleOption.emptyTooltip(), (optionText, next) ->
+                    Text.literal(finalLabel + ": " + sodiumValueText(next, allowed.toArray(), names)),
+                    new SimpleOption.PotentialValuesBasedCallbacks<>(allowed, codec), value, next -> {
+                setSodiumOptionValue(option, next);
+                applySodiumOptionNow(option);
+            });
+        }
+        logSodiumWarning("Skipping Sodium option '" + label + "' because value type " + (value == null ? "null" : value.getClass().getName()) + " cannot be represented as a vanilla SimpleOption yet.");
+        return null;
+    }
+
+    private Object sodiumValueFromCodecName(List<Object> values, String name) {
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        for (Object value : values) {
+            if (Objects.equals(sodiumCodecName(value), name)) {
+                return value;
+            }
+        }
+        return values.get(0);
+    }
+
+    private String sodiumCodecName(Object value) {
+        if (value instanceof Enum<?> enumValue) {
+            return enumValue.name();
+        }
+        return String.valueOf(value);
+    }
+
     private ClickableWidget createWidgetFromSodiumOption(Object option, int x, int y, int width, int height) {
         Object control = invokeObject(option, "getControl", "control");
         if (control == null) {
@@ -831,7 +926,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             logSodiumWarning("Sodium option '" + readOptionName(option) + "' uses unsupported control " + control.getClass().getName() + ".");
         }
         if (widget != null) {
-            String label = readOptionName(option);
+            String label = displayLabel(readOptionName(option));
             if (!label.isBlank() && (widget.getMessage() == null || widget.getMessage().getString().isBlank())) {
                 try {
                     widget.setMessage(Text.literal(label));
@@ -886,7 +981,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     }
 
     private Text sodiumOptionButtonText(Object option, Object value, Object[] allowedValues, Text[] names) {
-        String label = readOptionName(option);
+        String label = displayLabel(readOptionName(option));
         String valueText = sodiumValueText(value, allowedValues, names);
         return Text.literal(label.isBlank() ? valueText : label + ": " + valueText);
     }
@@ -1185,7 +1280,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                         if (widget != null) {
                             this.sodiumConfigEntries.put(widget, entry);
                             this.sodiumWidgetLabels.put(widget, entry.label());
-                            captures.add(new NativeCapture(widget, configName, pageNames, entry.label()));
+                            captures.add(new NativeCapture(widget, null, configName, pageNames, entry.label()));
                         }
                     }
                 } else if (lower.endsWith(".properties")) {
@@ -1209,7 +1304,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                         if (widget != null) {
                             this.sodiumConfigEntries.put(widget, entry);
                             this.sodiumWidgetLabels.put(widget, entry.label());
-                            captures.add(new NativeCapture(widget, configName, pageNames, entry.label()));
+                            captures.add(new NativeCapture(widget, null, configName, pageNames, entry.label()));
                         }
                     }
                 }
@@ -1488,12 +1583,15 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     }
 
     private void updateSodiumWidgetLayout() {
-        applySodiumWidgetLayout(this.combinedOptionWidgets);
+        if (this.sodiumIntegratedIntoOptionList) {
+            return;
+        }
+        applySodiumWidgetLayout(this.sodiumWidgets);
     }
 
-    private boolean addSodiumWidgetsToVanillaOptionList(List<ClickableWidget> widgets) {
-        if (widgets.isEmpty()) {
-            logSodiumWarning("No Sodium-compatible widgets were available to attach to the vanilla video options list.");
+    private boolean addSodiumSimpleOptionsToVanillaList(List<SimpleOption<?>> options) {
+        if (options.isEmpty()) {
+            logSodiumWarning("No Sodium-compatible SimpleOptions were available to add to the vanilla video options list.");
             return true;
         }
         OptionListWidget list = vanillaOptionList();
@@ -1501,79 +1599,35 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             logSodiumError("Could not find the vanilla OptionListWidget on KoilVideoOptionsScreen.", null);
             return false;
         }
-        int rowWidth = list.getRowWidth();
-        int leftX = this.width / 2 - 155;
-        int rightX = leftX + 160;
         try {
-            Class<?> widgetEntryClass = Class.forName(OptionListWidget.class.getName() + "$WidgetEntry");
-            Constructor<?> constructor = widgetEntryClass.getDeclaredConstructor(Map.class);
-            constructor.setAccessible(true);
-            for (int i = 0; i < widgets.size(); i += 2) {
-                ClickableWidget first = widgets.get(i);
-                ClickableWidget second = i + 1 < widgets.size() ? widgets.get(i + 1) : null;
-                prepareVanillaOptionWidget(first, leftX, 150);
-                Map<Object, ClickableWidget> row = new LinkedHashMap<>();
-                row.put(new Object(), first);
-                if (second != null) {
-                    prepareVanillaOptionWidget(second, rightX, 150);
-                    row.put(new Object(), second);
-                } else {
-                    prepareVanillaOptionWidget(first, this.width / 2 - 155, Math.min(310, Math.max(150, rowWidth)));
+            int vanillaRows = list.children().size();
+            for (int i = 0; i < options.size();) {
+                SimpleOption<?> first = options.get(i);
+                if (this.wideSodiumSimpleOptions.contains(first)) {
+                    list.addSingleOptionEntry(first);
+                    i++;
+                    continue;
                 }
-                Object entry = constructor.newInstance(row);
-                if (entry instanceof EntryListWidget.Entry<?> cast) {
-                    ((EntryListWidgetAccessor) (Object) list).koil$invokeAddEntry(cast);
+                if (i + 1 < options.size() && !this.wideSodiumSimpleOptions.contains(options.get(i + 1))) {
+                    SimpleOption<?> second = options.get(i + 1);
+                    list.addOptionEntry(first, second);
+                    i += 2;
                 } else {
-                    logSodiumError("Created OptionListWidget row is not an EntryListWidget entry: " + entry.getClass().getName(), null);
-                    return false;
+                    list.addSingleOptionEntry(first);
+                    i++;
                 }
             }
             this.sodiumListLeft = list.getRowLeft();
             this.sodiumListWidth = list.getRowWidth();
-            this.sodiumListTop = 0;
-            this.sodiumListBottom = this.height;
+            this.sodiumListTop = readIntField(list, "top", 32);
+            this.sodiumListBottom = readIntField(list, "bottom", this.height - 32);
             this.sodiumContentHeight = 0;
             this.sodiumScroll = 0.0D;
+            logSodiumInfo("Vanilla video list had " + vanillaRows + " rows; added " + options.size() + " Sodium SimpleOptions as vanilla rows.");
             return true;
         } catch (Throwable throwable) {
-            logSodiumError("Failed while inserting Sodium-compatible widgets into OptionListWidget.", throwable);
+            logSodiumError("Failed while adding Sodium SimpleOptions to OptionListWidget.", throwable);
             return false;
-        }
-    }
-
-    private List<ClickableWidget> collectVanillaVideoOptionWidgets() {
-        OptionListWidget list = vanillaOptionList();
-        if (list == null) {
-            logSodiumError("Could not find the vanilla OptionListWidget while building the combined video options list.", null);
-            return List.of();
-        }
-        List<ClickableWidget> widgets = collectClickableWidgets(list);
-        widgets.sort(Comparator.comparingInt(ClickableWidget::getY).thenComparingInt(ClickableWidget::getX));
-        List<ClickableWidget> result = new ArrayList<>();
-        Set<ClickableWidget> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (ClickableWidget widget : widgets) {
-            String label = labelForWidget(widget);
-            if (shouldHideWidget(label, widget) || label.isBlank()) {
-                continue;
-            }
-            if (seen.add(widget)) {
-                result.add(widget);
-            }
-        }
-        logSodiumInfo("Captured " + result.size() + " vanilla video option widgets for the combined video options list.");
-        return result;
-    }
-
-    private void detachVanillaOptionList() {
-        OptionListWidget list = vanillaOptionList();
-        if (list == null) {
-            return;
-        }
-        try {
-            this.remove(list);
-            logSodiumInfo("Detached vanilla OptionListWidget render/input shell; its option widgets are rendered by the combined Koil video list.");
-        } catch (Throwable throwable) {
-            logSodiumError("Failed to detach vanilla OptionListWidget. The combined list may double-render until this is fixed.", throwable);
         }
     }
 
@@ -1622,19 +1676,44 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         this.sodiumListLeft = this.width / 2 - 155;
         this.sodiumListTop = sodiumStartY();
         this.sodiumListBottom = Math.max(this.sodiumListTop + ROW_HEIGHT, this.height - 34);
-        int rows = (widgets.size() + 1) / 2;
+        int rows = 0;
+        int column = 0;
+        for (ClickableWidget widget : widgets) {
+            if (isWideSodiumWidget(widget)) {
+                if (column != 0) {
+                    rows++;
+                    column = 0;
+                }
+                rows++;
+                continue;
+            }
+            if (column == 0) {
+                column = 1;
+            } else {
+                rows++;
+                column = 0;
+            }
+        }
+        if (column != 0) {
+            rows++;
+        }
         this.sodiumContentHeight = Math.max(0, rows * ROW_HEIGHT);
         this.sodiumScroll = clamp(this.sodiumScroll, 0.0D, maxSodiumScroll());
-        for (int i = 0; i < widgets.size(); i++) {
-            ClickableWidget widget = widgets.get(i);
-            int row = i / 2;
-            int column = i % 2;
+        int row = 0;
+        column = 0;
+        for (ClickableWidget widget : widgets) {
+            boolean wide = isWideSodiumWidget(widget);
+            if (wide && column != 0) {
+                row++;
+                column = 0;
+            }
             int y = this.sodiumListTop + row * ROW_HEIGHT - (int) Math.round(this.sodiumScroll);
-            int x = this.sodiumListLeft + column * (BUTTON_WIDTH + COLUMN_GAP);
+            int x = wide ? this.sodiumListLeft : this.sodiumListLeft + column * (BUTTON_WIDTH + COLUMN_GAP);
+            int widgetWidth = wide ? this.sodiumListWidth : BUTTON_WIDTH;
             widget.setX(x);
             widget.setY(y);
             try {
-                widget.setWidth(BUTTON_WIDTH);
+                widget.setWidth(widgetWidth);
             } catch (Throwable ignored) {
             }
             if (widget.getHeight() <= 0) {
@@ -1644,7 +1723,20 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                 trySetIntField(widget, "height", BUTTON_HEIGHT);
             }
             widget.visible = y + widget.getHeight() >= this.sodiumListTop && y <= this.sodiumListBottom;
+            if (wide) {
+                row++;
+                column = 0;
+            } else if (column == 0) {
+                column = 1;
+            } else {
+                row++;
+                column = 0;
+            }
         }
+    }
+
+    private boolean isWideSodiumWidget(ClickableWidget widget) {
+        return widget instanceof SodiumIntegerSliderWidget || widget instanceof TextFieldWidget;
     }
 
     private int sodiumStartY() {
@@ -1695,12 +1787,15 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     }
 
     private void renderSodiumWidgets(DrawContext context, int mouseX, int mouseY, float delta) {
+        if (this.sodiumIntegratedIntoOptionList) {
+            return;
+        }
         updateSodiumWidgetLayout();
-        if (this.combinedOptionWidgets.isEmpty()) {
+        if (this.sodiumWidgets.isEmpty()) {
             return;
         }
         context.enableScissor(Math.max(0, this.sodiumListLeft - 8), Math.max(0, this.sodiumListTop - 2), Math.min(this.width, this.sodiumListLeft + this.sodiumListWidth + 8), Math.min(this.height, this.sodiumListBottom + 2));
-        for (ClickableWidget widget : this.combinedOptionWidgets) {
+        for (ClickableWidget widget : this.sodiumWidgets) {
             if (!widget.visible) {
                 continue;
             }
@@ -1737,7 +1832,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             if (shouldHideWidget(label, widget) || normalize(label).equals("done") || label.isBlank()) {
                 continue;
             }
-            if (this.combinedOptionWidgets.contains(widget) && !isWidgetInsideVanillaListViewport(widget)) {
+            if (this.sodiumWidgets.contains(widget) && !isWidgetInsideVanillaListViewport(widget)) {
                 continue;
             }
             PerformanceRecommendation recommendation = recommendationForWidget(widget, label);
@@ -2191,10 +2286,10 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                     field.setAccessible(true);
                     Object value = field.get(page);
                     if (value instanceof Text text) {
-                        return cleanLabel(text.getString());
+                        return displayLabel(text.getString());
                     }
                     if (value instanceof String string) {
-                        return cleanLabel(string);
+                        return displayLabel(string);
                     }
                 } catch (Throwable ignored) {
                 }
@@ -2206,15 +2301,15 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     private String readOptionName(Object option) {
         String fromMethod = invokeStringMethod(option, "getName");
         if (!fromMethod.isBlank()) {
-            return cleanLabel(fromMethod);
+            return displayLabel(fromMethod);
         }
         fromMethod = invokeStringMethod(option, "name");
         if (!fromMethod.isBlank()) {
-            return cleanLabel(fromMethod);
+            return displayLabel(fromMethod);
         }
         fromMethod = invokeStringMethod(option, "getTitle");
         if (!fromMethod.isBlank()) {
-            return cleanLabel(fromMethod);
+            return displayLabel(fromMethod);
         }
         for (Class<?> type = option.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
             for (Field field : safeFields(type)) {
@@ -2229,10 +2324,10 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
                     field.setAccessible(true);
                     Object value = field.get(option);
                     if (value instanceof Text text) {
-                        return cleanLabel(text.getString());
+                        return displayLabel(text.getString());
                     }
                     if (value instanceof String string) {
-                        return cleanLabel(string);
+                        return displayLabel(string);
                     }
                 } catch (Throwable ignored) {
                 }
@@ -2266,11 +2361,6 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             collectClickableWidgetsFrom(element, visited, widgets, 0);
         }
         for (ClickableWidget widget : this.sodiumWidgets) {
-            if (!widgets.contains(widget)) {
-                widgets.add(widget);
-            }
-        }
-        for (ClickableWidget widget : this.combinedOptionWidgets) {
             if (!widgets.contains(widget)) {
                 widgets.add(widget);
             }
@@ -2390,17 +2480,87 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     private String labelForWidget(ClickableWidget widget) {
         String stored = this.sodiumWidgetLabels.get(widget);
         if (stored != null) {
-            return stored;
+            return displayLabel(stored);
         }
-        return cleanLabel(widget.getMessage() == null ? "" : widget.getMessage().getString());
+        return displayLabel(widget.getMessage() == null ? "" : widget.getMessage().getString());
     }
 
     private String captureLabel(NativeCapture capture) {
-        String label = cleanLabel(capture.widget().getMessage() == null ? "" : capture.widget().getMessage().getString());
+        if (capture == null) {
+            return "";
+        }
+        String label = "";
+        ClickableWidget widget = capture.widget();
+        if (widget != null) {
+            try {
+                label = displayLabel(widget.getMessage() == null ? "" : widget.getMessage().getString());
+            } catch (Throwable ignored) {
+            }
+        }
         if (label.isBlank()) {
-            label = cleanLabel(capture.fallbackLabel());
+            label = displayLabel(capture.fallbackLabel());
+        }
+        if (label.isBlank()) {
+            label = displayLabel(capture.pageName());
         }
         return label;
+    }
+
+    private String displayLabel(String label) {
+        String clean = cleanLabel(label);
+        if (clean.isBlank()) {
+            return "";
+        }
+        int colon = clean.indexOf(':');
+        if (colon > 0) {
+            String left = displayLabelPart(clean.substring(0, colon));
+            String right = clean.substring(colon + 1).trim();
+            return right.isBlank() ? left : left + ": " + right;
+        }
+        return displayLabelPart(clean);
+    }
+
+    private String displayLabelPart(String label) {
+        String clean = cleanLabel(label);
+        if (clean.isBlank()) {
+            return "";
+        }
+        String lower = clean.toLowerCase(Locale.ROOT);
+        String[] prefixes = {
+                "koil.video.sodium.",
+                "koil.video.",
+                "sodium.options.pages.",
+                "sodium.options.",
+                "sodium.option.",
+                "sodium-extra.options.",
+                "sodiumextra.options.",
+                "reeses-sodium-options.options.",
+                "reeses_sodium_options.options.",
+                "options."
+        };
+        for (String prefix : prefixes) {
+            if (lower.startsWith(prefix)) {
+                clean = clean.substring(prefix.length());
+                lower = clean.toLowerCase(Locale.ROOT);
+                break;
+            }
+        }
+        if (looksLikeTranslationKey(clean)) {
+            int lastDot = Math.max(clean.lastIndexOf('.'), clean.lastIndexOf('/'));
+            if (lastDot >= 0 && lastDot + 1 < clean.length()) {
+                clean = clean.substring(lastDot + 1);
+            }
+            return humanizeKey(clean);
+        }
+        return clean;
+    }
+
+    private boolean looksLikeTranslationKey(String value) {
+        String clean = cleanLabel(value);
+        return !clean.isBlank()
+                && clean.indexOf(' ') < 0
+                && (clean.contains(".") || clean.contains("_") || clean.contains("-"))
+                && clean.matches("[A-Za-z0-9_./-]+");
     }
 
     private String cleanLabel(String label) {
@@ -2431,7 +2591,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
     }
 
-    private record NativeCapture(ClickableWidget widget, String pageName, Set<String> pageNames, String fallbackLabel) {
+    private record NativeCapture(ClickableWidget widget, SimpleOption<?> simpleOption, String pageName, Set<String> pageNames, String fallbackLabel) {
     }
 
     private record ConfigFallbackEntry(Path path, String configName, String keyPath, String label, String fileType, String valueType, String value) {
@@ -2460,7 +2620,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         @Override
         protected void updateMessage() {
             int current = valueFromSlider();
-            String label = readOptionName(this.option);
+            String label = displayLabel(readOptionName(this.option));
             String valueText = formatSodiumSliderValue(this.formatter, current);
             setMessage(Text.literal(label.isBlank() ? valueText : label + ": " + valueText));
         }
