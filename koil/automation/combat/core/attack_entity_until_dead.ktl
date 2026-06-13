@@ -1,0 +1,28 @@
+version: 1
+kind: task_template
+id: template.combat_core_attack_entity_until_dead
+template_id: combat/core/attack_entity_until_dead
+semantic_operation: sem.task.attack_until_dead
+params: [target.id, target.kind, target.selector, radius, stop.distance, attack.range]
+metadata:
+  semantic_operations: [sem.task.attack_until_dead]
+  target_kinds: [entity, player]
+  required_params: [target.id]
+  optional_params: [target.kind, target.selector, radius, stop.distance, attack.range]
+  tags: [combat, attack, entity, loop]
+steps:
+  - type: run_primitive
+    action: cap.world.scan_target
+    params:
+      target.id: ${target.id}
+      target.kind: entity
+      target.selector: ${target.selector}
+      radius: ${radius}
+  - type: delegate
+    delegate: movement/navigation/move_to_entity.ktl target.id=${target.id} target.kind=entity target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
+  - type: run_primitive
+    action: cap.combat.attack_until_dead
+    params:
+      attack.range: ${attack.range}
+  - type: return
+    label: done

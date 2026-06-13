@@ -1,0 +1,23 @@
+version: 1
+kind: resolver_rules
+id: resolver.blocks
+rules:
+  - semantic_operation: sem.task.mine_block_count
+    preferred_target_kind: block
+    preferred_template: blocks/core/mine_block_until_count
+    defaults:
+      target.selector: nearest
+      count.value: 1
+      state.counter: 0
+      radius: 8
+      stop.distance: 4.5
+      movement.allow_parkour: true
+
+  - semantic_operation: sem.task.place_item_on_target
+    preferred_target_kind: block
+    preferred_template: blocks/core/place_item_on_block_target
+    defaults:
+      hand.id: main_hand
+      target.selector: nearest
+      stop.distance: 4.5
+

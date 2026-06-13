@@ -1,0 +1,20 @@
+version: 1
+kind: task_template
+id: template.flow_core_release_input
+template_id: flow/core/release_input
+semantic_operation: sem.task.release_input
+params: [input.key]
+metadata:
+  semantic_operations: [sem.task.release_input]
+  target_kinds: []
+  required_params: [input.key]
+  optional_params: []
+  tags: [flow, input]
+steps:
+  - type: run_primitive
+    action: cap.input.release_key
+    params:
+      input.key: ${input.key}
+  - type: return
+    label: done
+

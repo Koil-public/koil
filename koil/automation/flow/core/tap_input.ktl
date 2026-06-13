@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.flow_core_tap_input
+template_id: flow/core/tap_input
+semantic_operation: sem.task.click_input
+params: [input.key, count.value]
+metadata:
+  semantic_operations: [sem.task.click_input]
+  target_kinds: []
+  required_params: [input.key]
+  optional_params: [count.value]
+  tags: [flow, input]
+steps:
+  - type: run_primitive
+    action: cap.input.tap_key
+    params:
+      input.key: ${input.key}
+      count.value: ${count.value}
+  - type: return
+    label: done
+

@@ -1,0 +1,23 @@
+version: 1
+kind: task_template
+id: template.movement_tests_test_follow_entity
+template_id: movement/tests/test_follow_entity
+semantic_operation: sem.task.follow_target
+params: [target.id, target.kind, target.selector, radius]
+metadata:
+  semantic_operations: [sem.task.follow_target]
+  target_kinds: [entity, player, item]
+  required_params: [target.id]
+  optional_params: [target.kind, target.selector, radius]
+  tags: [movement, test, follow]
+steps:
+  - type: delegate
+    delegate: movement/resolve/resolve_entity_target.ktl target.id=${target.id} target.kind=${target.kind} target.selector=${target.selector} radius=${radius} stop.distance=2.2
+  - type: delegate
+    delegate: movement/follow/follow_entity.ktl stop.distance=2.2
+  - type: run_primitive
+    action: cap.report.status_line
+    params:
+      message: movement test follow entity complete
+  - type: return
+    label: done

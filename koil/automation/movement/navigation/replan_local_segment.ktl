@@ -1,0 +1,24 @@
+version: 1
+kind: task_template
+id: template.movement_navigation_replan_local_segment
+template_id: movement/navigation/replan_local_segment
+semantic_operation: sem.task.move_to_target
+params: [stop.distance, movement.allow_parkour, movement.allow_swim, movement.allow_sprint]
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [location]
+  required_params: []
+  optional_params: [stop.distance, movement.allow_parkour, movement.allow_swim, movement.allow_sprint]
+  tags: [movement, navigation, replan]
+steps:
+  - type: run_primitive
+    action: cap.path.replan_local_segment
+    params:
+      stop.distance: ${stop.distance}
+      movement.allow_parkour: ${movement.allow_parkour}
+      movement.allow_swim: ${movement.allow_swim}
+      movement.allow_sprint: ${movement.allow_sprint}
+  - type: delegate
+    delegate: movement/navigation/follow_segment.ktl stop.distance=${stop.distance} movement.allow_parkour=${movement.allow_parkour} movement.allow_swim=${movement.allow_swim} movement.allow_sprint=${movement.allow_sprint}
+  - type: return
+    label: done

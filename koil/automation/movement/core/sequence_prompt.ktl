@@ -1,0 +1,19 @@
+version: 1
+kind: task_template
+id: template.movement_core_sequence_prompt
+template_id: movement/core/sequence_prompt
+semantic_operation: sem.task.sequence
+params: [first.input, second.input]
+metadata:
+  semantic_operations: [sem.task.sequence]
+  target_kinds: []
+  required_params: [first.input, second.input]
+  optional_params: []
+  tags: [movement, core, sequence]
+steps:
+  - type: delegate
+    delegate: ${first.input}
+  - type: delegate
+    delegate: ${second.input}
+  - type: return
+    label: done

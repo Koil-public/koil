@@ -1,0 +1,14 @@
+version: 1
+kind: semantic_operation_pack
+id: semantics.container
+operations:
+  - id: sem.task.take_item_from_container
+    intent: take_item
+    target_kinds: [block]
+    preferred_templates: [container/core/take_item_from_container]
+
+  - id: sem.task.store_item_in_container
+    intent: store_item
+    target_kinds: [block]
+    preferred_templates: [container/core/store_item_in_container]
+

@@ -1,0 +1,18 @@
+version: 1
+kind: task_template
+id: template.movement_recovery_choose_recovery_tactic
+template_id: movement/recovery/choose_recovery_tactic
+semantic_operation: sem.task.move_to_target
+params: []
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [location]
+  required_params: []
+  optional_params: []
+  tags: [movement, recovery]
+steps:
+  - type: run_primitive
+    action: cap.movement.choose_recovery
+    params: {}
+  - type: return
+    label: done

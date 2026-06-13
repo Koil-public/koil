@@ -1,0 +1,24 @@
+version: 1
+kind: task_template
+id: template.movement_follow_reposition_line_of_sight
+template_id: movement/follow/reposition_line_of_sight
+semantic_operation: sem.task.follow_target
+params: [stop.distance]
+metadata:
+  semantic_operations: [sem.task.follow_target]
+  target_kinds: [entity, player]
+  required_params: []
+  optional_params: [stop.distance]
+  tags: [movement, follow]
+steps:
+  - type: run_primitive
+    action: cap.look.face_target
+    params: {}
+  - type: delegate
+    delegate: movement/recovery/recover_wall_block.ktl
+  - type: run_primitive
+    action: cap.path.follow_target
+    params:
+      stop.distance: ${stop.distance}
+  - type: return
+    label: done

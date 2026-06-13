@@ -1,0 +1,20 @@
+version: 1
+kind: task_template
+id: template.survival_core_eat_item_until_count
+template_id: survival/core/eat_item_until_count
+semantic_operation: sem.task.consume_item
+params: [item.id, target.id, count.value, state.counter]
+metadata:
+  semantic_operations: [sem.task.consume_item]
+  target_kinds: [item]
+  required_params: [item.id]
+  optional_params: [target.id, count.value, state.counter]
+  tags: [survival, item, consume, loop]
+steps:
+  - type: branch
+    label: need_more_food
+    condition: counter_lt_target
+    then_input: survival/core/eat_item_iteration.ktl item.id=${item.id} count.value=${count.value} state.counter=${state.counter}
+  - type: return
+    label: done
+

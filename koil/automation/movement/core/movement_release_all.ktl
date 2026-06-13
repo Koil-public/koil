@@ -1,0 +1,18 @@
+version: 1
+kind: task_template
+id: template.movement_core_release_all
+template_id: movement/core/movement_release_all
+semantic_operation: sem.task.stop_movement
+params: []
+metadata:
+  semantic_operations: [sem.task.stop_movement]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [movement, core]
+steps:
+  - type: run_primitive
+    action: cap.movement.release_all
+    params: {}
+  - type: return
+    label: done

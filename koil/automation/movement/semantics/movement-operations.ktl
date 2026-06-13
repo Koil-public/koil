@@ -1,0 +1,93 @@
+version: 1
+kind: semantic_operation_pack
+id: semantics.movement
+operations:
+  - id: sem.task.sequence
+    intent: sequence
+    target_kinds: []
+    preferred_templates: [movement/core/sequence_prompt]
+
+  - id: sem.task.move_to_target
+    intent: move
+    target_kinds: [entity, block, player, item, location]
+    preferred_templates: [movement/navigation/move_to_target]
+
+  - id: sem.task.move_relative
+    intent: move
+    target_kinds: []
+    preferred_templates: [movement/navigation/move_relative]
+
+  - id: sem.task.follow_target
+    intent: follow
+    target_kinds: [entity, player, item]
+    preferred_templates: [movement/follow/follow_entity]
+
+  - id: sem.task.stop_movement
+    intent: stop
+    target_kinds: []
+    preferred_templates: [movement/core/movement_stop]
+
+  - id: sem.task.wait_duration
+    intent: wait
+    target_kinds: []
+    preferred_templates: [movement/core/movement_wait_stable]
+
+  - id: sem.task.jump_once
+    intent: jump
+    target_kinds: []
+    preferred_templates: [movement/core/movement_jump_once]
+
+  - id: sem.task.crouch_hold
+    intent: crouch
+    target_kinds: []
+    preferred_templates: [movement/core/movement_crouch]
+
+  - id: sem.task.uncrouch
+    intent: uncrouch
+    target_kinds: []
+    preferred_templates: [movement/core/movement_uncrouch]
+
+  - id: sem.task.sprint_hold
+    intent: sprint
+    target_kinds: []
+    preferred_templates: [movement/core/movement_sprint]
+
+  - id: sem.task.unsprint
+    intent: unsprint
+    target_kinds: []
+    preferred_templates: [movement/core/movement_unsprint]
+
+  - id: sem.task.parkour_target
+    intent: parkour
+    target_kinds: [location]
+    preferred_templates: [movement/parkour/parkour_route]
+
+  - id: sem.task.swim
+    intent: swim
+    target_kinds: [location]
+    preferred_templates: [movement/tactics/swim_to]
+
+  - id: sem.task.interact_target
+    intent: interact
+    target_kinds: [block, entity, player]
+    preferred_templates: [movement/interact/move_to_use_block]
+
+  - id: sem.task.open_target
+    intent: open
+    target_kinds: [block]
+    preferred_templates: [movement/interact/move_to_open_container]
+
+  - id: sem.task.attack_target
+    intent: attack
+    target_kinds: [entity, player]
+    preferred_templates: [movement/interact/move_to_attack_entity]
+
+  - id: sem.task.break_target
+    intent: break
+    target_kinds: [block]
+    preferred_templates: [movement/interact/move_to_break_block]
+
+  - id: sem.task.recover_stuck
+    intent: recover
+    target_kinds: []
+    preferred_templates: [movement/recovery/recover_stuck]

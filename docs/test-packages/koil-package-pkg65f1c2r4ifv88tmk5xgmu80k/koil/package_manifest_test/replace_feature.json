@@ -1,0 +1,4 @@
+{
+  "test": "replace",
+  "purpose": "This file tests a manifest-declared replace operation."
+}

@@ -1,0 +1,14 @@
+version: 1
+kind: semantic_operation_pack
+id: semantics.combat
+operations:
+  - id: sem.task.kill_target
+    intent: kill
+    target_kinds: [entity, player]
+    preferred_templates: [combat/core/kill_entity_until_count]
+
+  - id: sem.task.attack_until_dead
+    intent: attack_until_dead
+    target_kinds: [entity, player]
+    preferred_templates: [combat/core/attack_entity_until_dead]
+

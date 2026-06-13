@@ -1,0 +1,25 @@
+version: 1
+kind: task_template
+id: template.movement_core_wait_stable
+template_id: movement/core/movement_wait_stable
+semantic_operation: sem.task.wait_duration
+params: [ticks]
+metadata:
+  semantic_operations: [sem.task.wait_duration]
+  target_kinds: []
+  required_params: []
+  optional_params: [ticks]
+  tags: [movement, core]
+steps:
+  - type: run_primitive
+    action: cap.movement.release_all
+    params: {}
+  - type: run_primitive
+    action: cap.wait.ticks
+    params:
+      ticks: ${ticks}
+  - type: run_primitive
+    action: cap.movement.snapshot
+    params: {}
+  - type: return
+    label: done

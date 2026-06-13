@@ -1,0 +1,25 @@
+version: 1
+kind: task_template
+id: template.movement_parkour_control_air
+template_id: movement/parkour/parkour_control_air
+semantic_operation: sem.task.move_to_target
+params: []
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [location]
+  required_params: []
+  optional_params: []
+  tags: [movement, parkour]
+steps:
+  - type: run_primitive
+    action: cap.look.face_parkour_landing
+    params:
+      target.x: ${current.target.x}
+      target.y: ${current.target.y}
+      target.z: ${current.target.z}
+  - type: run_primitive
+    action: cap.movement.set_forward
+    params:
+      pressed: true
+  - type: return
+    label: done

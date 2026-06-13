@@ -1,0 +1,23 @@
+version: 1
+kind: task_template
+id: template.movement_tests_test_water_exit
+template_id: movement/tests/test_water_exit
+semantic_operation: sem.task.swim
+params: [target.x, target.z]
+metadata:
+  semantic_operations: [sem.task.swim]
+  target_kinds: [location]
+  required_params: [target.x, target.z]
+  optional_params: []
+  tags: [movement, test, water]
+steps:
+  - type: delegate
+    delegate: movement/resolve/resolve_xz_to_standable_y.ktl target.x=${target.x} target.z=${target.z} stop.distance=0.9 movement.allow_swim=true
+  - type: delegate
+    delegate: movement/tactics/swim_to.ktl stop.distance=0.9
+  - type: run_primitive
+    action: cap.report.status_line
+    params:
+      message: movement test water exit complete
+  - type: return
+    label: done

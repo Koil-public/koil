@@ -1,0 +1,29 @@
+version: 1
+kind: task_template
+id: template.movement_resolve_block_target
+template_id: movement/resolve/resolve_block_target
+semantic_operation: sem.task.move_to_target
+params: [target.id, target.selector, radius, stop.distance, movement.allow_swim]
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [block]
+  required_params: [target.id]
+  optional_params: [target.selector, radius, stop.distance, movement.allow_swim]
+  tags: [movement, resolve, block]
+steps:
+  - type: run_primitive
+    action: cap.world.scan_target
+    params:
+      target.id: ${target.id}
+      target.kind: block
+      target.selector: ${target.selector}
+      radius: ${radius}
+  - type: run_primitive
+    action: cap.path.resolve_target
+    params:
+      target.kind: block
+      target.id: ${target.id}
+      stop.distance: ${stop.distance}
+      movement.allow_swim: ${movement.allow_swim}
+  - type: return
+    label: done

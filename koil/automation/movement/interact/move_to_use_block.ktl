@@ -1,0 +1,20 @@
+version: 1
+kind: task_template
+id: template.movement_interact_move_to_use_block
+template_id: movement/interact/move_to_use_block
+semantic_operation: sem.task.interact_target
+params: [target.id, target.selector, radius, stop.distance]
+metadata:
+  semantic_operations: [sem.task.interact_target]
+  target_kinds: [block]
+  required_params: [target.id]
+  optional_params: [target.selector, radius, stop.distance]
+  tags: [movement, interact]
+steps:
+  - type: delegate
+    delegate: movement/navigation/move_to_interactable.ktl target.id=${target.id} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
+  - type: run_primitive
+    action: cap.interaction.use_item_on_current_block
+    params: {}
+  - type: return
+    label: done

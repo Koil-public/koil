@@ -1,0 +1,29 @@
+version: 1
+kind: task_template
+id: template.blocks_core_place_item_on_block_target
+template_id: blocks/core/place_item_on_block_target
+semantic_operation: sem.task.place_item_on_target
+params: [item.id, target.id, target.selector, hand.id, radius, stop.distance]
+metadata:
+  semantic_operations: [sem.task.place_item_on_target]
+  target_kinds: [block]
+  required_params: [item.id, target.id]
+  optional_params: [target.selector, hand.id, radius, stop.distance]
+  tags: [block, place, item]
+steps:
+  - type: run_primitive
+    action: cap.inventory.select_hotbar_item
+    params:
+      item.id: ${item.id}
+  - type: delegate
+    delegate: movement/navigation/move_to_block.ktl target.id=${target.id} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
+  - type: run_primitive
+    action: cap.look.face_block_face
+    params: {}
+  - type: run_primitive
+    action: cap.interaction.use_item_on_current_block
+    params:
+      hand.id: ${hand.id}
+  - type: return
+    label: done
+

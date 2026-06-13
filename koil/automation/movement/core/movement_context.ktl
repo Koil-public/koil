@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.movement_core_context
+template_id: movement/core/movement_context
+semantic_operation: sem.task.move_to_target
+params: []
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [location]
+  required_params: []
+  optional_params: []
+  tags: [movement, core, context]
+steps:
+  - type: run_primitive
+    action: cap.movement.snapshot
+    params: {}
+  - type: run_primitive
+    action: cap.movement.check_safety
+    params: {}
+  - type: return
+    label: done

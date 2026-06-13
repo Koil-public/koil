@@ -1,0 +1,39 @@
+version: 1
+kind: task_template
+id: template.movement_navigation_follow_path
+template_id: movement/navigation/follow_path
+semantic_operation: sem.task.move_to_target
+params: [stop.distance, movement.precise, movement.precision.distance, movement.precision.slow_distance, movement.policy, movement.persistent, movement.allow_parkour, movement.allow_swim, movement.allow_sprint, movement.allow_break_blocks, movement.allow_place_blocks, movement.allow_combat_clear]
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [location]
+  required_params: []
+  optional_params: [stop.distance, movement.precise, movement.precision.distance, movement.precision.slow_distance, movement.policy, movement.persistent, movement.allow_parkour, movement.allow_swim, movement.allow_sprint, movement.allow_break_blocks, movement.allow_place_blocks, movement.allow_combat_clear]
+  tags: [movement, navigation, path, human]
+steps:
+  - type: run_primitive
+    action: cap.path.plan_local
+    params:
+      stop.distance: ${stop.distance}
+      movement.precise: ${movement.precise}
+      movement.precision.distance: ${movement.precision.distance}
+      movement.precision.slow_distance: ${movement.precision.slow_distance}
+      movement.policy: ${movement.policy}
+      movement.persistent: ${movement.persistent}
+      movement.allow_parkour: ${movement.allow_parkour}
+      movement.allow_swim: ${movement.allow_swim}
+      movement.allow_sprint: ${movement.allow_sprint}
+      movement.allow_break_blocks: ${movement.allow_break_blocks}
+      movement.allow_place_blocks: ${movement.allow_place_blocks}
+      movement.allow_combat_clear: ${movement.allow_combat_clear}
+  - type: delegate
+    delegate: movement/navigation/follow_segment.ktl stop.distance=${stop.distance} movement.precise=${movement.precise} movement.precision.distance=${movement.precision.distance} movement.precision.slow_distance=${movement.precision.slow_distance} movement.policy=${movement.policy} movement.persistent=${movement.persistent} movement.allow_parkour=${movement.allow_parkour} movement.allow_swim=${movement.allow_swim} movement.allow_sprint=${movement.allow_sprint} movement.allow_break_blocks=${movement.allow_break_blocks} movement.allow_place_blocks=${movement.allow_place_blocks} movement.allow_combat_clear=${movement.allow_combat_clear}
+  - type: run_primitive
+    action: cap.movement.check_progress
+    params: {}
+  - type: delegate
+    delegate: movement/core/movement_check_safety.ktl
+  - type: delegate
+    delegate: movement/core/movement_stop.ktl
+  - type: return
+    label: done

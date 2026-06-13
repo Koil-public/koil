@@ -1,0 +1,9 @@
+version: 1
+kind: reference_patterns
+id: references.movement
+patterns:
+  - referent_kind: task_memory
+    phrases: [it, them, that, target]
+
+  - referent_kind: task_memory
+    phrases: [last target, last position, last seen target]

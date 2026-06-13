@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "node_type": "combat",
+  "node_type_aliases": ["cap.combat", "cap.interaction.attack", "attack", "combat", "kill", "target_dead", "target death"],
+  "failure_types": [
+    {
+      "id": "combat.target_not_found",
+      "label": "target not found",
+      "applicable_node_types": ["combat"],
+      "suggested_fix_rules": ["expand_scan_radius", "verify_entity_alias", "refresh_cached_entity_ref"],
+      "auto_fix_rule": "combat/recovery/target_not_found",
+      "patch_generator": "ktl.patch.combat.target",
+      "learning_hook": "oli.feedback.combat.target"
+    },
+    {
+      "id": "combat.out_of_range",
+      "label": "out of range",
+      "applicable_node_types": ["combat"],
+      "suggested_fix_rules": ["move_closer_before_attack", "lower_attack_range_assumption", "face_target_before_attack"],
+      "auto_fix_rule": "combat/recovery/out_of_range",
+      "patch_generator": "ktl.patch.combat.range",
+      "learning_hook": "oli.feedback.combat.range"
+    },
+    {
+      "id": "combat.missed_attack",
+      "label": "missed attack",
+      "applicable_node_types": ["combat"],
+      "suggested_fix_rules": ["verify_crosshair_alignment", "add_attack_cooldown_wait", "retry_after_face_target"],
+      "auto_fix_rule": "combat/recovery/missed_attack",
+      "patch_generator": "ktl.patch.combat.missed",
+      "learning_hook": "oli.feedback.combat.missed"
+    },
+    {
+      "id": "combat.target_not_dead",
+      "label": "target not dead",
+      "applicable_node_types": ["combat"],
+      "suggested_fix_rules": ["confirm_entity_removed", "loop_until_dead", "refresh_target_between_hits"],
+      "auto_fix_rule": "combat/recovery/target_not_dead",
+      "patch_generator": "ktl.patch.combat.death_confirm",
+      "learning_hook": "oli.feedback.combat.death_confirm"
+    }
+  ]
+}

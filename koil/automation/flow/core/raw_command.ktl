@@ -1,0 +1,20 @@
+version: 1
+kind: task_template
+id: template.flow_core_raw_command
+template_id: flow/core/raw_command
+semantic_operation: sem.task.raw_command
+params: [raw.command]
+metadata:
+  semantic_operations: [sem.task.raw_command]
+  target_kinds: []
+  required_params: [raw.command]
+  optional_params: []
+  tags: [flow, command]
+steps:
+  - type: run_primitive
+    action: cap.command.execute_raw
+    params:
+      raw.command: ${raw.command}
+  - type: return
+    label: done
+

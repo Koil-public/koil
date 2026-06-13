@@ -1,0 +1,31 @@
+version: 1
+kind: task_template
+id: template.movement_recovery_recover_stuck
+template_id: movement/recovery/recover_stuck
+semantic_operation: sem.task.recover_stuck
+params: []
+metadata:
+  semantic_operations: [sem.task.recover_stuck]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [movement, recovery, human]
+steps:
+  - type: delegate
+    delegate: movement/core/movement_context.ktl
+  - type: delegate
+    delegate: movement/recovery/choose_recovery_tactic.ktl
+  - type: run_primitive
+    action: cap.movement.run_recovery
+    params:
+      recovery.tactic: ${move.recovery.tactic}
+  - type: delegate
+    delegate: movement/core/movement_wait_stable.ktl ticks=6
+  - type: run_primitive
+    action: cap.movement.snapshot
+    params: {}
+  - type: run_primitive
+    action: cap.movement.check_safety
+    params: {}
+  - type: return
+    label: done

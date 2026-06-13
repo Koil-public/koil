@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.movement_core_update_trace
+template_id: movement/core/movement_update_trace
+semantic_operation: sem.task.move_to_target
+params: []
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [location]
+  required_params: []
+  optional_params: []
+  tags: [movement, core, trace]
+steps:
+  - type: run_primitive
+    action: cap.movement.snapshot
+    params: {}
+  - type: run_primitive
+    action: cap.movement.check_progress
+    params: {}
+  - type: return
+    label: done

@@ -1,0 +1,21 @@
+version: 1
+kind: grammar_patterns
+id: grammar.flow
+patterns:
+  - id: grammar.flow.if_condition_then_else
+    shape: if_condition_then_else
+
+  - id: grammar.flow.if_condition_then
+    shape: if_condition_then
+
+  - id: grammar.flow.action_text
+    shape: action_text
+
+  - id: grammar.flow.action_key_duration
+    shape: action_key_duration
+
+  - id: grammar.flow.action_key
+    shape: action_key
+
+  - id: grammar.flow.action_duration
+    shape: action_duration

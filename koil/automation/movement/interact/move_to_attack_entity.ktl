@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.movement_interact_move_to_attack_entity
+template_id: movement/interact/move_to_attack_entity
+semantic_operation: sem.task.attack_target
+params: [target.id, target.kind, target.selector, radius, stop.distance, attack.range]
+metadata:
+  semantic_operations: [sem.task.attack_target]
+  target_kinds: [entity, player]
+  required_params: [target.id]
+  optional_params: [target.kind, target.selector, radius, stop.distance, attack.range]
+  tags: [movement, interact, combat]
+steps:
+  - type: delegate
+    delegate: movement/navigation/move_to_entity.ktl target.id=${target.id} target.kind=${target.kind} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
+  - type: run_primitive
+    action: cap.combat.attack_target
+    params:
+      attack.range: ${attack.range}
+  - type: return
+    label: done

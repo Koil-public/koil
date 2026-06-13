@@ -1,0 +1,23 @@
+version: 1
+kind: resolver_rules
+id: resolver.survival
+rules:
+  - semantic_operation: sem.task.consume_item
+    preferred_target_kind: item
+    preferred_template: survival/core/eat_item_until_count
+    defaults:
+      count.value: 1
+      state.counter: 0
+
+  - semantic_operation: sem.task.use_item
+    preferred_target_kind: item
+    preferred_template: survival/core/use_selected_item
+    defaults:
+      hand.id: main_hand
+
+  - semantic_operation: sem.task.survival_check
+    preferred_template: survival/core/survival_gate
+    defaults:
+      condition.id: cond.self_health_below
+      condition.threshold: 6
+

@@ -1,0 +1,26 @@
+version: 1
+kind: task_template
+id: template.movement_tactics_strafe_to_align
+template_id: movement/tactics/strafe_to_align
+semantic_operation: sem.task.move_relative
+params: [direction.id, ticks]
+metadata:
+  semantic_operations: [sem.task.move_relative]
+  target_kinds: []
+  required_params: []
+  optional_params: [direction.id, ticks]
+  tags: [movement, tactic, internal, strafe]
+steps:
+  - type: run_primitive
+    action: cap.movement.set_left_strafe
+    params:
+      pressed: true
+  - type: run_primitive
+    action: cap.wait.ticks
+    params:
+      ticks: ${ticks}
+  - type: run_primitive
+    action: cap.movement.release_all
+    params: {}
+  - type: return
+    label: done

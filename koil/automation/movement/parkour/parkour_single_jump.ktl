@@ -1,0 +1,23 @@
+version: 1
+kind: task_template
+id: template.movement_parkour_single_jump
+template_id: movement/parkour/parkour_single_jump
+semantic_operation: sem.task.jump_once
+params: [target.x, target.y, target.z, stop.distance]
+metadata:
+  semantic_operations: [sem.task.jump_once, sem.task.parkour_target]
+  target_kinds: [location]
+  required_params: [target.x, target.y, target.z]
+  optional_params: [stop.distance]
+  tags: [movement, parkour, jump]
+steps:
+  - type: run_primitive
+    action: cap.parkour.execute_jump
+    params:
+      target.x: ${target.x}
+      target.y: ${target.y}
+      target.z: ${target.z}
+      stop.distance: ${stop.distance}
+      movement.allow_sprint: false
+  - type: return
+    label: done

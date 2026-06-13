@@ -1,0 +1,39 @@
+version: 1
+kind: semantic_operation_pack
+id: semantics.flow
+operations:
+  - id: sem.task.raw_command
+    intent: raw_command
+    target_kinds: []
+    preferred_templates: [flow/core/raw_command]
+
+  - id: sem.task.branch
+    intent: branch
+    target_kinds: []
+    preferred_templates: [flow/core/branch_condition_prompt]
+
+  - id: sem.task.say_text
+    intent: say
+    target_kinds: []
+    preferred_templates: [flow/core/say_text]
+
+  - id: sem.task.press_input
+    intent: press_input
+    target_kinds: []
+    preferred_templates: [flow/core/press_input]
+
+  - id: sem.task.release_input
+    intent: release_input
+    target_kinds: []
+    preferred_templates: [flow/core/release_input]
+
+  - id: sem.task.click_input
+    intent: click_input
+    target_kinds: []
+    preferred_templates: [flow/core/tap_input]
+
+  - id: sem.task.close_screen
+    intent: close_screen
+    target_kinds: []
+    preferred_templates: [flow/core/close_screen]
+

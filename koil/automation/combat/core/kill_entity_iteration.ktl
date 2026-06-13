@@ -1,0 +1,25 @@
+version: 1
+kind: task_template
+id: template.combat_core_kill_entity_iteration
+template_id: combat/core/kill_entity_iteration
+semantic_operation: sem.task.kill_target
+params: [target.id, target.kind, target.selector, count.value, state.counter, radius, stop.distance, attack.range]
+metadata:
+  semantic_operations: [sem.task.kill_target]
+  target_kinds: [entity, player]
+  required_params: [target.id]
+  optional_params: [target.kind, target.selector, count.value, state.counter, radius, stop.distance, attack.range]
+  tags: [combat, kill, iteration]
+steps:
+  - type: delegate
+    delegate: combat/core/attack_entity_until_dead.ktl target.id=${target.id} target.kind=${target.kind} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance} attack.range=${attack.range}
+  - type: run_primitive
+    action: cap.state.increment_counter
+    params:
+      state.key: state.counter
+      delta: 1
+  - type: delegate
+    delegate: combat/core/kill_entity_until_count.ktl target.id=${target.id} target.kind=${target.kind} target.selector=${target.selector} count.value=${count.value} state.counter=${state.counter} radius=${radius} stop.distance=${stop.distance} attack.range=${attack.range}
+  - type: return
+    label: done
+

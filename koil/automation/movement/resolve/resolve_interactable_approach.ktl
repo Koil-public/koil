@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.movement_resolve_interactable_approach
+template_id: movement/resolve/resolve_interactable_approach
+semantic_operation: sem.task.interact_target
+params: [target.id, target.selector, radius, stop.distance, movement.allow_open_doors]
+metadata:
+  semantic_operations: [sem.task.interact_target]
+  target_kinds: [block]
+  required_params: [target.id]
+  optional_params: [target.selector, radius, stop.distance, movement.allow_open_doors]
+  tags: [movement, resolve, interactable]
+steps:
+  - type: delegate
+    delegate: movement/resolve/resolve_block_target.ktl target.id=${target.id} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
+  - type: run_primitive
+    action: cap.look.face_block_face
+    params:
+      target.face: up
+  - type: return
+    label: done

@@ -1,0 +1,25 @@
+version: 1
+kind: lexicon
+id: lexicon.container_phrases
+entries:
+  - id: action.container.take
+    type: action
+    phrases: [take, get from, loot]
+    maps_to: sem.task.take_item_from_container
+    defaults:
+      target.selector: nearest
+      count.value: 1
+      state.counter: 0
+      radius: 16
+      stop.distance: 2.5
+
+  - id: action.container.store
+    type: action
+    phrases: [store, deposit, put away]
+    maps_to: sem.task.store_item_in_container
+    defaults:
+      target.selector: nearest
+      count.value: 1
+      radius: 16
+      stop.distance: 2.5
+

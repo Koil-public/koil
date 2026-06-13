@@ -1,0 +1,41 @@
+version: 1
+kind: task_template
+id: template.movement_navigation_move_relative
+template_id: movement/navigation/move_relative
+semantic_operation: sem.task.move_relative
+params: [direction.id, count.value, unit.id, movement.precise, movement.precision.distance, movement.precision.slow_distance, movement.policy, movement.persistent, movement.allow_parkour, movement.allow_swim, movement.allow_sprint, movement.allow_break_blocks, movement.allow_place_blocks, movement.allow_combat_clear, stop.distance]
+metadata:
+  semantic_operations: [sem.task.move_relative]
+  target_kinds: [location]
+  required_params: [direction.id]
+  optional_params: [count.value, unit.id, movement.precise, movement.precision.distance, movement.precision.slow_distance, movement.policy, movement.persistent, movement.allow_parkour, movement.allow_swim, movement.allow_sprint, movement.allow_break_blocks, movement.allow_place_blocks, movement.allow_combat_clear, stop.distance]
+  tags: [movement, navigation, relative, smart]
+steps:
+  - type: delegate
+    delegate: movement/core/movement_context.ktl
+  - type: run_primitive
+    action: cap.path.move_relative_verified
+    params:
+      direction.id: ${direction.id}
+      count.value: ${count.value}
+      unit.id: ${unit.id}
+      stop.distance: ${stop.distance}
+      movement.precise: ${movement.precise}
+      movement.precision.distance: ${movement.precision.distance}
+      movement.precision.slow_distance: ${movement.precision.slow_distance}
+      movement.policy: ${movement.policy}
+      movement.persistent: ${movement.persistent}
+      movement.allow_swim: ${movement.allow_swim}
+      movement.allow_parkour: ${movement.allow_parkour}
+      movement.allow_sprint: ${movement.allow_sprint}
+      movement.allow_break_blocks: ${movement.allow_break_blocks}
+      movement.allow_place_blocks: ${movement.allow_place_blocks}
+      movement.allow_combat_clear: ${movement.allow_combat_clear}
+  - type: run_primitive
+    action: cap.path.verify_relative_arrival
+    params:
+      stop.distance: ${stop.distance}
+  - type: delegate
+    delegate: movement/core/movement_stop.ktl
+  - type: return
+    label: done

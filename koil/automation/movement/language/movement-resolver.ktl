@@ -1,0 +1,135 @@
+version: 1
+kind: resolver_rules
+id: resolver.movement
+rules:
+  - semantic_operation: sem.task.move_to_target
+    preferred_target_kind: block
+    preferred_template: movement/navigation/move_to_target
+    defaults:
+      target.selector: nearest
+      radius: 32
+      stop.distance: 1.2
+      movement.policy: human_smart
+      movement.persistent: true
+      movement.precise: false
+      movement.precision.distance: 3.0
+      movement.precision.slow_distance: 0.75
+      movement.allow_parkour: true
+      movement.allow_swim: false
+      movement.allow_sprint: true
+
+  - semantic_operation: sem.task.move_relative
+    preferred_target_kind: location
+    preferred_template: movement/navigation/move_relative
+    defaults:
+      direction.id: forward
+      count.value: 4
+      unit.id: blocks
+      stop.distance: 0.25
+      movement.precise: true
+      movement.precision.distance: 5.0
+      movement.precision.slow_distance: 0.55
+      movement.allow_parkour: true
+      movement.allow_swim: false
+      movement.allow_sprint: true
+
+  - semantic_operation: sem.task.follow_target
+    preferred_target_kind: entity
+    preferred_template: movement/follow/follow_entity
+    defaults:
+      target.selector: nearest
+      radius: 32
+      stop.distance: 2.8
+      movement.policy: human_smart_chase
+      movement.allow_parkour: true
+      movement.allow_swim: false
+      movement.allow_sprint: true
+
+  - semantic_operation: sem.task.stop_movement
+    preferred_template: movement/core/movement_stop
+    defaults: {}
+
+  - semantic_operation: sem.task.jump_once
+    preferred_template: movement/core/movement_jump_once
+    defaults:
+      jump.ticks: 5
+      movement.wait_stable_ticks: 4
+
+  - semantic_operation: sem.task.crouch_hold
+    preferred_template: movement/core/movement_crouch
+    defaults: {}
+
+  - semantic_operation: sem.task.uncrouch
+    preferred_template: movement/core/movement_uncrouch
+    defaults: {}
+
+  - semantic_operation: sem.task.sprint_hold
+    preferred_template: movement/core/movement_sprint
+    defaults: {}
+
+  - semantic_operation: sem.task.unsprint
+    preferred_template: movement/core/movement_unsprint
+    defaults: {}
+
+  - semantic_operation: sem.task.parkour_target
+    preferred_target_kind: location
+    preferred_template: movement/parkour/parkour_route
+    defaults:
+      target.kind: location
+      parkour.allow_sprint_jump: true
+      parkour.max_jump_attempts: 3
+      parkour.avoid_fatal_falls: true
+      movement.allow_parkour: true
+      movement.allow_sprint: true
+      stop.distance: 0.65
+
+  - semantic_operation: sem.task.swim
+    preferred_target_kind: location
+    preferred_template: movement/tactics/swim_to
+    defaults:
+      movement.allow_swim: true
+      movement.allow_parkour: false
+      movement.allow_sprint: false
+      stop.distance: 1.4
+
+  - semantic_operation: sem.task.interact_target
+    preferred_target_kind: block
+    preferred_template: movement/interact/move_to_use_block
+    defaults:
+      target.selector: nearest
+      movement.approach: interact
+      stop.distance: 2.5
+      movement.allow_open_doors: true
+
+  - semantic_operation: sem.task.open_target
+    preferred_target_kind: block
+    preferred_template: movement/interact/move_to_open_container
+    defaults:
+      target.selector: nearest
+      movement.approach: interact
+      stop.distance: 2.5
+      movement.allow_open_doors: true
+
+  - semantic_operation: sem.task.attack_target
+    preferred_target_kind: entity
+    preferred_template: movement/interact/move_to_attack_entity
+    defaults:
+      target.selector: nearest
+      movement.approach: attack
+      stop.distance: 2.8
+      movement.allow_parkour: true
+      movement.allow_sprint: true
+
+  - semantic_operation: sem.task.break_target
+    preferred_target_kind: block
+    preferred_template: movement/interact/move_to_break_block
+    defaults:
+      target.selector: nearest
+      movement.approach: block_face
+      stop.distance: 4.5
+      movement.allow_parkour: true
+
+
+  - semantic_operation: sem.task.recover_stuck
+    preferred_template: movement/recovery/recover_stuck
+    defaults: {}

@@ -1,0 +1,40 @@
+{
+  "author": "8zvw0tmb",
+  "serial": "y0jvwsny8am4zu9gw3odooisq1sch21jy4q0xvqv",
+  "id": "retromania-gameboy-manifest-test",
+  "displayName": "Retromania Gameboy Manifest Test",
+  "packageVersion": "1.0.0",
+  "targetKoilVersion": "0.70.26-unfinished.3",
+  "authorId": "SpiritXIV",
+  "operations": [
+    {
+      "operation": "add",
+      "path": "koil/package_manifest_test/add_feature.txt",
+      "sha256": "1429b8d3afbb5c778198ddbb4e68151d2ee83f90513ba41253831f2be315b805"
+    },
+    {
+      "operation": "replace",
+      "path": "koil/package_manifest_test/replace_feature.json",
+      "sha256": "c90b150dfbc1756861729c16e7c4fbe9950d39b63fda556d9de2e2eee251e3fa"
+    },
+    {
+      "operation": "add",
+      "path": "config/koil-package-manifest-test.properties",
+      "sha256": "be9b440b75b9c68efd74d11271b662c315218af965da40afc96522e16cc576f9"
+    },
+    {
+      "operation": "add",
+      "path": "koil/package_manifest_test/assets/test_image_note.md",
+      "sha256": "d55166947d9061a60d6bd111cdba83c7324c5d8595782b5d7a979b09bbc768db"
+    },
+    {
+      "operation": "add",
+      "path": "koil/package_manifest_test/assets/package_icon.png",
+      "sha256": "758bbb56b25168a688207b52be83dfdcd7f09873a98b64421c49af996efe09d7"
+    },
+    {
+      "operation": "remove",
+      "path": "koil/package_manifest_test/remove_me.txt"
+    }
+  ]
+}

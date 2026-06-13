@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "node_type": "inventory",
+  "node_type_aliases": ["cap.inventory", "cap.container", "inventory", "container", "slot", "hotbar", "item.id", "consume", "quick_move"],
+  "failure_types": [
+    {
+      "id": "inventory.item_not_found",
+      "label": "item not found",
+      "applicable_node_types": ["inventory"],
+      "suggested_fix_rules": ["verify_item_id", "expand_item_aliases", "scan_container_before_transfer"],
+      "auto_fix_rule": "inventory/recovery/item_not_found",
+      "patch_generator": "ktl.patch.inventory.item_not_found",
+      "learning_hook": "oli.feedback.inventory.item_not_found"
+    },
+    {
+      "id": "inventory.wrong_slot",
+      "label": "wrong slot",
+      "applicable_node_types": ["inventory"],
+      "suggested_fix_rules": ["validate_slot_index", "prefer_hotbar_selection_check", "confirm_screen_handler_slot"],
+      "auto_fix_rule": "inventory/recovery/wrong_slot",
+      "patch_generator": "ktl.patch.inventory.slot",
+      "learning_hook": "oli.feedback.inventory.slot"
+    },
+    {
+      "id": "inventory.not_selected",
+      "label": "not selected",
+      "applicable_node_types": ["inventory"],
+      "suggested_fix_rules": ["add_selected_item_confirmation", "retry_hotbar_select", "check_hand_state"],
+      "auto_fix_rule": "inventory/recovery/not_selected",
+      "patch_generator": "ktl.patch.inventory.select",
+      "learning_hook": "oli.feedback.inventory.select"
+    },
+    {
+      "id": "inventory.failed_transfer",
+      "label": "failed transfer",
+      "applicable_node_types": ["inventory"],
+      "suggested_fix_rules": ["compare_before_after_count", "wait_for_screen_sync", "retry_quick_move"],
+      "auto_fix_rule": "inventory/recovery/failed_transfer",
+      "patch_generator": "ktl.patch.inventory.transfer",
+      "learning_hook": "oli.feedback.inventory.transfer"
+    },
+    {
+      "id": "inventory.consume_failed",
+      "label": "consume failed",
+      "applicable_node_types": ["inventory"],
+      "suggested_fix_rules": ["verify_food_item", "increase_use_wait_ticks", "confirm_count_decreased"],
+      "auto_fix_rule": "inventory/recovery/consume_failed",
+      "patch_generator": "ktl.patch.inventory.consume",
+      "learning_hook": "oli.feedback.inventory.consume"
+    }
+  ]
+}

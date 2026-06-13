@@ -1,0 +1,45 @@
+version: 1
+kind: selector_pack
+id: selectors.movement
+selectors:
+  - id: nearest
+    phrases: [nearest, closest, nearby]
+
+  - id: visible
+    phrases: [visible, seen]
+
+  - id: last_seen
+    phrases: [last seen]
+
+  - id: current
+    phrases: [current, here]
+
+  - id: forward
+    phrases: [forward, forwards, ahead, straight]
+
+  - id: backward
+    phrases: [backward, backwards, back]
+
+  - id: left
+    phrases: [left]
+
+  - id: right
+    phrases: [right]
+
+  - id: north
+    phrases: [north]
+
+  - id: south
+    phrases: [south]
+
+  - id: east
+    phrases: [east]
+
+  - id: west
+    phrases: [west]
+
+  - id: up
+    phrases: [up, upward, upwards]
+
+  - id: down
+    phrases: [down, downward, downwards]

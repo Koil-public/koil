@@ -1,0 +1,82 @@
+version: 1
+kind: lexicon
+id: lexicon.flow_phrases
+entries:
+  - id: action.flow.say
+    type: action
+    phrases: [say, chat]
+    maps_to: sem.task.say_text
+    defaults: {}
+
+  - id: action.flow.press
+    type: action
+    phrases: [press, hold]
+    maps_to: sem.task.press_input
+    defaults: {}
+
+  - id: action.flow.release
+    type: action
+    phrases: [release]
+    maps_to: sem.task.release_input
+    defaults: {}
+
+  - id: action.flow.tap
+    type: action
+    phrases: [tap, click key]
+    maps_to: sem.task.click_input
+    defaults:
+      count.value: 2
+
+  - id: action.flow.left_click
+    type: action
+    phrases: [left click, attack click]
+    maps_to: sem.task.click_input
+    defaults:
+      input.key: attack
+      count.value: 2
+
+  - id: action.flow.right_click
+    type: action
+    phrases: [right click, use click]
+    maps_to: sem.task.click_input
+    defaults:
+      input.key: use
+      count.value: 2
+
+  - id: action.flow.swap_hands
+    type: action
+    phrases: [swap hands, swap hand]
+    maps_to: sem.task.click_input
+    defaults:
+      input.key: swap_hands
+      count.value: 2
+
+  - id: action.flow.toggle_perspective
+    type: action
+    phrases: [toggle perspective, change perspective]
+    maps_to: sem.task.click_input
+    defaults:
+      input.key: perspective
+      count.value: 2
+
+  - id: action.flow.pick_block
+    type: action
+    phrases: [pick block, middle click]
+    maps_to: sem.task.click_input
+    defaults:
+      input.key: pick_block
+      count.value: 2
+
+  - id: action.flow.wait
+    type: action
+    phrases: [wait]
+    maps_to: sem.task.wait_duration
+    defaults:
+      count.value: 20
+      unit.id: ticks
+
+  - id: action.flow.close_screen
+    type: action
+    phrases: [close screen, close menu, exit screen]
+    maps_to: sem.task.close_screen
+    defaults: {}

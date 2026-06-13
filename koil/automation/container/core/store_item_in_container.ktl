@@ -1,0 +1,30 @@
+version: 1
+kind: task_template
+id: template.container_core_store_item_in_container
+template_id: container/core/store_item_in_container
+semantic_operation: sem.task.store_item_in_container
+params: [item.id, target.id, target.selector, count.value, radius, stop.distance]
+metadata:
+  semantic_operations: [sem.task.store_item_in_container]
+  target_kinds: [block]
+  required_params: [item.id, target.id]
+  optional_params: [target.selector, count.value, radius, stop.distance]
+  tags: [container, store, item]
+steps:
+  - type: run_primitive
+    action: cap.inventory.select_hotbar_item
+    params:
+      item.id: ${item.id}
+  - type: delegate
+    delegate: movement/interact/move_to_open_container.ktl target.id=${target.id} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
+  - type: run_primitive
+    action: cap.container.quick_move_selected_hotbar
+    params:
+      item.id: ${item.id}
+      expected.count: ${count.value}
+  - type: run_primitive
+    action: cap.interaction.close_screen
+    params: {}
+  - type: return
+    label: done
+

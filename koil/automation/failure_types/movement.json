@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "node_type": "movement",
+  "node_type_aliases": ["cap.movement", "cap.path", "cap.parkour", "move.", "path.", "parkour", "walk_relative", "move_to_target", "navigation"],
+  "failure_types": [
+    {
+      "id": "movement.stuck",
+      "label": "stuck",
+      "applicable_node_types": ["movement"],
+      "suggested_fix_rules": ["increase_stuck_detection_context", "add_escape_retry", "verify_block_collision"],
+      "auto_fix_rule": "movement/recovery/stuck",
+      "patch_generator": "ktl.patch.movement.stuck",
+      "learning_hook": "oli.feedback.movement.stuck"
+    },
+    {
+      "id": "movement.wrong_direction",
+      "label": "wrong direction",
+      "applicable_node_types": ["movement"],
+      "suggested_fix_rules": ["verify_yaw_basis", "verify_direction_binding", "capture_player_facing_before_move"],
+      "auto_fix_rule": "movement/recovery/wrong_direction",
+      "patch_generator": "ktl.patch.movement.direction",
+      "learning_hook": "oli.feedback.movement.direction"
+    },
+    {
+      "id": "movement.overshoot",
+      "label": "overshoot",
+      "applicable_node_types": ["movement"],
+      "suggested_fix_rules": ["lower_stop_distance", "enable_precision_finish", "slow_near_target"],
+      "auto_fix_rule": "movement/recovery/overshoot",
+      "patch_generator": "ktl.patch.movement.overshoot",
+      "learning_hook": "oli.feedback.movement.overshoot"
+    },
+    {
+      "id": "movement.path_blocked",
+      "label": "path blocked",
+      "applicable_node_types": ["movement"],
+      "suggested_fix_rules": ["replan_local_segment", "increase_route_radius", "mark_blocked_cell"],
+      "auto_fix_rule": "movement/recovery/path_blocked",
+      "patch_generator": "ktl.patch.movement.path_blocked",
+      "learning_hook": "oli.feedback.movement.path_blocked"
+    },
+    {
+      "id": "movement.arrival_unverified",
+      "label": "arrival not verified",
+      "applicable_node_types": ["movement"],
+      "suggested_fix_rules": ["add_arrival_check", "compare_start_end_position", "adjust_stop_distance"],
+      "auto_fix_rule": "movement/recovery/arrival_unverified",
+      "patch_generator": "ktl.patch.movement.arrival",
+      "learning_hook": "oli.feedback.movement.arrival"
+    }
+  ]
+}

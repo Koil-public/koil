@@ -1,0 +1,126 @@
+plugins {
+	id 'fabric-loom' version '1.8-SNAPSHOT'
+	id 'maven-publish'
+	id 'java'
+	id 'signing'
+	id 'com.github.johnrengelman.shadow' version '7.0.0'
+	id 'org.jetbrains.kotlin.jvm' version '1.8.10'
+}
+
+version = project.mod_version
+group = project.maven_group
+base {
+	archivesName = project.archives_base_name
+}
+
+repositories {
+	maven { url 'https://maven.fabricmc.net/' }
+	maven { url 'https://repo.spongepowered.org/maven/' }
+	maven { url "https://maven.terraformersmc.com/releases/" }
+	maven { url 'https://jitpack.io' }
+
+	maven { url 'https://maven.google.com/' }
+	maven { url 'https://plugins.gradle.org/m2/' }
+	maven { url 'https://raw.githubusercontent.com/umjammer/vavi-sound/master/repo' }
+
+	maven { url "https://cursemaven.com/"  }
+
+	mavenCentral()
+	mavenLocal()
+
+	jcenter()
+
+	flatDir {
+		dirs 'libs'
+	}
+}
+
+sourceSets {
+	main {
+		resources {
+			srcDirs += [
+					'src/main/generated'
+			]
+		}
+	}
+}
+
+dependencies {
+	// Minecraft dependencies
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+	modImplementation "com.terraformersmc:modmenu:7.2.2"
+	modImplementation("net.fabricmc:fabric-language-kotlin:1.12.3+kotlin.2.0.21")
+
+	// OkHttp and Gson dependencies
+	implementation 'com.squareup.okhttp3:okhttp:4.9.1'
+	implementation 'com.squareup.okio:okio:2.10.0'
+	implementation 'com.google.code.gson:gson:2.8.8'
+	implementation 'org.sejda.imageio:webp-imageio:0.1.6'
+	include 'org.sejda.imageio:webp-imageio:0.1.6'
+	implementation 'org.yaml:snakeyaml:2.3'
+	include 'org.yaml:snakeyaml:2.3'
+
+	// Kotlin standard library
+	implementation "org.jetbrains.kotlin:kotlin-stdlib:1.8.10"
+
+	//LWJGL
+	implementation "org.lwjgl:lwjgl:3.2.3"
+	implementation "org.lwjgl:lwjgl-stb:3.2.3"
+	implementation "org.lwjgl:lwjgl:3.2.3:natives-windows"
+	implementation "org.lwjgl:lwjgl-stb:3.2.3:natives-windows"
+	implementation 'org.apache.maven:maven:3.6.3'
+	implementation 'org.avaje.ebeanorm:avaje-ebeanorm:4.7.3'
+
+}
+
+processResources {
+	inputs.property "version", project.version
+
+	from(sourceSets.main.resources)
+
+	filesMatching("fabric.mod.json") {
+		expand "version": project.version
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 17
+}
+
+loom {
+	accessWidenerPath = file("src/main/resources/koil.accesswidener")
+}
+
+java {
+	withSourcesJar()
+}
+
+shadowJar {
+	zip64 = true
+	configurations = [project.configurations.runtimeClasspath]
+}
+
+jar {
+	from("LICENSE") {
+		rename { "${it}_${project.archivesBaseName}" }
+	}
+}
+
+tasks.register("signJar") {
+	dependsOn remapJar
+	doLast {
+		def jarFile = remapJar.archiveFile.get().asFile
+		ant.signjar(
+				jar: jarFile,
+				alias: 'hpuluyzwyaf3eoamyyg94wl7wmoi5hvw-gmq11qrjhjk1vjk2cxudcaukc5adkw6ngapwcw50yk0jsm5c',
+				keystore: file('keystore.jks'),
+				storepass: 'b59mc6zsdtqwpghol7ozvdgbc4qzi44q-72bn94wnrvv9d7e5n6nx9mf95z4cuzor4eeyo5jtpj2o9k8czj1y1ak7aucizhqt',
+				preservelastmodified: true
+		)
+	}
+}
+
+remapJar.finalizedBy signJar

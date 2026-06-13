@@ -1,0 +1,30 @@
+version: 1
+kind: task_template
+id: template.movement_navigation_move_to_block
+template_id: movement/navigation/move_to_block
+semantic_operation: sem.task.move_to_target
+params: [target.id, target.selector, radius, stop.distance, movement.allow_swim, movement.allow_parkour, movement.allow_sprint]
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [block]
+  required_params: [target.id]
+  optional_params: [target.selector, radius, stop.distance, movement.allow_swim, movement.allow_parkour, movement.allow_sprint]
+  tags: [movement, navigation, block]
+steps:
+  - type: run_primitive
+    action: cap.path.move_to_target
+    params:
+      target.id: ${target.id}
+      target.kind: block
+      target.selector: ${target.selector}
+      radius: ${radius}
+      stop.distance: ${stop.distance}
+      movement.allow_swim: ${movement.allow_swim}
+      movement.allow_parkour: ${movement.allow_parkour}
+      movement.allow_sprint: ${movement.allow_sprint}
+  - type: run_primitive
+    action: cap.path.verify_target_arrival
+    params:
+      stop.distance: ${stop.distance}
+  - type: return
+    label: done

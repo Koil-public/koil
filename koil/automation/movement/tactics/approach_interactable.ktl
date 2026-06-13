@@ -1,0 +1,24 @@
+version: 1
+kind: task_template
+id: template.movement_tactics_approach_interactable
+template_id: movement/tactics/approach_interactable
+semantic_operation: sem.task.interact_target
+params: [stop.distance]
+metadata:
+  semantic_operations: [sem.task.interact_target]
+  target_kinds: [block]
+  required_params: []
+  optional_params: [stop.distance]
+  tags: [movement, tactic, interactable]
+steps:
+  - type: run_primitive
+    action: cap.path.move_to_target
+    params:
+      stop.distance: ${stop.distance}
+      movement.allow_sprint: false
+  - type: run_primitive
+    action: cap.look.face_block_face
+    params:
+      target.face: up
+  - type: return
+    label: done

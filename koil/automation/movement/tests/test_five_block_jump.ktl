@@ -1,0 +1,17 @@
+version: 1
+kind: task_template
+id: template.movement_tests_test_five_block_jump
+template_id: movement/tests/test_five_block_jump
+semantic_operation: sem.task.parkour_target
+params: [target.x, target.y, target.z]
+metadata:
+  semantic_operations: [sem.task.parkour_target]
+  target_kinds: [location]
+  required_params: [target.x, target.y, target.z]
+  optional_params: []
+  tags: [movement, test, parkour, jump]
+steps:
+  - type: delegate
+    delegate: movement/parkour/parkour_route.ktl target.x=${target.x} target.y=${target.y} target.z=${target.z} stop.distance=0.75 parkour.allow_sprint_jump=true parkour.max_jump_attempts=3 parkour.avoid_fatal_falls=true
+  - type: return
+    label: done

@@ -1,0 +1,30 @@
+version: 1
+kind: grammar_patterns
+id: grammar.movement
+patterns:
+  - id: grammar.movement.sequence_then
+    shape: sequence_then
+
+  - id: grammar.movement.move_to_location
+    shape: action_target_location
+
+  - id: grammar.movement.action_direction_amount_unit
+    shape: action_direction_amount_unit
+
+  - id: grammar.movement.action_direction
+    shape: action_direction
+
+  - id: grammar.movement.action_amount_unit
+    shape: action_amount_unit
+
+  - id: grammar.movement.action_selector_target
+    shape: action_selector_target
+
+  - id: grammar.movement.action_to_target
+    shape: action_to_target
+
+  - id: grammar.movement.action_target
+    shape: action_target
+
+  - id: grammar.movement.reference_action
+    shape: reference_action

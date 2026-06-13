@@ -1,0 +1,19 @@
+version: 1
+kind: task_template
+id: template.movement_core_crouch
+template_id: movement/core/movement_crouch
+semantic_operation: sem.task.crouch_hold
+params: []
+metadata:
+  semantic_operations: [sem.task.crouch_hold]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [movement, core, crouch]
+steps:
+  - type: run_primitive
+    action: cap.player.crouch
+    params: {}
+  - type: return
+    label: done
+

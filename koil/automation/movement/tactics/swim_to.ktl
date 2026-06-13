@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.movement_tactics_swim_to
+template_id: movement/tactics/swim_to
+semantic_operation: sem.task.swim
+params: [stop.distance]
+metadata:
+  semantic_operations: [sem.task.swim]
+  target_kinds: [location]
+  required_params: []
+  optional_params: [stop.distance]
+  tags: [movement, tactic, swim]
+steps:
+  - type: run_primitive
+    action: cap.path.move_to_target
+    params:
+      stop.distance: ${stop.distance}
+      movement.allow_swim: true
+      path.use_y: true
+  - type: return
+    label: done

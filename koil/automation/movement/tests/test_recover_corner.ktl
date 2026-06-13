@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.movement_tests_test_recover_corner
+template_id: movement/tests/test_recover_corner
+semantic_operation: sem.task.move_to_target
+params: []
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [movement, test]
+steps:
+  - type: delegate
+    delegate: movement/recovery/recover_corner.ktl
+  - type: run_primitive
+    action: cap.report.status_line
+    params:
+      message: movement test corner recovery complete
+  - type: return
+    label: done

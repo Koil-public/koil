@@ -1,0 +1,19 @@
+version: 1
+kind: task_template
+id: template.movement_navigation_move_to_interactable
+template_id: movement/navigation/move_to_interactable
+semantic_operation: sem.task.interact_target
+params: [target.id, target.selector, radius, stop.distance, movement.allow_open_doors]
+metadata:
+  semantic_operations: [sem.task.interact_target]
+  target_kinds: [block]
+  required_params: [target.id]
+  optional_params: [target.selector, radius, stop.distance, movement.allow_open_doors]
+  tags: [movement, navigation, interactable]
+steps:
+  - type: delegate
+    delegate: movement/resolve/resolve_interactable_approach.ktl target.id=${target.id} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance} movement.allow_open_doors=${movement.allow_open_doors}
+  - type: delegate
+    delegate: movement/navigation/follow_path.ktl stop.distance=${stop.distance}
+  - type: return
+    label: done

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "node_type": "ui",
+  "node_type_aliases": ["screen", "ui", "command", "raw.command", "condition", "eval.", "branch", "evaluator", "chat"],
+  "failure_types": [
+    {
+      "id": "ui.command_failed",
+      "label": "command failed",
+      "applicable_node_types": ["ui"],
+      "suggested_fix_rules": ["verify_command_string", "confirm_permission_level", "strip_duplicate_slash"],
+      "auto_fix_rule": "ui/recovery/command_failed",
+      "patch_generator": "ktl.patch.ui.command",
+      "learning_hook": "oli.feedback.ui.command"
+    },
+    {
+      "id": "ui.condition_wrong",
+      "label": "condition wrong",
+      "applicable_node_types": ["ui"],
+      "suggested_fix_rules": ["verify_evaluator_key", "capture_condition_inputs", "compare_threshold_binding"],
+      "auto_fix_rule": "ui/recovery/condition_wrong",
+      "patch_generator": "ktl.patch.ui.condition",
+      "learning_hook": "oli.feedback.ui.condition"
+    },
+    {
+      "id": "ui.screen_not_open",
+      "label": "screen not open",
+      "applicable_node_types": ["ui"],
+      "suggested_fix_rules": ["wait_for_screen", "confirm_open_target", "retry_interaction"],
+      "auto_fix_rule": "ui/recovery/screen_not_open",
+      "patch_generator": "ktl.patch.ui.screen",
+      "learning_hook": "oli.feedback.ui.screen"
+    },
+    {
+      "id": "ui.wrong_state",
+      "label": "wrong state",
+      "applicable_node_types": ["ui"],
+      "suggested_fix_rules": ["capture_runtime_state", "check_parent_child_state_merge", "verify_return_status"],
+      "auto_fix_rule": "ui/recovery/wrong_state",
+      "patch_generator": "ktl.patch.ui.state",
+      "learning_hook": "oli.feedback.ui.state"
+    }
+  ]
+}

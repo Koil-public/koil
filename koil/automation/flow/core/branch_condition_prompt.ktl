@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.flow_core_branch_condition_prompt
+template_id: flow/core/branch_condition_prompt
+semantic_operation: sem.task.branch
+params: [condition.id, condition.evaluator, condition.threshold, condition.op, condition.right, stat.ref, then.input, else.input]
+metadata:
+  semantic_operations: [sem.task.branch]
+  target_kinds: []
+  required_params: [condition.id, then.input]
+  optional_params: [condition.evaluator, condition.threshold, condition.op, condition.right, stat.ref, else.input]
+  tags: [flow, branch]
+steps:
+  - type: branch
+    label: choose_path
+    condition: ${condition.evaluator}
+    then_input: ${then.input}
+    else_input: ${else.input}
+  - type: return
+    label: done
+

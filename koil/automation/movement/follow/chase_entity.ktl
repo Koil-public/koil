@@ -1,0 +1,20 @@
+version: 1
+kind: task_template
+id: template.movement_follow_chase_entity
+template_id: movement/follow/chase_entity
+semantic_operation: sem.task.follow_target
+params: [stop.distance]
+metadata:
+  semantic_operations: [sem.task.follow_target]
+  target_kinds: [entity, player, item]
+  required_params: []
+  optional_params: [stop.distance]
+  tags: [movement, follow]
+steps:
+  - type: run_primitive
+    action: cap.path.follow_target
+    params:
+      stop.distance: ${stop.distance}
+      sprint: true
+  - type: return
+    label: done

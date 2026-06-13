@@ -1,0 +1,28 @@
+version: 1
+kind: condition_pack
+id: conditions.flow
+conditions:
+  - id: cond.self_health_below
+    evaluator_key: eval.compare_stat
+    stat: player.health
+    operator: lt
+    aliases: [health below, hp below, health under]
+
+  - id: cond.self_health_above
+    evaluator_key: eval.compare_stat
+    stat: player.health
+    operator: gt
+    aliases: [health above, hp above, health over]
+
+  - id: cond.inventory_at_least
+    evaluator_key: eval.inventory_count_compare
+    operator: gte
+    aliases: [inventory has at least, have at least]
+
+  - id: cond.target_exists
+    evaluator_key: eval.target_exists
+    aliases: [target exists, target alive]
+
+  - id: cond.automation_task_running
+    evaluator_key: eval.automation_task_running
+    aliases: [currently running a task, automation task running, task running, user currently running a task]

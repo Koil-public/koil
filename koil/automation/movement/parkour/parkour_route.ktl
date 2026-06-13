@@ -1,0 +1,29 @@
+version: 1
+kind: task_template
+id: template.movement_parkour_route
+template_id: movement/parkour/parkour_route
+semantic_operation: sem.task.parkour_target
+params: [target.x, target.y, target.z, stop.distance, parkour.allow_sprint_jump, parkour.max_jump_attempts, parkour.avoid_fatal_falls]
+metadata:
+  semantic_operations: [sem.task.parkour_target]
+  target_kinds: [location]
+  required_params: [target.x, target.y, target.z]
+  optional_params: [stop.distance, parkour.allow_sprint_jump, parkour.max_jump_attempts, parkour.avoid_fatal_falls]
+  tags: [movement, parkour, human]
+steps:
+  - type: delegate
+    delegate: movement/core/movement_context.ktl
+  - type: delegate
+    delegate: movement/resolve/resolve_landing_target.ktl target.x=${target.x} target.y=${target.y} target.z=${target.z}
+  - type: delegate
+    delegate: movement/parkour/parkour_analyze_jump.ktl target.x=${current.target.x} target.y=${current.target.y} target.z=${current.target.z} parkour.allow_sprint_jump=${parkour.allow_sprint_jump}
+  - type: delegate
+    delegate: movement/parkour/parkour_align_start.ktl
+  - type: delegate
+    delegate: movement/parkour/parkour_sprint_jump.ktl target.x=${current.target.x} target.y=${current.target.y} target.z=${current.target.z} stop.distance=${stop.distance}
+  - type: delegate
+    delegate: movement/parkour/parkour_verify_landing.ktl
+  - type: delegate
+    delegate: movement/core/movement_stop.ktl
+  - type: return
+    label: done

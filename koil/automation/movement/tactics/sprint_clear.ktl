@@ -1,0 +1,21 @@
+version: 1
+kind: task_template
+id: template.movement_tactics_sprint_clear
+template_id: movement/tactics/sprint_clear
+semantic_operation: sem.task.move_to_target
+params: [stop.distance]
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [location]
+  required_params: []
+  optional_params: [stop.distance]
+  tags: [movement, tactic, sprint]
+steps:
+  - type: run_primitive
+    action: cap.path.move_to_target
+    params:
+      stop.distance: ${stop.distance}
+      sprint: true
+      movement.allow_sprint: true
+  - type: return
+    label: done
