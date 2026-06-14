@@ -12,6 +12,7 @@ import com.spirit.koil.api.performance.PerformanceCommandBridge;
 import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
 import com.spirit.koil.api.stats.global.GlobalActivityClient;
+import com.spirit.koil.chat.client.RichChatClientBridge;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
@@ -44,6 +45,7 @@ public class Client implements ClientModInitializer {
         });
         AutomationPresenceClientBridge.registerReceiver();
         AutomationRemoteRunClientBridge.registerReceiver();
+        RichChatClientBridge.registerReceiver();
         AutomationRouter.registerClientCommands();
         PerformanceCommandBridge.registerClientCommands();
         F3CommandBridge.registerClientCommands();

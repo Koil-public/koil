@@ -6,6 +6,7 @@ import com.spirit.koil.api.automation.AutomationPresenceServerBridge;
 import com.spirit.koil.api.automation.AutomationRemoteRunServerBridge;
 import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.stats.global.KoilGlobalActivityServer;
+import com.spirit.koil.chat.server.RichChatServerBridge;
 import com.spirit.koil.api.util.application.WindowManager;
 import com.spirit.koil.api.util.console.log.SubFileLogger;
 import com.spirit.koil.api.util.file.FileSanitizer;
@@ -80,6 +81,7 @@ public class Main implements ModInitializer {
         initializeWebFilesAndDesign();
 
         KoilGlobalActivityServer.register();
+        RichChatServerBridge.register();
     }
 
     private static void ensureDefaultConfigFile() {
@@ -190,7 +192,7 @@ public class Main implements ModInitializer {
     }
 
     public static final String VERSION = "0.70.25";
-    public static final String BETA_VERSION = "0.70.26-unfinished.8";
+    public static final String BETA_VERSION = "0.70.26-unfinished.9";
     public static final String FREQUENT_BETA_VERSION = "0.70.26-frequent.0";
     public static final Identifier LOGO_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/icon.png");
     public static final Identifier AUTOMATION_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/automation.png");
