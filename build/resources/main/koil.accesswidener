@@ -1,0 +1,9 @@
+accessWidener v2 named
+
+accessible method net/minecraft/client/MinecraftClient doAttack ()Z
+accessible method net/minecraft/client/MinecraftClient doItemUse ()V
+accessible method net/minecraft/entity/LivingEntity tickActiveItemStack ()V
+accessible class net/minecraft/client/gui/widget/EntryListWidget$Entry
+accessible field net/minecraft/registry/RegistryKey value Lnet/minecraft/util/Identifier;
+accessible method net/minecraft/client/MinecraftClient doAttack ()Z
+accessible method net/minecraft/block/AbstractCandleBlock getParticleOffsets (Lnet/minecraft/block/BlockState;)Ljava/lang/Iterable;
