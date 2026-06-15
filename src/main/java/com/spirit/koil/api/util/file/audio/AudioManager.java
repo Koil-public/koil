@@ -345,10 +345,10 @@ public class AudioManager {
 
         if (currentClip != null && currentClip.isOpen()) {
             long newPosition = (long) (currentClip.getMicrosecondLength() * clampedProgress);
-            boolean resumeAfterSeek = currentAudioFilePath != null;
+            boolean resumeAfterSeek = currentClip.isRunning();
             currentClip.setMicrosecondPosition(newPosition);
-            pausedPosition = 0;
-            if (resumeAfterSeek && !currentClip.isRunning()) {
+            pausedPosition = resumeAfterSeek ? 0 : newPosition;
+            if (resumeAfterSeek) {
                 currentClip.start();
             }
             return;
@@ -358,7 +358,7 @@ public class AudioManager {
             if (externalAudioFilePath != null && externalDurationMicros > 0) {
                 long newPosition = (long) (externalDurationMicros * clampedProgress);
                 File file = new File(externalAudioFilePath);
-                boolean resumeAfterSeek = externalPlaybackActive || externalPaused;
+                boolean resumeAfterSeek = externalPlaybackActive;
                 stopExternalPlayback(true);
                 externalSeekStartMicros = newPosition;
                 externalPaused = !resumeAfterSeek;
@@ -376,8 +376,6 @@ public class AudioManager {
         if (isPlaying) {
             stopOggPlayback();
             startOggPlayback(volume);
-        } else if (currentAudioFilePath != null) {
-            startOggPlayback(volume);
         }
     }
 
@@ -389,9 +387,10 @@ public class AudioManager {
 
         if (isCurrentClipFile(file) && currentClip != null && currentClip.isOpen()) {
             long newPosition = (long) (currentClip.getMicrosecondLength() * clampedProgress);
+            boolean resumeAfterSeek = currentClip.isRunning();
             currentClip.setMicrosecondPosition(newPosition);
-            pausedPosition = 0;
-            if (!currentClip.isRunning()) {
+            pausedPosition = resumeAfterSeek ? 0 : newPosition;
+            if (resumeAfterSeek) {
                 currentClip.start();
             }
             return true;
@@ -400,7 +399,7 @@ public class AudioManager {
         if (isCurrentExternalFile(file) && externalDurationMicros > 0) {
             long newPosition = (long) (externalDurationMicros * clampedProgress);
             File selected = new File(externalAudioFilePath);
-            boolean resumeAfterSeek = externalPlaybackActive || externalPaused;
+            boolean resumeAfterSeek = externalPlaybackActive;
             stopExternalPlayback(true);
             externalSeekStartMicros = newPosition;
             externalPaused = !resumeAfterSeek;
@@ -417,8 +416,6 @@ public class AudioManager {
 
             if (isPlaying) {
                 stopOggPlayback();
-                startOggPlayback(volume);
-            } else {
                 startOggPlayback(volume);
             }
             return true;
@@ -587,10 +584,7 @@ public class AudioManager {
             externalPlaybackActive = false;
             externalPlaybackThread = null;
             if (!externalLoop && !externalPaused) {
-                externalAudioFilePath = null;
-                currentAudioFilePath = null;
-                externalSeekStartMicros = 0L;
-                externalDurationMicros = 0L;
+                externalSeekStartMicros = externalDurationMicros;
                 externalPlaybackStartNanos = 0L;
             }
         }

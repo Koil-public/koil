@@ -114,6 +114,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         refreshPerformanceHints(true);
         hideShaderPackButtons();
         installSodiumOptionWidgets();
+        installVanillaFooterButtons();
     }
 
     @Override
@@ -1863,6 +1864,31 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             return Math.max(32, readIntField(list, "top", 32));
         }
         return 32;
+    }
+
+    private void installVanillaFooterButtons() {
+        ClickableWidget doneButton = null;
+        for (Element element : this.children()) {
+            if (element instanceof ClickableWidget widget && normalize(widget.getMessage().getString()).equals("done")) {
+                doneButton = widget;
+                break;
+            }
+        }
+        if (doneButton == null) {
+            return;
+        }
+        int buttonWidth = 100;
+        int gap = 8;
+        int totalWidth = buttonWidth * 2 + gap;
+        int left = (this.width - totalWidth) / 2;
+        int y = doneButton.getY();
+        doneButton.setX(left + buttonWidth + gap);
+        doneButton.setWidth(buttonWidth);
+        this.addDrawableChild(ButtonWidget.builder(Text.literal("Open Vanilla"), button -> {
+            if (this.client != null) {
+                this.client.setScreen(new VideoOptionsScreen(this, this.client.options));
+            }
+        }).dimensions(left, y, buttonWidth, doneButton.getHeight()).build());
     }
 
     private int maxSodiumScroll() {
