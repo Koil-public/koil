@@ -114,7 +114,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         refreshPerformanceHints(true);
         hideShaderPackButtons();
         installSodiumOptionWidgets();
-        installVanillaFooterButtons();
+        installNativeFooterButtons();
     }
 
     @Override
@@ -1866,7 +1866,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         return 32;
     }
 
-    private void installVanillaFooterButtons() {
+    private void installNativeFooterButtons() {
         ClickableWidget doneButton = null;
         for (Element element : this.children()) {
             if (element instanceof ClickableWidget widget && normalize(widget.getMessage().getString()).equals("done")) {
@@ -1877,16 +1877,17 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         if (doneButton == null) {
             return;
         }
-        int buttonWidth = 100;
+        int buttonWidth = 126;
         int gap = 8;
         int totalWidth = buttonWidth * 2 + gap;
         int left = (this.width - totalWidth) / 2;
         int y = doneButton.getY();
         doneButton.setX(left + buttonWidth + gap);
         doneButton.setWidth(buttonWidth);
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("Open Vanilla"), button -> {
+        this.addDrawableChild(ButtonWidget.builder(Text.literal("Open Sodium"), button -> {
             if (this.client != null) {
-                this.client.setScreen(new VideoOptionsScreen(this, this.client.options));
+                Screen nativeScreen = createSodiumScreen();
+                this.client.setScreen(nativeScreen == null ? new VideoOptionsScreen(this, this.client.options) : nativeScreen);
             }
         }).dimensions(left, y, buttonWidth, doneButton.getHeight()).build());
     }
