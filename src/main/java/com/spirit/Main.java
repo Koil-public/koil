@@ -190,7 +190,7 @@ public class Main implements ModInitializer {
     }
 
     public static final String VERSION = "0.70.25";
-    public static final String BETA_VERSION = "0.70.26-unfinished.9";
+    public static final String BETA_VERSION = "0.70.26-unfinished.10";
     public static final String FREQUENT_BETA_VERSION = "0.70.26-frequent.0";
     public static final Identifier LOGO_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/icon.png");
     public static final Identifier AUTOMATION_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/automation.png");
