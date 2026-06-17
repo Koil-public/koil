@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "koil",
+  "version": "0.70.26-unfinished.9",
+  "name": "Koil",
+  "description": "A project for developers by developers.",
+  "authors": [
+    "Spirit"
+  ],
+  "contributors": [
+    "Bashful"
+  ],
+  "contact": {
+    "homepage": "https://modrinth.com/mod/koil",
+    "sources": "https://github.com/SpiritXIV/minceraft",
+    "issues": "https://discord.com/invite/WMSXCtWND7"
+  },
+
+  "custom": {
+    "modmenu": {
+      "links": {
+        "modmenu.discord": "https://discord.gg/jEGF5fb"
+      },
+      "update_checker": true
+    }
+  },
+
+  "license": "mit",
+  "icon": "assets/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.spirit.Main"
+    ],
+    "client": [
+      "com.spirit.Client"
+    ],
+    "preLaunch": [
+    ]
+  },
+  "mixins": [
+    "koil.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.14.21",
+    "fabric-language-kotlin": ">=1.12.3",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "another-mod": "*"
+  },
+  "accessWidener": "koil.accesswidener"
+}
