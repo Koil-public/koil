@@ -169,10 +169,9 @@ public final class AnimatedGifPlaybackSession implements VisualPlaybackSession {
         }
         this.positionMillis = currentPlaybackPosition(nowMillis);
         if (this.positionMillis >= this.durationMillis) {
-            this.positionMillis = this.durationMillis;
-            applyFrame(this.frames.size() - 1);
-            this.state = VisualPlaybackState.ENDED;
-            return;
+            this.positionMillis = this.durationMillis <= 0L ? 0L : this.positionMillis % this.durationMillis;
+            this.playbackAnchorMediaMillis = this.positionMillis;
+            this.playbackAnchorSystemMillis = nowMillis;
         }
         applyFrame(frameIndexForPosition(this.positionMillis));
     }
@@ -244,7 +243,7 @@ public final class AnimatedGifPlaybackSession implements VisualPlaybackSession {
         BufferedImage canvas = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = canvas.createGraphics();
         graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        int x = (targetWidth - scaled.getWidth()) / 2;
+        int x = 0;
         int y = (targetHeight - scaled.getHeight()) / 2;
         graphics.drawImage(scaled, x, y, null);
         graphics.dispose();

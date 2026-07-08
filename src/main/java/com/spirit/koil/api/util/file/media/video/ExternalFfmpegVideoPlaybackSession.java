@@ -48,8 +48,9 @@ final class ExternalFfmpegVideoPlaybackSession implements VideoPlaybackSession {
         this.file = file;
         this.metadata = metadata;
         this.backend = backend;
-        this.frameWidth = Math.max(1, Math.min(maxWidth, MediaPerformanceProfile.VIDEO_PLAYBACK_MAX_WIDTH));
-        this.frameHeight = Math.max(1, Math.min(maxHeight, MediaPerformanceProfile.VIDEO_PLAYBACK_MAX_HEIGHT));
+        int[] targetSize = resolveTargetFrameSize(metadata, maxWidth, maxHeight);
+        this.frameWidth = targetSize[0];
+        this.frameHeight = targetSize[1];
         this.playbackFps = resolvePlaybackFps(metadata == null ? 0.0D : metadata.frameRate());
         this.frameDurationMillis = Math.max(1L, Math.round(1000.0D / this.playbackFps));
         this.texture = new ManagedFrameTexture("koil", "video_player/" + file.getAbsolutePath() + "_" + this.frameWidth + "x" + this.frameHeight, this.frameWidth, this.frameHeight);
@@ -66,6 +67,21 @@ final class ExternalFfmpegVideoPlaybackSession implements VideoPlaybackSession {
                 MediaPerformanceProfile.VIDEO_AUDIO_STREAM_BUFFER_BYTES
         );
         loadStillFrame(0L);
+    }
+
+    private static int[] resolveTargetFrameSize(VideoMetadata metadata, int maxWidth, int maxHeight) {
+        int widthCap = Math.max(1, Math.min(maxWidth, MediaPerformanceProfile.VIDEO_PLAYBACK_MAX_WIDTH));
+        int heightCap = Math.max(1, Math.min(maxHeight, MediaPerformanceProfile.VIDEO_PLAYBACK_MAX_HEIGHT));
+        if (metadata == null || metadata.width() <= 0 || metadata.height() <= 0) {
+            return new int[]{widthCap, heightCap};
+        }
+        float scale = Math.min(widthCap / (float) metadata.width(), heightCap / (float) metadata.height());
+        if (scale <= 0.0F || Float.isNaN(scale) || Float.isInfinite(scale)) {
+            scale = 1.0F;
+        }
+        int scaledWidth = Math.max(1, Math.min(widthCap, Math.round(metadata.width() * scale)));
+        int scaledHeight = Math.max(1, Math.min(heightCap, Math.round(metadata.height() * scale)));
+        return new int[]{scaledWidth, scaledHeight};
     }
 
     @Override

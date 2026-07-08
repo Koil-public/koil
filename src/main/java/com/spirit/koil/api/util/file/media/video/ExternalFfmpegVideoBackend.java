@@ -214,7 +214,7 @@ final class ExternalFfmpegVideoBackend implements VideoBackend {
     }
 
     Process startRawFrameStream(File file, long startMillis, int width, int height, double fps) throws IOException {
-        String scaleFilter = "scale=w=" + width + ":h=" + height + ":force_original_aspect_ratio=decrease:flags=fast_bilinear,pad=" + width + ":" + height + ":(ow-iw)/2:(oh-ih)/2:black,fps=" + String.format(Locale.ROOT, "%.3f", fps);
+        String scaleFilter = "scale=w=" + width + ":h=" + height + ":flags=fast_bilinear,fps=" + String.format(Locale.ROOT, "%.3f", fps);
         List<String> command = new ArrayList<>();
         command.add(requiredFfmpegBinary());
         command.add("-hide_banner");

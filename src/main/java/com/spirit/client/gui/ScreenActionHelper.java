@@ -25,6 +25,18 @@ public final class ScreenActionHelper {
     }
 
     public static void openInKoilEditor(String path, int lineNumber) {
+        openInKoilEditor(path, lineNumber, false);
+    }
+
+    public static void openInKoilEditorReadOnly(String path) {
+        openInKoilEditor(path, -1, true);
+    }
+
+    public static void openInKoilEditorReadOnly(String path, int lineNumber) {
+        openInKoilEditor(path, lineNumber, true);
+    }
+
+    public static void openInKoilEditor(String path, int lineNumber, boolean readOnly) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || path == null || path.isBlank()) {
             return;
@@ -37,7 +49,7 @@ public final class ScreenActionHelper {
             if (!file.exists() || !file.isFile()) {
                 return;
             }
-            client.setScreen(new FileEditorScreen(client.currentScreen, file, null, lineNumber));
+            client.setScreen(new FileEditorScreen(client.currentScreen, file, null, lineNumber, readOnly));
         } catch (Exception ignored) {
         }
     }

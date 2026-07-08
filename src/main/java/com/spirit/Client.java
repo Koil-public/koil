@@ -12,6 +12,8 @@ import com.spirit.koil.api.performance.PerformanceCommandBridge;
 import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
 import com.spirit.koil.api.stats.global.GlobalActivityClient;
+import com.spirit.koil.chat.internal.RichChatPrivacyNoticeClient;
+import com.spirit.koil.chat.internal.sync.RichChatSyncClientBridge;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
@@ -29,6 +31,8 @@ public class Client implements ClientModInitializer {
     public void onInitializeClient() {
         ConsoleRequestBridge.initializeHost();
         GlobalActivityClient.registerClient();
+        RichChatPrivacyNoticeClient.register();
+        RichChatSyncClientBridge.registerReceiver();
         ClientTickEvents.START_CLIENT_TICK.register(client -> AutomationRouter.tick());
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             PackageDetectionService.tick(client);

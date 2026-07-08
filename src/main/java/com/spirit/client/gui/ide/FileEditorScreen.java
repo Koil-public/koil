@@ -141,17 +141,23 @@ public class FileEditorScreen extends Screen {
     private final PopupMenu topBarOpenMenu = new PopupMenu();
     private int[] topBarOpenBounds = null;
     private final int initialLineNumber;
+    private final boolean requestedReadOnly;
 
     public FileEditorScreen(Screen parent, File fileItem, FileItem loadedFileItem) {
         this(parent, fileItem, loadedFileItem, -1);
     }
 
     public FileEditorScreen(Screen parent, File fileItem, FileItem loadedFileItem, int initialLineNumber) {
+        this(parent, fileItem, loadedFileItem, initialLineNumber, false);
+    }
+
+    public FileEditorScreen(Screen parent, File fileItem, FileItem loadedFileItem, int initialLineNumber, boolean readOnly) {
         super(Text.literal("Koil Editor"));
-        this.parent = parent;
+        this.parent = sanitizeDirectParent(parent);
         this.fileItem = fileItem;
         this.loadedFileItem = loadedFileItem;
         this.initialLineNumber = initialLineNumber;
+        this.requestedReadOnly = readOnly;
     }
 
     @Override
@@ -184,7 +190,7 @@ public class FileEditorScreen extends Screen {
             return;
         }
         if (this.client != null) {
-            this.client.setScreen(this.parent);
+            this.client.setScreen(resolveReturnScreen());
         }
     }
 
@@ -279,10 +285,16 @@ public class FileEditorScreen extends Screen {
 
         if (controlPressed) {
             if (keyCode == GLFW.GLFW_KEY_Z) {
+                if (!canMutateDocument("Undo is unavailable")) {
+                    return true;
+                }
                 undoEdit();
                 return true;
             }
             if (keyCode == GLFW.GLFW_KEY_Y) {
+                if (!canMutateDocument("Redo is unavailable")) {
+                    return true;
+                }
                 redoEdit();
                 return true;
             }
@@ -871,9 +883,9 @@ public class FileEditorScreen extends Screen {
             this.document = new EditorDocument(lines);
             this.lastSavedText = document.getText();
             this.fileLoadFailed = false;
-            this.readOnlyMode = false;
+            this.readOnlyMode = requestedReadOnly;
             clearErrorState();
-            setStatus(bytes.length == 0 ? "Empty file" : "Loaded", new Color(uiColorHeaderSubTitleText, true).getRGB(), 1200L);
+            setStatus(requestedReadOnly ? "Read only" : (bytes.length == 0 ? "Empty file" : "Loaded"), requestedReadOnly ? new Color(uiColorContentBaseDescriptionText, true).getRGB() : new Color(uiColorHeaderSubTitleText, true).getRGB(), 1200L);
         } catch (IOException e) {
             this.document = new EditorDocument(new ArrayList<>(List.of("")));
             this.lastSavedText = "";
@@ -1605,8 +1617,8 @@ public class FileEditorScreen extends Screen {
         int barY = this.height - STATUS_BAR_HEIGHT;
         int barWidth = this.width - barX - 1;
         long now = Util.getMeasuringTimeMs();
-        String stateMessage = now <= saveStatusUntil ? saveStatusMessage : (isDirty() ? "Unsaved changes" : "Saved");
-        int stateColor = now <= saveStatusUntil ? saveStatusColor : (isDirty() ? new Color(uiColorWarningPromptText, true).getRGB() : new Color(uiColorHeaderSubTitleText, true).getRGB());
+        String stateMessage = now <= saveStatusUntil ? saveStatusMessage : (readOnlyMode ? "Read only" : (isDirty() ? "Unsaved changes" : "Saved"));
+        int stateColor = now <= saveStatusUntil ? saveStatusColor : (readOnlyMode ? new Color(uiColorContentBaseDescriptionText, true).getRGB() : (isDirty() ? new Color(uiColorWarningPromptText, true).getRGB() : new Color(uiColorHeaderSubTitleText, true).getRGB()));
         String position = "Ln " + (document.getCursorLine() + 1) + ", Col " + (document.getCursorColumn() + 1);
         String searchInfo = searchMatches.isEmpty() ? "Search 0" : "Search " + (activeSearchMatchIndex + 1) + "/" + searchMatches.size();
         String diagnosticInfo = cachedErrorCount > 0
@@ -3206,7 +3218,7 @@ public class FileEditorScreen extends Screen {
                 if (target != null) {
                     File parentTarget = target.isDirectory() ? target : target.getParentFile();
                     if (parentTarget != null && this.client != null && prepareForDocumentSwap()) {
-                        this.client.setScreen(FileExplorerScreen.openAtPath(target.getPath()));
+                        this.client.setScreen(openExplorerAtPath(target.getPath()));
                     }
                 }
             }
@@ -3262,7 +3274,7 @@ public class FileEditorScreen extends Screen {
         }
 
         if (chosenFile.isDirectory()) {
-            this.client.setScreen(FileExplorerScreen.openAtPath(chosenFile.getPath()));
+            this.client.setScreen(openExplorerAtPath(chosenFile.getPath()));
             return;
         }
 
@@ -3276,7 +3288,42 @@ public class FileEditorScreen extends Screen {
             return;
         }
 
-        this.client.setScreen(FileExplorerScreen.openAtPath(chosenFile.getPath()));
+        this.client.setScreen(openExplorerAtPath(chosenFile.getPath()));
+    }
+
+    private Screen resolveReturnScreen() {
+        if (this.parent instanceof FileExplorerScreen) {
+            return openExplorerAtPath(fileItem == null ? "." : fileItem.getPath());
+        }
+        return getNavigationParentScreen();
+    }
+
+    private FileExplorerScreen openExplorerAtPath(String path) {
+        if (this.parent instanceof FileExplorerScreen explorerParent) {
+            return FileExplorerScreen.openAtPath(path, explorerParent.getReturnParentScreen());
+        }
+        return FileExplorerScreen.openAtPath(path, getNavigationParentScreen());
+    }
+
+    public Screen getNavigationParentScreen() {
+        if (this.parent instanceof FileExplorerScreen explorerParent) {
+            Screen explorerReturnParent = explorerParent.getReturnParentScreen();
+            if (explorerReturnParent instanceof FileEditorScreen editorReturnParent) {
+                return editorReturnParent.getNavigationParentScreen();
+            }
+            return explorerReturnParent;
+        }
+        if (this.parent instanceof FileEditorScreen editorParent) {
+            return editorParent.getNavigationParentScreen();
+        }
+        return this.parent;
+    }
+
+    private static Screen sanitizeDirectParent(Screen parent) {
+        if (parent instanceof FileEditorScreen editorParent) {
+            return editorParent.getNavigationParentScreen();
+        }
+        return parent;
     }
 
     private boolean prepareForDocumentSwap() {
@@ -3299,45 +3346,15 @@ public class FileEditorScreen extends Screen {
     }
 
     private FileType classifyFileType(File file) {
-        String fileName = file.getName().toLowerCase();
-        if (com.spirit.koil.api.util.file.image.ExternalImageLoader.isSupportedImageFile(file)) {
-            return FileType.IMAGE;
-        }
-        if (VideoService.isRecognizedVideoFile(file)) {
-            return FileType.VIDEO;
-        }
-        if (fileName.endsWith(".wav") || fileName.endsWith(".ogg")) {
-            return FileType.AUDIO;
-        }
-        if (fileName.endsWith(".zip") || fileName.endsWith(".rar") || fileName.endsWith(".7z") || fileName.endsWith(".tar")
-                || fileName.endsWith(".gz") || fileName.endsWith(".bz2") || fileName.endsWith(".xz") || fileName.endsWith(".jar")
-                || fileName.endsWith(".war") || fileName.endsWith(".ear")) {
-            return FileType.ZIP;
-        }
-        if (fileName.endsWith(".mcmeta") || fileName.endsWith(".mcfunction") || fileName.endsWith(".mcpack")
-                || fileName.endsWith(".mctemplate")) {
-            return FileType.MCMETA;
-        }
-        return FileType.FILE;
+        return TextFileViewSupport.classifyFileType(file);
     }
 
     private boolean isEditableTextType(FileType fileType) {
-        return fileType == FileType.FILE || fileType == FileType.MCMETA;
+        return TextFileViewSupport.isEditableTextType(fileType);
     }
 
     private boolean isTextFile(File file) {
-        String fileName = file.getName().toLowerCase();
-        return fileName.endsWith(".txt") || fileName.endsWith(".json") || fileName.endsWith(".json5") || fileName.endsWith(".log") || fileName.endsWith(".kwds")
-                || fileName.endsWith(".properties") || fileName.endsWith(".db") || fileName.endsWith(".dat") || fileName.endsWith(".dat_old") || fileName.endsWith(".class")
-                || fileName.endsWith(".mcmeta") || fileName.endsWith(".toml") || fileName.endsWith(".mcfunction") || fileName.endsWith(".mcpack") || fileName.endsWith(".mctemplate")
-                || fileName.endsWith(".xml") || fileName.endsWith(".yml") || fileName.endsWith(".yaml") || fileName.endsWith(".ini")
-                || fileName.endsWith(".config") || fileName.endsWith(".conf") || fileName.endsWith(".css") || fileName.endsWith(".js")
-                || fileName.endsWith(".html") || fileName.endsWith(".c") || fileName.endsWith(".cpp") || fileName.endsWith(".h")
-                || fileName.endsWith(".hpp") || fileName.endsWith(".java") || fileName.endsWith(".py") || fileName.endsWith(".rb")
-                || fileName.endsWith(".php") || fileName.endsWith(".sql") || fileName.endsWith(".sh") || fileName.endsWith(".bat")
-                || fileName.endsWith(".ps1") || fileName.endsWith(".md") || fileName.endsWith(".rtf") || fileName.endsWith(".doc")
-                || fileName.endsWith(".docx") || fileName.endsWith(".odt") || fileName.endsWith(".pdf") || fileName.endsWith(".tex")
-                || fileName.endsWith(".ktl");
+        return TextFileViewSupport.isTextFile(file);
     }
 
     private boolean isDirty() {

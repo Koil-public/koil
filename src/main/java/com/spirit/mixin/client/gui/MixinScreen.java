@@ -23,6 +23,7 @@ import com.spirit.client.gui.update.UpdateScreen;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
+import com.spirit.koil.chat.internal.upload.RichChatAttachmentRenderer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
@@ -174,6 +175,9 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         if (PixelDifferenceOverlay.mouseReleased(mouseX, mouseY, button)) {
+            return true;
+        }
+        if ((Object) this instanceof ChatScreen && RichChatAttachmentRenderer.mouseReleased(mouseX, mouseY, button)) {
             return true;
         }
         return super.mouseReleased(mouseX, mouseY, button);
@@ -494,12 +498,7 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
 
     @Unique
     private void koil$drawTopBarButton(DrawContext context, int x, int y, boolean hovered, String label) {
-        context.fill(x, y, x + KOIL_TOP_BAR_BUTTON_SIZE, y + KOIL_TOP_BAR_BUTTON_SIZE, hovered ? 0x824D5563 : 0x302A303A);
-        context.drawBorder(x, y, KOIL_TOP_BAR_BUTTON_SIZE, KOIL_TOP_BAR_BUTTON_SIZE, hovered ? 0x9A9AA5B7 : 0x306B7485);
-        int textWidth = client.textRenderer.getWidth(label);
-        int textX = x + (KOIL_TOP_BAR_BUTTON_SIZE - textWidth) / 2;
-        int textY = y + 3;
-        context.drawText(client.textRenderer, label, textX, textY, hovered ? 0xC8F5F7FA : 0x52F5F7FA, false);
+        PopupMenu.renderTriggerButton(context, client.textRenderer, x, y, hovered, label);
     }
 
     @Unique

@@ -24,6 +24,18 @@ public record RichChatSegment(
         return new RichChatSegment(RichChatSegmentType.MULTILINE_TEXT, text, null, Map.of());
     }
 
+    public static RichChatSegment latexInline(String source, Map<String, String> metadata) {
+        return new RichChatSegment(RichChatSegmentType.LATEX_INLINE, source, null, metadata);
+    }
+
+    public static RichChatSegment latexBlock(String source, Map<String, String> metadata) {
+        return new RichChatSegment(RichChatSegmentType.LATEX_BLOCK, source, null, metadata);
+    }
+
+    public static RichChatSegment latexDocument(String source, Map<String, String> metadata) {
+        return new RichChatSegment(RichChatSegmentType.LATEX_DOCUMENT, source, null, metadata);
+    }
+
     public static RichChatSegment attachment(UUID attachmentId) {
         return new RichChatSegment(RichChatSegmentType.ATTACHMENT, "", attachmentId, Map.of());
     }

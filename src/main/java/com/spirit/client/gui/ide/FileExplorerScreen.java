@@ -23,6 +23,7 @@ import com.spirit.koil.api.util.file.jar.KoilLocalModJarInspector.KoilLocalModJa
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.util.file.media.VisualPlaybackSession;
 import com.spirit.koil.api.util.file.media.VisualPlaybackState;
+import com.spirit.koil.api.util.file.media.VisualTransportControls;
 import com.spirit.koil.api.util.file.media.image.AnimatedGifPlaybackSession;
 import com.spirit.koil.api.util.file.media.image.ImageTexture;
 import com.spirit.koil.api.util.file.media.image.ImageTextureService;
@@ -124,6 +125,7 @@ public class FileExplorerScreen extends Screen {
     private static final int EXPLORER_SCROLLBAR_THUMB_WIDTH = 5;
     private static final int MAX_SEARCH_RESULTS = 64;
     private static final String TOP_BAR_BACK_LABEL = "<";
+    private static final String TOP_BAR_NEW_LABEL = "New";
     private static final String TOP_BAR_OPEN_LABEL = "Open";
     private static final String TOP_BAR_HOME_LABEL = "Root";
     private static final String TOP_BAR_RELOAD_LABEL = "Reset";
@@ -150,8 +152,12 @@ public class FileExplorerScreen extends Screen {
     }
 
     public static FileExplorerScreen openAtPath(String path) {
+        return openAtPath(path, null);
+    }
+
+    public static FileExplorerScreen openAtPath(String path, Screen parentOverride) {
         setInitialPath(path);
-        return new FileExplorerScreen();
+        return new FileExplorerScreen(parentOverride);
     }
 
     public static FileExplorerScreen openAtLastVisitedPath() {
@@ -286,8 +292,10 @@ public class FileExplorerScreen extends Screen {
     private final List<FolderPreviewClickTarget> folderPreviewClickTargets = new ArrayList<>();
     private static final long DOUBLE_CLICK_TIME_THRESHOLD = 350;
     private TextFieldWidget pathInput;
+    private final PopupMenu topBarNewMenu = new PopupMenu();
     private final PopupMenu topBarOpenMenu = new PopupMenu();
     private final PopupMenu previewOpenMenu = new PopupMenu();
+    private int[] topBarNewBounds = null;
     private int[] topBarOpenBounds = null;
     private int[] previewOpenBounds = null;
     private int[] previewRenameBounds = null;
@@ -297,6 +305,12 @@ public class FileExplorerScreen extends Screen {
     private TextFieldWidget renameInput;
     private boolean renameMode = false;
     private File renameTarget = null;
+    private boolean createMode = false;
+    private boolean createFolderMode = false;
+    private String createErrorMessage = "";
+    private int[] createPanelBounds = null;
+    private int[] createCommitBounds = null;
+    private int[] createCancelBounds = null;
     private boolean showDeleteConfirmPopup = false;
     private File deleteTarget = null;
     private List<String> pathSuggestions;
@@ -336,10 +350,29 @@ public class FileExplorerScreen extends Screen {
     private int previewScrollbarVisibleRows;
     private boolean previewScrollbarFolderMode;
     public FileExplorerScreen() {
+        this(null);
+    }
+
+    public FileExplorerScreen(Screen parentOverride) {
         super(Text.literal("Title"));
+        if (parentOverride != null) {
+            this.parentScreen = sanitizeParentScreen(parentOverride);
+            return;
+        }
         MinecraftClient client = MinecraftClient.getInstance();
         Screen current = client == null ? null : client.currentScreen;
-        this.parentScreen = current instanceof FileExplorerScreen ? null : current;
+        this.parentScreen = sanitizeParentScreen(current instanceof FileExplorerScreen ? null : current);
+    }
+
+    public Screen getReturnParentScreen() {
+        return this.parentScreen;
+    }
+
+    private static Screen sanitizeParentScreen(Screen parent) {
+        if (parent instanceof FileEditorScreen editorParent) {
+            return editorParent.getNavigationParentScreen();
+        }
+        return parent;
     }
 
     @Override
@@ -412,8 +445,8 @@ public class FileExplorerScreen extends Screen {
     public void tick() {
         reloadIcons();
         if (renameInput != null) {
-            renameInput.setVisible(renameMode);
-            renameInput.setEditable(renameMode);
+            renameInput.setVisible(renameMode || createMode);
+            renameInput.setEditable(renameMode || createMode);
         }
         if (activeVisualSession != null) {
             activeVisualSession.update(System.currentTimeMillis());
@@ -460,6 +493,7 @@ public class FileExplorerScreen extends Screen {
 
     private void navigateBack() {
         cancelRename();
+        cancelCreate();
         stopSelectedAudioIfActive();
         String currentPath = pathInput.getText();
         if (currentPath.equals("/")) {
@@ -483,6 +517,7 @@ public class FileExplorerScreen extends Screen {
         hoveredTruncatedFileNameMouseY = mouseY;
         int topBarBackground = withAlpha(uiColorContentBase, 176);
         int topPanelBackground = withAlpha(uiColorContentBase, 196);
+        int newButtonX = getTopBarNewButtonX();
         int rightButtonsX = getTopBarOpenButtonX();
         KoilScreenBackgrounds.render(context, client, this.width, this.height);
         context.fill(0, 0, this.width, 40, topPanelBackground);
@@ -508,6 +543,8 @@ public class FileExplorerScreen extends Screen {
         context.drawBorder(0, 70, 170, this.height,  new Color(uiColorBackgroundBorder, true).getRGB());
 
         renderTopBarButton(context, 10, TOP_BAR_BACK_LABEL);
+        renderTopBarButton(context, newButtonX, TOP_BAR_NEW_LABEL);
+        topBarNewBounds = new int[]{newButtonX, TopBarLayout.BUTTON_Y, getTopBarButtonWidth(TOP_BAR_NEW_LABEL), TopBarLayout.BUTTON_HEIGHT};
         renderTopBarButton(context, rightButtonsX, TOP_BAR_OPEN_LABEL);
         topBarOpenBounds = new int[]{rightButtonsX, TopBarLayout.BUTTON_Y, getTopBarButtonWidth(TOP_BAR_OPEN_LABEL), TopBarLayout.BUTTON_HEIGHT};
         renderTopBarButton(context, getTopBarHomeButtonX(), TOP_BAR_HOME_LABEL);
@@ -573,6 +610,8 @@ public class FileExplorerScreen extends Screen {
         if (showSuggestions) {
             renderPathSuggestions(context);
         }
+        renderCreateNamePanel(context);
+        topBarNewMenu.render(context, mouseX, mouseY);
         topBarOpenMenu.render(context, mouseX, mouseY);
         previewOpenMenu.render(context, mouseX, mouseY);
         if (showDeleteConfirmPopup) {
@@ -905,6 +944,13 @@ public class FileExplorerScreen extends Screen {
         if (showDeleteConfirmPopup) {
             return handleDeleteConfirmClick(mouseX, mouseY, button);
         }
+        if (topBarNewMenu.isOpen() && (topBarNewBounds == null || !isWithinBounds(topBarNewBounds, mouseX, mouseY))) {
+            MenuEntry selected = topBarNewMenu.click(mouseX, mouseY);
+            if (selected != null) {
+                handleTopBarNewAction(selected.id());
+                return true;
+            }
+        }
         if (topBarOpenMenu.isOpen() && (topBarOpenBounds == null || !isWithinBounds(topBarOpenBounds, mouseX, mouseY))) {
             MenuEntry selected = topBarOpenMenu.click(mouseX, mouseY);
             if (selected != null) {
@@ -948,6 +994,27 @@ public class FileExplorerScreen extends Screen {
                 return true;
             }
         }
+        if (createMode) {
+            if (button == 0 && isWithinBounds(createCommitBounds, mouseX, mouseY)) {
+                UiSoundHelper.playButtonClick();
+                commitCreate();
+                return true;
+            }
+            if (button == 0 && isWithinBounds(createCancelBounds, mouseX, mouseY)) {
+                UiSoundHelper.playButtonClick();
+                cancelCreate();
+                return true;
+            }
+            if (renameInput != null && renameInput.isMouseOver(mouseX, mouseY)) {
+                renameInput.setFocused(true);
+                return super.mouseClicked(mouseX, mouseY, button);
+            }
+            if (!isWithinBounds(createPanelBounds, mouseX, mouseY)) {
+                cancelCreate();
+                return true;
+            }
+            return true;
+        }
 
         if (button == 0 && isOverFileListScrollbar(mouseX, mouseY)) {
             int thumbY = getFileListScrollbarThumbY();
@@ -975,10 +1042,21 @@ public class FileExplorerScreen extends Screen {
             return true;
         }
         int rightButtonsX = getTopBarOpenButtonX();
+        if (isTopBarButtonClicked(mouseX, mouseY, getTopBarNewButtonX(), getTopBarButtonWidth(TOP_BAR_NEW_LABEL))) {
+            if (button == 0) {
+                UiSoundHelper.playButtonClick();
+            }
+            topBarOpenMenu.close();
+            previewOpenMenu.close();
+            topBarNewMenu.toggleAtPointer(mouseX, mouseY, this.width, this.height, buildTopBarNewMenuItems());
+            return true;
+        }
         if (isTopBarButtonClicked(mouseX, mouseY, rightButtonsX, getTopBarButtonWidth(TOP_BAR_OPEN_LABEL))) {
             if (button == 0) {
                 UiSoundHelper.playButtonClick();
             }
+            topBarNewMenu.close();
+            previewOpenMenu.close();
             topBarOpenMenu.toggleAtPointer(mouseX, mouseY, this.width, this.height, buildTopBarOpenMenuItems());
             return true;
         }
@@ -1201,6 +1279,16 @@ public class FileExplorerScreen extends Screen {
             }
             return super.keyPressed(keyCode, scanCode, modifiers);
         }
+        if (createMode && renameInput != null && renameInput.isFocused()) {
+            if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+                commitCreate();
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                cancelCreate();
+                return true;
+            }
+        }
         if (renameMode && renameInput != null && renameInput.isFocused()) {
             if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
                 commitRename();
@@ -1222,7 +1310,7 @@ public class FileExplorerScreen extends Screen {
 
     @Override
     public boolean charTyped(char chr, int modifiers) {
-        if (renameMode && renameInput != null && renameInput.isFocused()) {
+        if ((renameMode || createMode) && renameInput != null && renameInput.isFocused()) {
             return super.charTyped(chr, modifiers);
         }
         return super.charTyped(chr, modifiers);
@@ -1380,6 +1468,7 @@ public class FileExplorerScreen extends Screen {
         if (target == null) {
             return;
         }
+        cancelCreate();
         renameMode = true;
         renameTarget = target;
         renameInput.setText(target.getName());
@@ -1397,6 +1486,123 @@ public class FileExplorerScreen extends Screen {
             renameInput.setFocused(false);
             renameInput.setVisible(false);
             renameInput.setEditable(false);
+        }
+    }
+
+    private void beginCreate(boolean folder) {
+        if (currentDirectory == null || !currentDirectory.isDirectory()) {
+            return;
+        }
+        cancelRename();
+        createMode = true;
+        createFolderMode = folder;
+        createErrorMessage = "";
+        String defaultName = nextAvailableChildName(folder ? "New Folder" : "New File.txt");
+        renameInput.setText(defaultName);
+        renameInput.setVisible(true);
+        renameInput.setEditable(true);
+        renameInput.setFocused(true);
+        renameInput.setSelectionStart(0);
+        renameInput.setSelectionEnd(defaultName.length());
+    }
+
+    private void cancelCreate() {
+        createMode = false;
+        createFolderMode = false;
+        createErrorMessage = "";
+        createPanelBounds = null;
+        createCommitBounds = null;
+        createCancelBounds = null;
+        if (renameInput != null && !renameMode) {
+            renameInput.setFocused(false);
+            renameInput.setVisible(false);
+            renameInput.setEditable(false);
+        }
+    }
+
+    private void commitCreate() {
+        if (!createMode || renameInput == null || currentDirectory == null || !currentDirectory.isDirectory()) {
+            return;
+        }
+        String requestedName = renameInput.getText() == null ? "" : renameInput.getText().trim();
+        if (!isSafeNewChildName(requestedName)) {
+            createErrorMessage = "Use a normal file name.";
+            renameInput.setFocused(true);
+            return;
+        }
+        File target = new File(currentDirectory, requestedName);
+        if (target.exists()) {
+            target = new File(currentDirectory, nextAvailableChildName(requestedName));
+        }
+        try {
+            if (createFolderMode) {
+                Files.createDirectory(target.toPath());
+            } else {
+                Files.createFile(target.toPath());
+            }
+        } catch (IOException | SecurityException exception) {
+            createErrorMessage = "Could not create " + (createFolderMode ? "folder." : "file.");
+            renameInput.setFocused(true);
+            return;
+        }
+        File created = target;
+        cancelCreate();
+        refreshExplorerAfterCreate(created);
+    }
+
+    private boolean isSafeNewChildName(String name) {
+        return name != null
+                && !name.isBlank()
+                && !name.equals(".")
+                && !name.equals("..")
+                && !name.contains("/")
+                && !name.contains("\\");
+    }
+
+    private String nextAvailableChildName(String requestedName) {
+        if (currentDirectory == null || requestedName == null || requestedName.isBlank()) {
+            return requestedName == null || requestedName.isBlank() ? "New File.txt" : requestedName;
+        }
+        File direct = new File(currentDirectory, requestedName);
+        if (!direct.exists()) {
+            return requestedName;
+        }
+        String base = requestedName;
+        String extension = "";
+        int dot = requestedName.lastIndexOf('.');
+        if (!createFolderMode && dot > 0 && dot < requestedName.length() - 1) {
+            base = requestedName.substring(0, dot);
+            extension = requestedName.substring(dot);
+        }
+        for (int index = 1; index < 1000; index++) {
+            String candidate = base + " (" + index + ")" + extension;
+            if (!new File(currentDirectory, candidate).exists()) {
+                return candidate;
+            }
+        }
+        return base + " (" + System.currentTimeMillis() + ")" + extension;
+    }
+
+    private void refreshExplorerAfterCreate(File created) {
+        if (currentDirectory == null || created == null) {
+            return;
+        }
+        loadFileItems(currentDirectory);
+        FileItem matchingItem = findFileItem(created);
+        if (matchingItem != null) {
+            if (created.isFile()) {
+                openFile(matchingItem);
+            } else {
+                selectedFileItem = matchingItem;
+                fileContent = null;
+                syncPathInputToTarget(created);
+            }
+        } else {
+            selectedFileItem = created.isFile()
+                    ? new FileItem(created.getName(), classifyFileType(created), created)
+                    : new FileItem(created.getName(), FileType.FOLDER, created);
+            fileContent = null;
+            syncPathInputToTarget(created);
         }
     }
 
@@ -1638,6 +1844,7 @@ public class FileExplorerScreen extends Screen {
             return;
         }
 
+        cancelCreate();
         stopSelectedAudioIfActive();
         closeVisualSession();
         selectedFileItem = null;
@@ -2042,71 +2249,39 @@ public class FileExplorerScreen extends Screen {
         if (session == null) {
             return;
         }
-        int barHeight = 12;
-        int controlPadding = 6;
-        int iconSize = 16;
-        int footerHeight = 30;
-        int controlsY = y + height - footerHeight + 7;
-        int progressX = x + controlPadding + (gifOnly ? 0 : (iconSize * 2) + 8);
-        int progressWidth = Math.max(48, width - (progressX - x) - controlPadding);
-        int progressY = controlsY + 3;
         int fillColor = new Color(uiColorIDEAudioTimestampBarFill, true).getRGB();
         int borderColor = new Color(uiColorIDEAudioTimestampBarBorder, true).getRGB();
+        int lineColor = new Color(uiColorIDEAudioTimestampBarLine, true).getRGB();
         int textColor = new Color(uiColorIDEAudioTimestampText, true).getRGB();
-        int overlayColor = withAlpha(uiColorContentBase, 176);
-
-        context.drawBorder(x, y, width, height, new Color(uiColorBackgroundBorder, true).getRGB());
-
-        visualTimestampBounds = null;
-        visualPrimaryControlBounds = null;
-        visualSecondaryControlBounds = null;
-        visualPlayOverlayBounds = null;
-
-        if (!hovered) {
-            return;
-        }
-
-        context.fill(x, y + height - footerHeight, x + width, y + height, overlayColor);
-
-        if (!gifOnly) {
-            visualPrimaryControlBounds = new int[]{x + controlPadding, controlsY, iconSize, iconSize};
-            visualSecondaryControlBounds = new int[]{x + controlPadding + iconSize + 4, controlsY, iconSize, iconSize};
-            if (session.state() == VisualPlaybackState.PLAYING) {
-                context.drawTexture(PAUSE_BUTTON, visualPrimaryControlBounds[0], visualPrimaryControlBounds[1], 0, 0, iconSize, iconSize, iconSize, iconSize);
-            } else {
-                context.drawTexture(PLAY_BUTTON, visualPrimaryControlBounds[0], visualPrimaryControlBounds[1], 0, 0, iconSize, iconSize, iconSize, iconSize);
-            }
-            context.drawTexture(STOP_BUTTON, visualSecondaryControlBounds[0], visualSecondaryControlBounds[1], 0, 0, iconSize, iconSize, iconSize, iconSize);
-
-            if (session.state() != VisualPlaybackState.PLAYING) {
-                int overlaySize = Math.max(28, Math.min(56, Math.min(width, height) / 4));
-                int overlayX = x + (width - overlaySize) / 2;
-                int overlayY = y + Math.max(12, (height - footerHeight - overlaySize) / 2);
-                visualPlayOverlayBounds = new int[]{overlayX, overlayY, overlaySize, overlaySize};
-                context.fill(overlayX, overlayY, overlayX + overlaySize, overlayY + overlaySize, withAlpha(uiColorContentBase, 188));
-                context.drawBorder(overlayX, overlayY, overlaySize, overlaySize, new Color(uiColorBackgroundBorder, true).getRGB());
-                int playSize = Math.max(16, overlaySize - 14);
-                int playX = overlayX + (overlaySize - playSize) / 2;
-                int playY = overlayY + (overlaySize - playSize) / 2;
-                context.drawTexture(PLAY_BUTTON, playX, playY, 0, 0, playSize, playSize, playSize, playSize);
-            }
-        }
-
-        if (session.canSeek()) {
-            float progress = session.durationMillis() <= 0L ? 0.0F : Math.max(0.0F, Math.min(1.0F, session.positionMillis() / (float) session.durationMillis()));
-            int filledWidth = (int) (progressWidth * progress);
-            visualTimestampBounds = new int[]{progressX, progressY, progressWidth, barHeight};
-            context.fill(progressX, progressY, progressX + filledWidth, progressY + barHeight, fillColor);
-            context.drawBorder(progressX, progressY, progressWidth, barHeight, borderColor);
-            context.fill(progressX + filledWidth - 1, progressY - 1, progressX + filledWidth + 1, progressY + barHeight + 1, new Color(uiColorIDEAudioTimestampBarLine, true).getRGB());
-
-            String currentTime = formatVideoDuration(session.positionMillis());
-            String totalTime = formatVideoDuration(session.durationMillis());
-            int labelY = progressY - 10;
-            context.drawText(this.textRenderer, currentTime, progressX, labelY, textColor, false);
-            int totalWidth = this.textRenderer.getWidth(totalTime);
-            context.drawText(this.textRenderer, totalTime, progressX + progressWidth - totalWidth, labelY, textColor, false);
-        }
+        VisualTransportControls.RenderResult layout = VisualTransportControls.renderPreviewFooter(
+                context,
+                this.textRenderer,
+                session,
+                new VisualTransportControls.PreviewFooterSpec(
+                        x,
+                        y,
+                        width,
+                        height,
+                        false,
+                        gifOnly,
+                        hovered,
+                        true,
+                        PLAY_BUTTON,
+                        PAUSE_BUTTON,
+                        STOP_BUTTON,
+                        new Color(uiColorBackgroundBorder, true).getRGB(),
+                        withAlpha(uiColorContentBase, 176),
+                        withAlpha(uiColorContentBase, 188),
+                        fillColor,
+                        borderColor,
+                        lineColor,
+                        textColor
+                )
+        );
+        visualPrimaryControlBounds = layout.primaryBounds();
+        visualSecondaryControlBounds = layout.secondaryBounds();
+        visualTimestampBounds = layout.timelineBounds();
+        visualPlayOverlayBounds = layout.overlayBounds();
     }
 
     private int getPreferredVisualPreviewHeight(int startY, boolean includeFooter) {
@@ -2332,26 +2507,7 @@ public class FileExplorerScreen extends Screen {
     }
 
     private FileType classifyFileType(File file) {
-        String fileName = normalizeSpecialFileName(file.getName()).toLowerCase();
-        if (ExternalImageLoader.isSupportedImageFile(file)) {
-            return FileType.IMAGE;
-        }
-        if (VideoService.isRecognizedVideoFile(file)) {
-            return FileType.VIDEO;
-        }
-        if (AudioManager.isRecognizedAudioFile(file)) {
-            return FileType.AUDIO;
-        }
-        if (fileName.endsWith(".zip") || fileName.endsWith(".rar") || fileName.endsWith(".7z") || fileName.endsWith(".tar") ||
-                fileName.endsWith(".gz") || fileName.endsWith(".bz2") || fileName.endsWith(".xz") || fileName.endsWith(".jar") ||
-                fileName.endsWith(".war") || fileName.endsWith(".ear")) {
-            return FileType.ZIP;
-        }
-        if (fileName.endsWith(".mcmeta") || fileName.endsWith(".mcfunction") || fileName.endsWith(".mcpack") ||
-                fileName.endsWith(".mctemplate")) {
-            return FileType.MCMETA;
-        }
-        return FileType.FILE;
+        return TextFileViewSupport.classifyFileType(file);
     }
 
     private int renderFolderPreview(DrawContext context, File folder, int x, int y) {
@@ -2801,6 +2957,40 @@ public class FileExplorerScreen extends Screen {
         context.drawText(this.textRenderer, label, textX, y + 4, text, false);
     }
 
+    private void renderCreateNamePanel(DrawContext context) {
+        if (!createMode || renameInput == null) {
+            return;
+        }
+        int panelWidth = Math.min(360, Math.max(292, this.width - 20));
+        int panelX = Math.max(8, Math.min(getTopBarNewButtonX(), this.width - panelWidth - 8));
+        int panelY = 70;
+        int panelHeight = createErrorMessage == null || createErrorMessage.isBlank() ? 58 : 70;
+        createPanelBounds = new int[]{panelX, panelY, panelWidth, panelHeight};
+        context.fill(panelX + 1, panelY + 2, panelX + panelWidth + 3, panelY + panelHeight + 3, 0x6A000000);
+        context.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight, withAlpha(uiColorContentBase, 238));
+        context.drawBorder(panelX, panelY, panelWidth, panelHeight, new Color(uiColorBackgroundBorder, true).getRGB());
+        context.fill(panelX, panelY, panelX + panelWidth, panelY + 18, withAlpha(uiColorHeader, 144));
+        context.drawText(this.textRenderer, createFolderMode ? "New Folder" : "New File", panelX + 8, panelY + 6, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
+
+        int inputY = panelY + 27;
+        int cancelWidth = 50;
+        int createWidth = 56;
+        int buttonGap = 5;
+        int inputWidth = panelWidth - 20 - createWidth - cancelWidth - (buttonGap * 2);
+        renameInput.setX(panelX + 8);
+        renameInput.setY(inputY - 1);
+        renameInput.setWidth(Math.max(120, inputWidth));
+        renameInput.setVisible(true);
+        renameInput.setEditable(true);
+        createCommitBounds = new int[]{panelX + panelWidth - 8 - createWidth - cancelWidth - buttonGap, inputY - 1, createWidth, 18};
+        createCancelBounds = new int[]{panelX + panelWidth - 8 - cancelWidth, inputY - 1, cancelWidth, 18};
+        renderInlineActionButton(context, createCommitBounds[0], createCommitBounds[1], createCommitBounds[2], createCommitBounds[3], "Create");
+        renderInlineActionButton(context, createCancelBounds[0], createCancelBounds[1], createCancelBounds[2], createCancelBounds[3], "Cancel");
+        if (createErrorMessage != null && !createErrorMessage.isBlank()) {
+            context.drawText(this.textRenderer, createErrorMessage, panelX + 8, panelY + 54, new Color(uiColorWarningPromptText, true).getRGB(), false);
+        }
+    }
+
     private void drawDeleteConfirmPopup(DrawContext context) {
         int popupWidth = 360;
         int popupHeight = 164;
@@ -2828,23 +3018,27 @@ public class FileExplorerScreen extends Screen {
     }
 
     private List<String> getTopBarActionLabels() {
-        return List.of(TOP_BAR_OPEN_LABEL, TOP_BAR_HOME_LABEL, TOP_BAR_RELOAD_LABEL);
+        return List.of(TOP_BAR_NEW_LABEL, TOP_BAR_OPEN_LABEL, TOP_BAR_HOME_LABEL, TOP_BAR_RELOAD_LABEL);
     }
 
     private TopBarLayout getTopBarLayout() {
         return new TopBarLayout(this.textRenderer, this.width);
     }
 
-    private int getTopBarOpenButtonX() {
+    private int getTopBarNewButtonX() {
         return getTopBarLayout().rightButtonX(getTopBarActionLabels(), 0);
     }
 
-    private int getTopBarHomeButtonX() {
+    private int getTopBarOpenButtonX() {
         return getTopBarLayout().rightButtonX(getTopBarActionLabels(), 1);
     }
 
-    private int getTopBarReloadButtonX() {
+    private int getTopBarHomeButtonX() {
         return getTopBarLayout().rightButtonX(getTopBarActionLabels(), 2);
+    }
+
+    private int getTopBarReloadButtonX() {
+        return getTopBarLayout().rightButtonX(getTopBarActionLabels(), 3);
     }
 
     private int getTopBarButtonWidth(String label) {
@@ -2861,6 +3055,20 @@ public class FileExplorerScreen extends Screen {
 
     private List<MenuEntry> buildTopBarOpenMenuItems() {
         return buildOpenMenuItemsForTarget(getActiveOpenTarget());
+    }
+
+    private List<MenuEntry> buildTopBarNewMenuItems() {
+        return List.of(
+                new MenuEntry("new_file", "File"),
+                new MenuEntry("new_folder", "Folder")
+        );
+    }
+
+    private void handleTopBarNewAction(String actionId) {
+        switch (actionId) {
+            case "new_file" -> beginCreate(false);
+            case "new_folder" -> beginCreate(true);
+        }
     }
 
     private List<MenuEntry> buildOpenMenuItemsForTarget(File target) {
@@ -2949,7 +3157,7 @@ public class FileExplorerScreen extends Screen {
     }
 
     private boolean isEditableTextFile(File file) {
-        return file != null && file.isFile() && isEditableTextType(classifyFileType(file)) && isTextFile(file);
+        return TextFileViewSupport.isEditableTextFile(file);
     }
 
     private void openPathInputTarget() {
@@ -3032,20 +3240,7 @@ public class FileExplorerScreen extends Screen {
     }
 
     private boolean isTextFile(File file) {
-        String fileName = normalizeSpecialFileName(file.getName()).toLowerCase();
-        return fileName.endsWith(".txt") || fileName.endsWith(".json") || fileName.endsWith(".json5") || fileName.endsWith(".log") || fileName.endsWith(".kwds") ||
-                fileName.endsWith(".properties") || fileName.endsWith(".db") || fileName.endsWith(".dat") || fileName.endsWith(".dat_old") || fileName.endsWith(".class") ||
-                fileName.endsWith(".mcmeta") || fileName.endsWith(".toml") || fileName.endsWith(".mcfunction") || fileName.endsWith(".mcpack") || fileName.endsWith(".mctemplate") ||
-                fileName.endsWith(".xml") || fileName.endsWith(".yml") || fileName.endsWith(".yaml") || fileName.endsWith(".ini") ||
-                fileName.endsWith(".config") || fileName.endsWith(".conf") || fileName.endsWith(".css") || fileName.endsWith(".js") ||
-                fileName.endsWith(".html") || fileName.endsWith(".c") || fileName.endsWith(".cpp") || fileName.endsWith(".h") ||
-                fileName.endsWith(".hpp") || fileName.endsWith(".java") || fileName.endsWith(".py") || fileName.endsWith(".rb") ||
-                fileName.endsWith(".php") || fileName.endsWith(".sql") || fileName.endsWith(".sh") || fileName.endsWith(".bat") ||
-                fileName.endsWith(".ps1") || fileName.endsWith(".md") || fileName.endsWith(".rtf") || fileName.endsWith(".doc") ||
-                fileName.endsWith(".docx") || fileName.endsWith(".odt") || fileName.endsWith(".pdf") || fileName.endsWith(".tex") ||
-                fileName.endsWith(".placebo") || fileName.endsWith(".glsl") || fileName.endsWith(".vert") || fileName.endsWith(".frag") ||
-                fileName.endsWith(".geom") || fileName.endsWith(".comp") || fileName.endsWith(".vsh") || fileName.endsWith(".fsh") ||
-                fileName.endsWith(".ktl");
+        return TextFileViewSupport.isTextFile(file);
     }
 
     private boolean isDisabledFile(File file) {
@@ -3063,7 +3258,7 @@ public class FileExplorerScreen extends Screen {
     }
 
     private boolean isEditableTextType(FileType fileType) {
-        return fileType == FileType.FILE || fileType == FileType.MCMETA;
+        return TextFileViewSupport.isEditableTextType(fileType);
     }
 
     private boolean canPreviewOpenTarget(File file) {

@@ -7,15 +7,11 @@ import net.minecraft.text.Text;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.Iterator;
-import java.util.HashMap;
-import java.util.Map;
 
 public final class LocalMultilineChatBridge {
     private static final int MAX_PENDING = 8;
     private static final long MAX_AGE_MS = 10000L;
     private static final Deque<PendingLine> PENDING = new ArrayDeque<>();
-    private static final String[] INDENT_GLYPHS = {" ", "\u00A0", "\u2006", "\u2009", "\u200A"};
-    private static final Map<Integer, String> INDENT_CACHE = new HashMap<>();
 
     private LocalMultilineChatBridge() {
     }
@@ -58,7 +54,7 @@ public final class LocalMultilineChatBridge {
         return message;
     }
 
-    private static String indentContinuationLines(String original, String prefix) {
+    public static String indentContinuationLines(String original, String prefix) {
         String[] lines = original.split("\n", -1);
         if (lines.length <= 1) {
             return original;
@@ -73,70 +69,19 @@ public final class LocalMultilineChatBridge {
         return builder.toString();
     }
 
-    private static String indentForPrefix(String prefix) {
+    public static String indentForPrefix(String prefix) {
+        if (prefix == null || prefix.isEmpty()) {
+            return "";
+        }
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.textRenderer == null || prefix == null || prefix.isEmpty()) {
-            return " ".repeat(prefix == null ? 0 : prefix.length());
+        TextRenderer renderer = client == null ? null : client.textRenderer;
+        if (renderer == null) {
+            return " ".repeat(Math.max(0, prefix.length()));
         }
-
-        TextRenderer renderer = client.textRenderer;
-        int targetWidth = renderer.getWidth(prefix);
-        if (targetWidth <= 0) {
-            return "";
-        }
-
-        String cached = INDENT_CACHE.get(targetWidth);
-        if (cached != null) {
-            return cached;
-        }
-
-        String indent = buildMeasuredIndent(renderer, targetWidth);
-        INDENT_CACHE.put(targetWidth, indent);
-        return indent;
-    }
-
-    private static String buildMeasuredIndent(TextRenderer renderer, int targetWidth) {
-        int maxGlyphWidth = 0;
-        for (String glyph : INDENT_GLYPHS) {
-            maxGlyphWidth = Math.max(maxGlyphWidth, renderer.getWidth(glyph));
-        }
-        if (maxGlyphWidth <= 0) {
-            return "";
-        }
-
-        int maxWidth = targetWidth + maxGlyphWidth;
-        String[] best = new String[maxWidth + 1];
-        best[0] = "";
-        for (int width = 0; width <= maxWidth; width++) {
-            if (best[width] == null) {
-                continue;
-            }
-            for (String glyph : INDENT_GLYPHS) {
-                int glyphWidth = renderer.getWidth(glyph);
-                if (glyphWidth <= 0 || width + glyphWidth > maxWidth) {
-                    continue;
-                }
-                String candidate = best[width] + glyph;
-                if (best[width + glyphWidth] == null || candidate.length() < best[width + glyphWidth].length()) {
-                    best[width + glyphWidth] = candidate;
-                }
-            }
-        }
-
-        int bestWidth = 0;
-        int bestDelta = Integer.MAX_VALUE;
-        for (int width = 0; width <= maxWidth; width++) {
-            if (best[width] == null) {
-                continue;
-            }
-            int delta = Math.abs(width - targetWidth);
-            if (delta < bestDelta || delta == bestDelta && width <= targetWidth && bestWidth > targetWidth) {
-                bestWidth = width;
-                bestDelta = delta;
-            }
-        }
-
-        return best[bestWidth] == null ? " ".repeat(Math.max(0, targetWidth / Math.max(1, renderer.getWidth(" ")))) : best[bestWidth];
+        int prefixWidth = renderer.getWidth(prefix);
+        int spaceWidth = Math.max(1, renderer.getWidth(" "));
+        int spaces = Math.max(0, (int) Math.ceil(prefixWidth / (double) spaceWidth));
+        return " ".repeat(spaces);
     }
 
     private record PendingLine(String fallback, String original, long createdAtMillis) {

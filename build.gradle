@@ -55,13 +55,18 @@ dependencies {
 	modImplementation("net.fabricmc:fabric-language-kotlin:1.12.3+kotlin.2.0.21")
 
 	// OkHttp and Gson dependencies
-	implementation 'com.squareup.okhttp3:okhttp:4.9.1'
-	implementation 'com.squareup.okio:okio:2.10.0'
-	implementation 'com.google.code.gson:gson:2.8.8'
+	implementation 'com.squareup.okhttp3:okhttp:4.9.2'
+	include 'com.squareup.okhttp3:okhttp:4.9.2'
+	implementation 'com.squareup.okio:okio:3.4.0'
+	include 'com.squareup.okio:okio:3.4.0'
+	implementation 'com.google.code.gson:gson:2.8.9'
+	include 'com.google.code.gson:gson:2.8.9'
 	implementation 'org.sejda.imageio:webp-imageio:0.1.6'
 	include 'org.sejda.imageio:webp-imageio:0.1.6'
 	implementation 'org.yaml:snakeyaml:2.3'
 	include 'org.yaml:snakeyaml:2.3'
+	implementation 'org.scilab.forge:jlatexmath:1.0.7'
+	include 'org.scilab.forge:jlatexmath:1.0.7'
 
 	// Kotlin standard library
 	implementation "org.jetbrains.kotlin:kotlin-stdlib:1.8.10"
