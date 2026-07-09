@@ -35,7 +35,6 @@ public class Replacer {
                     rule.type == ReplacementRule.Type.EXPRESSION) {
 
                 if (beforeCursor.endsWith(rule.trigger)) {
-
                     if (best == null ||
                             rule.trigger.length() > bestMatch.length()) {
 
@@ -143,7 +142,6 @@ public class Replacer {
 
 
             case FONT -> {
-
                 String expression =
                         bestMatcher.group(1);
 

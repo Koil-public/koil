@@ -1,5 +1,7 @@
 package com.spirit.koil.chat.internal.replace;
 
+import net.minecraft.network.packet.s2c.play.BlockEntityUpdateS2CPacket;
+
 import java.util.List;
 
 public class ReplacementRule {
@@ -33,7 +35,6 @@ public class ReplacementRule {
                 || type == Type.FONT;
     }
 
-
     public static final List<ReplacementRule> RULES = List.of(
             new ReplacementRule("@([A-Za-z]+)", "", Type.COMMAND),
 
@@ -60,9 +61,7 @@ public class ReplacementRule {
             new ReplacementRule("cb", "\\sqrt[3]{|}", Type.EXPRESSION),
             new ReplacementRule("fourth", "\\sqrt[4]{|}", Type.EXPRESSION),
 
-            new ReplacementRule("^", "^{|}", Type.EXPRESSION),
             new ReplacementRule("_", "_{|}", Type.EXPRESSION),
-            new ReplacementRule("^^", "^{|}", Type.EXPRESSION),
             new ReplacementRule("__", "_{|}", Type.EXPRESSION),
 
             new ReplacementRule("text", "\\text{|}", Type.EXPRESSION),
@@ -191,6 +190,8 @@ public class ReplacementRule {
             new ReplacementRule("@Y", "\\Psi"),
             new ReplacementRule("@W", "\\Omega"),
 
-            new ReplacementRule("(", "(|)")
+            new ReplacementRule("(", "(|)"),
+            new ReplacementRule("{", "{|}"),
+            new ReplacementRule("[", "[|]")
     );
 }
