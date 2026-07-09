@@ -15,6 +15,8 @@ import com.spirit.koil.chat.internal.RichChatPrivateMessageBridge;
 import com.spirit.koil.chat.internal.RichChatPreviewFormatter;
 import com.spirit.koil.chat.internal.RichChatMessageStore;
 import com.spirit.koil.chat.internal.latex.RichChatLatexDetector;
+import com.spirit.koil.chat.internal.replace.EditorResult;
+import com.spirit.koil.chat.internal.replace.Replacer;
 import com.spirit.koil.chat.internal.sync.RichChatSyncClientBridge;
 import com.spirit.koil.chat.internal.sync.RichChatSyncedMessageBridge;
 import com.spirit.koil.chat.internal.upload.LocalRichAttachmentBridge;
@@ -118,6 +120,29 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         koil$chatScrollbarDragging = false;
         koil$pmMenu.close();
         koil$pmTargetMenu.close();
+    }
+
+    @Inject(method = "keyPressed", at = @At("TAIL"))
+    private void koil$applyLatexReplacement(int keyCode, int scanCode, int modifiers, CallbackInfoReturnable<Boolean> cir) {
+        if (chatField == null) {
+            return;
+        }
+
+        String text = chatField.getText();
+        int cursor = chatField.getCursor();
+
+        if (!RichChatLatexDetector.isInsideLatex(text, cursor)) {
+            return;
+        }
+
+        EditorResult result = Replacer.apply(text, cursor);
+
+        if (result.text().equals(text)) {
+            return;
+        }
+
+        chatField.setText(result.text());
+        chatField.setCursor(result.cursor());
     }
 
     @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)

@@ -12,3 +12,4 @@ public interface MultiplayerServerListWidgetAccessor {
         throw new AssertionError();
     }
 }
+

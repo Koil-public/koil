@@ -13,6 +13,26 @@ public final class RichChatLatexDetector {
     private RichChatLatexDetector() {
     }
 
+    public static boolean isInsideLatex(String input, int cursor) {
+        String text = input == null ? "" : input.replace("\r\n", "\n").replace('\r', '\n');
+
+        List<Match> matches = new ArrayList<>();
+        collectDelimited(matches, text, "```latex", "```", Kind.DOCUMENT);
+        collectDelimited(matches, text, "```tex", "```", Kind.DOCUMENT);
+        collectDelimited(matches, text, "$$", "$$", Kind.BLOCK);
+        collectDelimited(matches, text, "\\[", "\\]", Kind.BLOCK);
+        collectDelimited(matches, text, "\\(", "\\)", Kind.INLINE);
+        collectInlineDollar(matches, text);
+
+        for (Match match : nonOverlapping(matches)) {
+            if (cursor > match.start && cursor < match.end) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static Result detect(String input) {
         String text = input == null ? "" : input.replace("\r\n", "\n").replace('\r', '\n');
         if (text.isBlank()) {
@@ -202,7 +222,7 @@ public final class RichChatLatexDetector {
         }
     }
 
-    private record Match(int start, int end, String source, String openDelimiter, Kind kind) {
+    public record Match(int start, int end, String source, String openDelimiter, Kind kind) {
     }
 
     public record Result(
