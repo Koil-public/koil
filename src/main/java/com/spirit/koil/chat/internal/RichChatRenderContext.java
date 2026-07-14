@@ -1,0 +1,26 @@
+package com.spirit.koil.chat.internal;
+
+import com.spirit.koil.chat.internal.latex.RichChatLatexTextureCache;
+
+public final class RichChatRenderContext {
+    private static volatile int chatViewportOffsetY;
+
+    private RichChatRenderContext() {
+    }
+
+    public static void beginChatHudFrame(int viewportOffsetY) {
+        chatViewportOffsetY = viewportOffsetY;
+    }
+
+    public static void endChatHudFrame() {
+        chatViewportOffsetY = 0;
+    }
+
+    public static int currentChatViewportTop() {
+        return RichChatLatexTextureCache.currentChatViewportTop() + chatViewportOffsetY;
+    }
+
+    public static int currentChatViewportBottom() {
+        return RichChatLatexTextureCache.currentChatViewportBottom() + chatViewportOffsetY;
+    }
+}
