@@ -19,7 +19,9 @@ public final class SuggestionPopupRenderer {
     public static final int ROW_HEIGHT = 15;
     public static final int PADDING = 6;
     public static final int KIND_COLUMN_WIDTH = 24;
+    public static final int KIND_VALUE_GAP = 2;
     public static final int DETAIL_MAX_WIDTH = 104;
+    public static final int MAX_VISIBLE_ROWS = 15;
 
     private SuggestionPopupRenderer() {
     }
@@ -44,20 +46,31 @@ public final class SuggestionPopupRenderer {
             }
 
             int kindX = x + PADDING;
-            int valueX = kindX + KIND_COLUMN_WIDTH;
-            int trailingValueWidth = entry.detail().isBlank() ? 0 : renderer.getWidth(entry.value());
-            int leftWidth = Math.max(40, width - (valueX - x) - PADDING - (trailingValueWidth > 0 ? trailingValueWidth + 8 : 0));
-            String leftText = entry.detail().isBlank() ? entry.value() : entry.detail();
-            int leftColor = entry.detail().isBlank() ? new Color(uiColorContentBaseTitleText, true).getRGB() : new Color(uiColorHeaderSubTitleText, true).getRGB();
+            int valueX = kindX + KIND_COLUMN_WIDTH + KIND_VALUE_GAP;
+            int trailingDetailWidth = entry.detail().isBlank() ? 0 : Math.min(DETAIL_MAX_WIDTH, renderer.getWidth(entry.detail()));
+            int leftWidth = Math.max(40, width - (valueX - x) - PADDING - (trailingDetailWidth > 0 ? trailingDetailWidth + 8 : 0));
+            String leftText = entry.value();
+            int leftColor = new Color(uiColorContentBaseTitleText, true).getRGB();
 
             context.drawText(renderer, entry.kind(), kindX, rowY + 4, entry.kindColor(), false);
             context.drawText(renderer, fitText(renderer, leftText, leftWidth), valueX, rowY + 4, leftColor, false);
             if (!entry.detail().isBlank()) {
-                int trailingX = x + width - PADDING - trailingValueWidth;
-                context.drawText(renderer, fitText(renderer, entry.value(), Math.max(18, trailingValueWidth)), trailingX, rowY + 4, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
+                int trailingX = x + width - PADDING - trailingDetailWidth;
+                context.drawText(renderer, fitText(renderer, entry.detail(), Math.max(18, trailingDetailWidth)), trailingX, rowY + 4, new Color(uiColorHeaderSubTitleText, true).getRGB(), false);
             }
         }
         context.getMatrices().pop();
+    }
+
+    public static boolean containsRow(int popupX, int popupY, int popupWidth, int popupHeight, double mouseX, double mouseY) {
+        return mouseX >= popupX
+                && mouseX <= popupX + popupWidth
+                && mouseY >= popupY
+                && mouseY <= popupY + popupHeight;
+    }
+
+    public static int rowAt(int popupY, double mouseY) {
+        return (int) ((mouseY - (popupY + 4)) / ROW_HEIGHT);
     }
 
     public static int preferredWidth(TextRenderer renderer, List<Entry> entries) {
@@ -69,7 +82,7 @@ public final class SuggestionPopupRenderer {
             String value = entry == null ? "" : entry.value();
             String detail = entry == null ? "" : entry.detail();
             int detailWidth = detail.isBlank() ? 0 : Math.min(DETAIL_MAX_WIDTH, renderer.getWidth(detail));
-            int candidate = (PADDING * 2) + KIND_COLUMN_WIDTH + 8 + renderer.getWidth(value) + (detailWidth > 0 ? 10 + detailWidth : 0);
+            int candidate = (PADDING * 2) + KIND_COLUMN_WIDTH + KIND_VALUE_GAP + 8 + renderer.getWidth(value) + (detailWidth > 0 ? 10 + detailWidth : 0);
             widest = Math.max(widest, candidate);
         }
         return Math.min(320, widest);

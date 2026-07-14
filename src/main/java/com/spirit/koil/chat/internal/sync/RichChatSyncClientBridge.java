@@ -50,6 +50,9 @@ public final class RichChatSyncClientBridge {
         if (synced == null || synced.message() == null) {
             return;
         }
+        if (isLocalSender(synced.message())) {
+            return;
+        }
         List<RichChatAttachment> attachments = synced.message().attachments();
         List<RichChatAttachment> cachedAttachments = new ArrayList<>(attachments.size());
         List<byte[]> payloads = synced.attachmentPayloads();
@@ -85,6 +88,19 @@ public final class RichChatSyncClientBridge {
         if (hasChunkMetadata(cachedMessage)) {
             showChunkedPreview(cachedMessage);
         }
+    }
+
+    private static boolean isLocalSender(RichChatMessageData message) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.player == null || message == null) {
+            return false;
+        }
+        if (message.senderUuid() != null && client.player.getUuid() != null && message.senderUuid().equals(client.player.getUuid())) {
+            return true;
+        }
+        return message.senderName() != null
+                && client.player.getGameProfile() != null
+                && message.senderName().equalsIgnoreCase(client.player.getGameProfile().getName());
     }
 
     private static List<byte[]> attachmentPayloads(List<RichChatAttachment> attachments) {

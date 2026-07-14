@@ -11,6 +11,7 @@ import com.spirit.koil.api.automation.feedback.AutomationFailureRegistry;
 import com.spirit.koil.api.automation.feedback.AutomationFailureType;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackNode;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
+import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
 import com.spirit.koil.api.console.*;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.util.application.WindowManager;
@@ -551,6 +552,7 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player != null && client.getNetworkHandler() != null) {
                 if (trimmed.startsWith("/")) {
+                    RichChatCommandOutputBridge.rememberOutgoingChatCommand(trimmed.substring(1));
                     client.getNetworkHandler().sendChatCommand(trimmed.substring(1));
                 } else {
                     client.getNetworkHandler().sendChatMessage(trimmed);

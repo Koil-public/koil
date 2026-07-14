@@ -11,6 +11,9 @@ import com.spirit.koil.chat.internal.RichChatCodeBlockBridge;
 import com.spirit.koil.chat.internal.RichChatPrivateChunkBridge;
 import com.spirit.koil.chat.internal.RichChatPrivateMessageBridge;
 import com.spirit.koil.chat.internal.RichChatBodyWrapFormatter;
+import com.spirit.koil.chat.internal.RichChatRenderContext;
+import com.spirit.koil.chat.internal.RichChatRowClassifier;
+import com.spirit.koil.chat.internal.RichChatRowType;
 import com.spirit.koil.chat.internal.RichChatTimestampBridge;
 import com.spirit.koil.chat.internal.latex.RichChatLatexFormatter;
 import com.spirit.koil.chat.internal.latex.RichChatLatexTextureCache;
@@ -40,21 +43,28 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.Unique;
 
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 @Mixin(ChatHud.class)
 public abstract class MixinChatHud implements ChatHudRefreshBridge {
-    @Unique private static final Pattern KOIL_PLAYER_CHAT_PREFIX = Pattern.compile("^<[^>]+>\\s+.*$");
-    @Unique private static final Pattern KOIL_JOIN_LEAVE_MESSAGE = Pattern.compile("^.+\\s+(joined|left)\\s+the\\s+game\\.?$", Pattern.CASE_INSENSITIVE);
-    @Unique private static final Pattern KOIL_COMMANDISH_MESSAGE = Pattern.compile("^(unknown command|incorrect argument|usage:|set own game mode to|teleported|gave |cleared |summoned |killed |located |time set|weather set|difficulty set|saved the game|reloaded|data of|no entity was found|found no elements|seed:).*$", Pattern.CASE_INSENSITIVE);
     @Unique private static final MessageIndicator KOIL_PRIVATE_INDICATOR_BRIGHT = new MessageIndicator(0x8A8A8A, null, Text.literal("Private message"), "Private");
     @Unique private static final MessageIndicator KOIL_PRIVATE_INDICATOR_DIM = new MessageIndicator(0x6A6A6A, null, Text.literal("Private message"), "Private");
     @Unique private static final MessageIndicator KOIL_PLAYER_ACTIVITY_INDICATOR_BRIGHT = new MessageIndicator(0x9A9142, null, Text.literal("Player activity"), "Activity");
     @Unique private static final MessageIndicator KOIL_PLAYER_ACTIVITY_INDICATOR_DIM = new MessageIndicator(0x7A7334, null, Text.literal("Player activity"), "Activity");
+    @Unique private static final MessageIndicator KOIL_ADVANCEMENT_TASK_INDICATOR_BRIGHT = new MessageIndicator(0x4F9C52, null, Text.literal("Advancement"), "Advancement");
+    @Unique private static final MessageIndicator KOIL_ADVANCEMENT_TASK_INDICATOR_DIM = new MessageIndicator(0x3C7840, null, Text.literal("Advancement"), "Advancement");
+    @Unique private static final MessageIndicator KOIL_ADVANCEMENT_GOAL_INDICATOR_BRIGHT = new MessageIndicator(0x4F78B8, null, Text.literal("Goal reached"), "Goal");
+    @Unique private static final MessageIndicator KOIL_ADVANCEMENT_GOAL_INDICATOR_DIM = new MessageIndicator(0x395A8A, null, Text.literal("Goal reached"), "Goal");
+    @Unique private static final MessageIndicator KOIL_ADVANCEMENT_CHALLENGE_INDICATOR_BRIGHT = new MessageIndicator(0xA35AC6, null, Text.literal("Challenge completed"), "Challenge");
+    @Unique private static final MessageIndicator KOIL_ADVANCEMENT_CHALLENGE_INDICATOR_DIM = new MessageIndicator(0x7A4396, null, Text.literal("Challenge completed"), "Challenge");
     @Unique private static final MessageIndicator KOIL_COMMAND_INDICATOR_BRIGHT = new MessageIndicator(0xD8872F, null, Text.literal("Command output"), "Command");
     @Unique private static final MessageIndicator KOIL_COMMAND_INDICATOR_DIM = new MessageIndicator(0xA86724, null, Text.literal("Command output"), "Command");
+    @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_IMPULSE_INDICATOR_BRIGHT = new MessageIndicator(0xD8872F, null, Text.literal("Impulse command block output"), "Impulse CB");
+    @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_IMPULSE_INDICATOR_DIM = new MessageIndicator(0xA86724, null, Text.literal("Impulse command block output"), "Impulse CB");
+    @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_CHAIN_INDICATOR_BRIGHT = new MessageIndicator(0x4F9C52, null, Text.literal("Chain command block output"), "Chain CB");
+    @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_CHAIN_INDICATOR_DIM = new MessageIndicator(0x3C7840, null, Text.literal("Chain command block output"), "Chain CB");
+    @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_REPEATING_INDICATOR_BRIGHT = new MessageIndicator(0x8753C7, null, Text.literal("Repeating command block output"), "Repeating CB");
+    @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_REPEATING_INDICATOR_DIM = new MessageIndicator(0x68409A, null, Text.literal("Repeating command block output"), "Repeating CB");
     @Unique private static final MessageIndicator KOIL_PUBLIC_FILTER_INDICATOR = new MessageIndicator(0x515A67, null, Text.literal("Public chat"), "Public");
 
     @Shadow @Final private MinecraftClient client;
@@ -91,6 +101,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
             context.getMatrices().push();
             context.getMatrices().translate(0.0F, -koil$automationHudReservedHeight, 0.0F);
         }
+        RichChatRenderContext.beginChatHudFrame(-koil$automationHudReservedHeight);
     }
 
     @Inject(method = "render", at = @At("TAIL"))
@@ -102,6 +113,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
             context.getMatrices().pop();
             koil$shiftedForAutomationHud = false;
         }
+        RichChatRenderContext.endChatHudFrame();
         RichChatPrivateMessageBridge.renderPrivateOnlyOverlay(context, client == null ? null : client.textRenderer);
     }
 
@@ -151,8 +163,9 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         rewritten = RichChatLatexFormatter.format(rewritten);
         rewritten = RichChatPrivateMessageBridge.observeAndRewrite(rewritten);
         rewritten = RichChatCodeBlockBridge.rewrite(rewritten);
-        if (rewritten == null || !RichChatPrivateMessageBridge.isPrivateMessageLine(rewritten.getString())) {
-            rewritten = RichChatBodyWrapFormatter.format(rewritten);
+        RichChatRowType rowType = RichChatRowClassifier.classify(rewritten, indicator);
+        if (rewritten != null && rowType.usesBodyIndent() && rowType != RichChatRowType.PRIVATE_MESSAGE) {
+            rewritten = RichChatBodyWrapFormatter.format(rewritten, rowType);
         }
         RichChatTimestampBridge.remember(rewritten);
         MessageIndicator replacementIndicator = koil$selectIndicator(rewritten, indicator);
@@ -188,52 +201,41 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         if (message == null) {
             return original;
         }
-        String visible = RichChatPrivateMessageBridge.stripVisibleMarkersForLayout(RichChatPrivateMessageBridge.rebuildVisibleText(message.getString()));
-        String trimmed = visible == null ? "" : visible.trim();
-        if (trimmed.isEmpty()) {
-            return original;
-        }
-        if (RichChatPrivateMessageBridge.isPrivateMessageLine(message.getString()) || RichChatPrivateMessageBridge.isPrivateMessageLine(trimmed)) {
+        RichChatRowType rowType = RichChatRowClassifier.classify(message, original);
+        if (rowType == RichChatRowType.PRIVATE_MESSAGE) {
             if (RichChatPrivateMessageBridge.filterEnabled() && RichChatPrivateMessageBridge.isSelectedConversationLine(message.getString())) {
                 return null;
             }
             return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_PRIVATE_INDICATOR_DIM : KOIL_PRIVATE_INDICATOR_BRIGHT;
         }
-        if (KOIL_PLAYER_CHAT_PREFIX.matcher(trimmed).matches()) {
+        if (rowType == RichChatRowType.PLAYER_CHAT) {
             return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_PUBLIC_FILTER_INDICATOR : null;
         }
-        if (KOIL_JOIN_LEAVE_MESSAGE.matcher(trimmed).matches()) {
+        if (rowType == RichChatRowType.PLAYER_ACTIVITY) {
             return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_PLAYER_ACTIVITY_INDICATOR_DIM : KOIL_PLAYER_ACTIVITY_INDICATOR_BRIGHT;
         }
-        if (koil$looksLikeCommandOrSystem(trimmed, original)) {
+        if (rowType == RichChatRowType.ADVANCEMENT_TASK) {
+            return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_ADVANCEMENT_TASK_INDICATOR_DIM : KOIL_ADVANCEMENT_TASK_INDICATOR_BRIGHT;
+        }
+        if (rowType == RichChatRowType.ADVANCEMENT_GOAL) {
+            return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_ADVANCEMENT_GOAL_INDICATOR_DIM : KOIL_ADVANCEMENT_GOAL_INDICATOR_BRIGHT;
+        }
+        if (rowType == RichChatRowType.ADVANCEMENT_CHALLENGE) {
+            return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_ADVANCEMENT_CHALLENGE_INDICATOR_DIM : KOIL_ADVANCEMENT_CHALLENGE_INDICATOR_BRIGHT;
+        }
+        if (rowType == RichChatRowType.COMMAND_OUTPUT) {
             return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_COMMAND_INDICATOR_DIM : KOIL_COMMAND_INDICATOR_BRIGHT;
         }
+        if (rowType == RichChatRowType.COMMAND_BLOCK_IMPULSE) {
+            return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_COMMAND_BLOCK_IMPULSE_INDICATOR_DIM : KOIL_COMMAND_BLOCK_IMPULSE_INDICATOR_BRIGHT;
+        }
+        if (rowType == RichChatRowType.COMMAND_BLOCK_CHAIN) {
+            return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_COMMAND_BLOCK_CHAIN_INDICATOR_DIM : KOIL_COMMAND_BLOCK_CHAIN_INDICATOR_BRIGHT;
+        }
+        if (rowType == RichChatRowType.COMMAND_BLOCK_REPEATING) {
+            return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_COMMAND_BLOCK_REPEATING_INDICATOR_DIM : KOIL_COMMAND_BLOCK_REPEATING_INDICATOR_BRIGHT;
+        }
         return original;
-    }
-
-    @Unique
-    private boolean koil$looksLikeCommandOrSystem(String trimmed, MessageIndicator original) {
-        if (trimmed == null || trimmed.isBlank()) {
-            return false;
-        }
-        if (KOIL_COMMANDISH_MESSAGE.matcher(trimmed).matches()) {
-            return true;
-        }
-        if (trimmed.startsWith("[System]") || trimmed.startsWith("System:")) {
-            return true;
-        }
-        if (original == null) {
-            return false;
-        }
-        String loggedName = original.loggedName();
-        if (loggedName != null) {
-            String normalized = loggedName.toLowerCase(Locale.ROOT);
-            if (normalized.contains("system") || normalized.contains("server")) {
-                return true;
-            }
-        }
-        String hover = original.text() == null ? "" : original.text().getString().toLowerCase(Locale.ROOT);
-        return hover.contains("system") || hover.contains("server") || hover.contains("message");
     }
 
     @Override
@@ -304,8 +306,8 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         if (totalLines <= visibleLineCount) {
             return null;
         }
-        int viewportTop = RichChatLatexTextureCache.currentChatViewportTop() - koil$automationHudReservedHeight;
-        int viewportBottom = RichChatLatexTextureCache.currentChatViewportBottom() - koil$automationHudReservedHeight;
+        int viewportTop = RichChatRenderContext.currentChatViewportTop();
+        int viewportBottom = RichChatRenderContext.currentChatViewportBottom();
         int viewportHeight = Math.max(1, viewportBottom - viewportTop);
         int trackX = 4 + Math.round((float) (getWidth() * getChatScale())) + 6;
         int trackY = viewportTop;

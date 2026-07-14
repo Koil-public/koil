@@ -172,8 +172,8 @@ public final class PopupMenu {
             return;
         }
         int safeHeight = Math.max(10, height);
-        context.fill(x, y, x + 14, y + safeHeight, multiplyAlpha(hovered ? 0x824D5563 : 0x302A303A, alpha));
-        context.drawBorder(x, y, 14, safeHeight, multiplyAlpha(hovered ? 0x9A9AA5B7 : 0x306B7485, alpha));
+        context.fill(x, y, x + 14, y + safeHeight, multiplyAlpha(hovered ? 0x8E4D5563 : 0x6C2A303A, alpha));
+        context.drawBorder(x, y, 14, safeHeight, multiplyAlpha(hovered ? 0xA89AA5B7 : 0x886B7485, alpha));
         int textWidth = renderer.getWidth(label);
         context.drawText(renderer, label, x + (14 - textWidth) / 2, y + Math.max(1, (safeHeight - renderer.fontHeight) / 2), multiplyAlpha(hovered ? 0xC8F5F7FA : 0x52F5F7FA, alpha), false);
     }

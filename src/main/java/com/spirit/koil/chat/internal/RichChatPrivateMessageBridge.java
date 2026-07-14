@@ -390,7 +390,7 @@ public final class RichChatPrivateMessageBridge {
                     continue;
                 }
                 RichChatTimestampBridge.rememberVisibleLine(entry.displayLine(), entry.timestamp());
-                String formatted = RichChatBodyWrapFormatter.format(Text.literal(entry.displayLine())).getString();
+                String formatted = RichChatBodyWrapFormatter.format(Text.literal(entry.displayLine()), RichChatRowType.PRIVATE_MESSAGE).getString();
                 for (String line : formatted.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1)) {
                     lines.add(line);
                 }
@@ -495,6 +495,7 @@ public final class RichChatPrivateMessageBridge {
         }
         String[] safeLines = lines == null ? new String[0] : lines;
         String[] bodyLines = bodyLines(safeLines, parsed);
+        bodyLines = collapseWrappedLongToken(bodyLines);
         String prefix = filteredView ? "<" + normalizedSpeakerName(parsed) + "> " : parsed.prefix();
         String indent = LocalMultilineChatBridge.indentForPrefix(prefix);
         if (bodyLines.length == 0) {
@@ -505,7 +506,33 @@ public final class RichChatPrivateMessageBridge {
         for (int i = 1; i < bodyLines.length; i++) {
             builder.append('\n').append(indent).append(bodyLines[i]);
         }
-        return RichChatBodyWrapFormatter.format(Text.literal(builder.toString())).getString();
+        return RichChatBodyWrapFormatter.format(Text.literal(builder.toString()), RichChatRowType.PRIVATE_MESSAGE).getString();
+    }
+
+    private static String[] collapseWrappedLongToken(String[] bodyLines) {
+        if (bodyLines == null || bodyLines.length <= 1) {
+            return bodyLines == null ? new String[0] : bodyLines;
+        }
+        boolean seenContent = false;
+        for (String line : bodyLines) {
+            if (line == null || line.isEmpty()) {
+                return bodyLines;
+            }
+            for (int i = 0; i < line.length(); i++) {
+                if (Character.isWhitespace(line.charAt(i))) {
+                    return bodyLines;
+                }
+            }
+            seenContent = true;
+        }
+        if (!seenContent) {
+            return bodyLines;
+        }
+        StringBuilder joined = new StringBuilder();
+        for (String line : bodyLines) {
+            joined.append(line);
+        }
+        return new String[]{joined.toString()};
     }
 
     private static String[] bodyLines(String[] lines, ParsedPrivateMessage parsed) {

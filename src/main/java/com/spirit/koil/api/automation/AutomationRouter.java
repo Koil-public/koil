@@ -6,6 +6,7 @@ import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
 import com.spirit.koil.api.automation.feedback.AutomationImprovementService;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.console.ConsoleLevel;
+import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -266,6 +267,7 @@ public final class AutomationRouter {
     public static void sendRawCommand(String command) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.getNetworkHandler() != null) {
+            RichChatCommandOutputBridge.rememberOutgoingChatCommand(command);
             client.getNetworkHandler().sendChatCommand(command);
             AutomationReporter.row(ConsoleLevel.PLAIN, "[cmd ]", "/" + command);
         }

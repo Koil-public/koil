@@ -1,5 +1,9 @@
 package com.spirit.koil.chat.internal;
 
+import com.spirit.koil.api.code.CodeLanguageDetector;
+import com.spirit.koil.chat.internal.latex.RichChatLatexTextureCache;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
 import net.minecraft.text.Text;
 
 import java.util.ArrayList;
@@ -11,6 +15,9 @@ import java.util.UUID;
 public final class RichChatCodeBlockBridge {
     public static final char MARKER_START = '\uE360';
     public static final char MARKER_END = '\uE361';
+    private static final int CODE_BLOCK_WIDTH_REDUCTION = 43;
+    private static final int CODE_BLOCK_HORIZONTAL_PADDING = 4;
+    private static final int CODE_BLOCK_MENU_WIDTH = 18;
     private static final int MAX_BLOCKS = 256;
     private static final Map<String, CodeBlock> BLOCKS = new LinkedHashMap<>(MAX_BLOCKS, 0.75F, true) {
         @Override
@@ -35,15 +42,21 @@ public final class RichChatCodeBlockBridge {
         boolean inFence = false;
         String language = "";
         List<String> pendingLines = new ArrayList<>();
+        String blockFirstPrefix = "";
+        String blockContinuationPrefix = "";
         boolean changed = false;
         for (String rawLine : rawLines) {
             String markerPrefix = RichChatPrivateMessageBridge.leadingMarkerPrefix(rawLine);
             String line = markerPrefix.isEmpty() ? rawLine : rawLine.substring(markerPrefix.length());
-            String trimmed = line.trim();
+            PrefixParts prefixParts = stripVisiblePrefix(line, inFence ? blockContinuationPrefix : "");
+            String visibleBody = prefixParts.body();
+            String trimmed = visibleBody.trim();
             if (!inFence) {
                 if (trimmed.startsWith("```")) {
                     inFence = true;
                     language = trimmed.length() > 3 ? trimmed.substring(3).trim() : "";
+                    blockFirstPrefix = prefixParts.prefix();
+                    blockContinuationPrefix = blockFirstPrefix.isBlank() ? "" : LocalMultilineChatBridge.indentForPrefix(blockFirstPrefix);
                     pendingLines.clear();
                     changed = true;
                     continue;
@@ -52,18 +65,20 @@ public final class RichChatCodeBlockBridge {
                 continue;
             }
             if (trimmed.startsWith("```")) {
-                appendBlock(output, markerPrefix, language, pendingLines);
+                appendBlock(output, markerPrefix, blockFirstPrefix, blockContinuationPrefix, language, pendingLines);
                 pendingLines.clear();
                 inFence = false;
                 language = "";
+                blockFirstPrefix = "";
+                blockContinuationPrefix = "";
                 changed = true;
                 continue;
             }
-            pendingLines.add(line);
+            pendingLines.add(visibleBody);
             changed = true;
         }
         if (inFence) {
-            appendBlock(output, "", language, pendingLines);
+            appendBlock(output, "", blockFirstPrefix, blockContinuationPrefix, language, pendingLines);
         }
         if (!changed) {
             return message;
@@ -123,6 +138,7 @@ public final class RichChatCodeBlockBridge {
             return visible == null ? "" : visible;
         }
         StringBuilder builder = new StringBuilder(visible.length() + 32);
+        List<String> emittedBlocks = new ArrayList<>();
         String[] lines = visible.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
         for (int i = 0; i < lines.length; i++) {
             if (i > 0) {
@@ -140,20 +156,23 @@ public final class RichChatCodeBlockBridge {
             if (block == null) {
                 continue;
             }
-            String prefix = marker.row() == 0 ? "```" + block.language() : "";
-            if (!prefix.isEmpty()) {
-                builder.append(pmMarker).append(prefix).append('\n');
+            if (emittedBlocks.contains(block.id())) {
+                continue;
             }
-            String codeLine = marker.row() < block.lines().size() ? block.lines().get(marker.row()) : "";
-            builder.append(pmMarker).append(codeLine);
-            if (marker.row() == block.lines().size() - 1) {
-                builder.append('\n').append(pmMarker).append("```");
+            emittedBlocks.add(block.id());
+            builder.append(pmMarker).append(block.firstVisiblePrefix()).append("```").append(block.language());
+            for (int row = 0; row < block.originalLines().size(); row++) {
+                builder.append('\n')
+                        .append(pmMarker)
+                        .append(row == 0 ? block.firstVisiblePrefix() : block.continuationVisiblePrefix())
+                        .append(block.originalLines().get(row));
             }
+            builder.append('\n').append(pmMarker).append(block.continuationVisiblePrefix()).append("```");
         }
         return builder.toString();
     }
 
-    private static void appendBlock(List<String> output, String markerPrefix, String language, List<String> lines) {
+    private static void appendBlock(List<String> output, String markerPrefix, String firstPrefix, String continuationPrefix, String language, List<String> lines) {
         List<String> blockLines = lines == null || lines.isEmpty() ? List.of("") : new ArrayList<>(lines);
         int commonIndent = commonLeadingWhitespace(blockLines);
         List<String> normalized = new ArrayList<>(blockLines.size());
@@ -161,13 +180,97 @@ public final class RichChatCodeBlockBridge {
             int strip = Math.min(commonIndent, leadingWhitespace(line));
             normalized.add(line.substring(Math.min(strip, line.length())));
         }
+        List<String> displayLines = wrappedDisplayLines(normalized, commonIndent);
         String blockId = UUID.randomUUID().toString();
+        String safeFirstPrefix = firstPrefix == null ? "" : firstPrefix;
+        String safeContinuationPrefix = continuationPrefix == null ? "" : continuationPrefix;
         synchronized (BLOCKS) {
-            BLOCKS.put(blockId, new CodeBlock(blockId, language == null ? "" : language.trim(), normalized, repeat(' ', commonIndent)));
+            BLOCKS.put(
+                    blockId,
+                    new CodeBlock(
+                            blockId,
+                            language == null ? "" : language.trim(),
+                            normalized,
+                            displayLines,
+                            repeat(' ', commonIndent),
+                            safeFirstPrefix,
+                            safeContinuationPrefix
+                    )
+            );
         }
-        for (int row = 0; row < normalized.size(); row++) {
-            output.add((markerPrefix == null ? "" : markerPrefix) + MARKER_START + "CODE:" + blockId + ":" + row + MARKER_END);
+        for (int row = 0; row < displayLines.size(); row++) {
+            String visiblePrefix = row == 0 ? safeFirstPrefix : safeContinuationPrefix;
+            output.add((markerPrefix == null ? "" : markerPrefix) + visiblePrefix + MARKER_START + "CODE:" + blockId + ":" + row + MARKER_END);
         }
+    }
+
+    private static List<String> wrappedDisplayLines(List<String> lines, int commonIndent) {
+        TextRenderer renderer = MinecraftClient.getInstance() == null ? null : MinecraftClient.getInstance().textRenderer;
+        if (renderer == null) {
+            return lines == null || lines.isEmpty() ? List.of("") : List.copyOf(lines);
+        }
+        int chatWidth = Math.max(1, RichChatLatexTextureCache.currentChatContentWidth() + 54);
+        int width = Math.min(273, Math.max(120, chatWidth - renderer.getWidth(repeat(' ', Math.max(0, commonIndent))) - 14 - CODE_BLOCK_WIDTH_REDUCTION));
+        int contentWidth = Math.max(24, width - CODE_BLOCK_HORIZONTAL_PADDING - CODE_BLOCK_MENU_WIDTH);
+        List<String> out = new ArrayList<>();
+        if (lines == null || lines.isEmpty()) {
+            out.add("");
+            return out;
+        }
+        for (String line : lines) {
+            if (line == null || line.isEmpty()) {
+                out.add("");
+                continue;
+            }
+            String remaining = line;
+            while (!remaining.isEmpty()) {
+                String fitted = renderer.trimToWidth(remaining, contentWidth);
+                if (fitted.isEmpty()) {
+                    fitted = remaining.substring(0, 1);
+                }
+                out.add(fitted);
+                remaining = remaining.substring(Math.min(remaining.length(), fitted.length()));
+            }
+        }
+        return out.isEmpty() ? List.of("") : List.copyOf(out);
+    }
+
+    private static PrefixParts stripVisiblePrefix(String line, String fallbackContinuationPrefix) {
+        if (line == null || line.isEmpty()) {
+            return new PrefixParts("", line == null ? "" : line);
+        }
+        if (fallbackContinuationPrefix != null && !fallbackContinuationPrefix.isEmpty() && line.startsWith(fallbackContinuationPrefix)) {
+            return new PrefixParts(fallbackContinuationPrefix, line.substring(fallbackContinuationPrefix.length()));
+        }
+        if (line.startsWith("<")) {
+            int end = line.indexOf("> ");
+            if (end > 1) {
+                return new PrefixParts(line.substring(0, end + 2), line.substring(end + 2));
+            }
+        }
+        String[] prefixes = {"You whisper to ", "To ", "From "};
+        for (String prefix : prefixes) {
+            if (line.startsWith(prefix)) {
+                int end = line.indexOf(": ");
+                if (end > 0) {
+                    return new PrefixParts(line.substring(0, end + 2), line.substring(end + 2));
+                }
+            }
+        }
+        int whisper = line.indexOf(" whispers to you: ");
+        if (whisper > 0) {
+            int end = line.indexOf(": ");
+            if (end > 0) {
+                return new PrefixParts(line.substring(0, end + 2), line.substring(end + 2));
+            }
+        }
+        if (line.startsWith("[To ") || line.startsWith("[From ")) {
+            int end = line.indexOf("] ");
+            if (end > 0) {
+                return new PrefixParts(line.substring(0, end + 2), line.substring(end + 2));
+            }
+        }
+        return new PrefixParts("", line);
     }
 
     private static int commonLeadingWhitespace(List<String> lines) {
@@ -203,6 +306,28 @@ public final class RichChatCodeBlockBridge {
     public record Marker(int start, int end, String blockId, int row) {
     }
 
-    public record CodeBlock(String id, String language, List<String> lines, String chatIndent) {
+    public static String syntaxFileName(CodeBlock block) {
+        if (block == null) {
+            return "snippet.txt";
+        }
+        CodeLanguageDetector.CodeLanguage explicit = CodeLanguageDetector.fromFenceLabel(block.language());
+        if (explicit != CodeLanguageDetector.CodeLanguage.TEXT) {
+            return explicit.suggestedFileName();
+        }
+        return CodeLanguageDetector.bestGuess(String.join("\n", block.originalLines())).language().suggestedFileName();
+    }
+
+    public record CodeBlock(
+            String id,
+            String language,
+            List<String> originalLines,
+            List<String> displayLines,
+            String chatIndent,
+            String firstVisiblePrefix,
+            String continuationVisiblePrefix
+    ) {
+    }
+
+    private record PrefixParts(String prefix, String body) {
     }
 }

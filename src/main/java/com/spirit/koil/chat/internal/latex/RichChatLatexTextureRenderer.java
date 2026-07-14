@@ -1,6 +1,7 @@
 package com.spirit.koil.chat.internal.latex;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.spirit.koil.chat.internal.RichChatRenderContext;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.OrderedText;
@@ -84,8 +85,8 @@ public final class RichChatLatexTextureRenderer {
         int chatRight = lineX + Math.max(1, RichChatLatexTextureCache.currentChatContentWidth());
         int visibleLeft = Math.max(chatLeft, x);
         int visibleRight = Math.min(chatRight, x + Math.max(1, drawWidth));
-        int viewportTop = RichChatLatexTextureCache.currentChatViewportTop();
-        int viewportBottom = RichChatLatexTextureCache.currentChatViewportBottom();
+        int viewportTop = RichChatRenderContext.currentChatViewportTop();
+        int viewportBottom = RichChatRenderContext.currentChatViewportBottom();
         int rowHeight = Math.max(1, RichChatLatexTextureCache.currentChatLineHeight());
         boolean slicedRows = entry.mode() != RichChatLatexTextureCache.Mode.INLINE && drawHeight > rowHeight;
         int rowTop = slicedRows ? lineY : Integer.MIN_VALUE / 4;

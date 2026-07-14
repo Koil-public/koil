@@ -25,7 +25,7 @@ import java.util.List;
 @Mixin(ChatInputSuggestor.SuggestionWindow.class)
 public abstract class MixinChatInputSuggestorSuggestionWindow {
     @Unique
-    private static final int koil$MAX_VISIBLE_ROWS = 15;
+    private static final int koil$MAX_VISIBLE_ROWS = SuggestionPopupRenderer.MAX_VISIBLE_ROWS;
 
     @Unique
     private Rect2i koil$sharedArea;
@@ -42,10 +42,20 @@ public abstract class MixinChatInputSuggestorSuggestionWindow {
         if (client == null || client.textRenderer == null) {
             return;
         }
+        if (client.currentScreen instanceof ChatScreen) {
+            this.koil$sharedArea = null;
+            ci.cancel();
+            return;
+        }
+        if (!(client.currentScreen instanceof ChatSuggestionAnchor anchor) || !anchor.koil$useCustomChatSuggestionAnchor()) {
+            this.koil$sharedArea = null;
+            return;
+        }
         ChatInputSuggestorSuggestionWindowAccessor accessor = (ChatInputSuggestorSuggestionWindowAccessor)this;
         Rect2i area = accessor.koil$getArea();
         List<Suggestion> suggestions = accessor.koil$getSuggestions();
         if (area == null || suggestions == null || suggestions.isEmpty()) {
+            this.koil$sharedArea = null;
             return;
         }
         List<SuggestionPopupRenderer.Entry> entries = new ArrayList<>(suggestions.size());
@@ -72,20 +82,11 @@ public abstract class MixinChatInputSuggestorSuggestionWindow {
         if (client.currentScreen instanceof ChatScreen chatScreen) {
             TextFieldWidget field = ((ChatScreenAccessor) chatScreen).koil$getChatField();
             if (field != null) {
-                if (chatScreen instanceof ChatSuggestionAnchor anchor && anchor.koil$useCustomChatSuggestionAnchor()) {
-                    anchorX = anchor.koil$chatSuggestionAnchorX(area, width, !entries.isEmpty() && entries.get(0).value() != null && entries.get(0).value().startsWith("/"));
-                    anchorY = anchor.koil$chatSuggestionAnchorY(height);
-                } else {
-                    anchorY = Math.max(2, field.getY() - height - 2);
-                    if (!entries.isEmpty() && entries.get(0).value() != null && entries.get(0).value().startsWith("/")) {
-                        anchorX = field.getX();
-                    } else {
-                        anchorX = area.getX() - (SuggestionPopupRenderer.KIND_COLUMN_WIDTH + 6);
-                    }
-                }
+                anchorX = anchor.koil$chatSuggestionAnchorX(area, width, !entries.isEmpty() && entries.get(0).value() != null && entries.get(0).value().startsWith("/"));
+                anchorY = anchor.koil$chatSuggestionAnchorY(height);
             }
         }
-        int x = Math.max(2, Math.min(anchorX + 1, screenWidth - width - 2));
+        int x = Math.max(2, Math.min(anchorX, screenWidth - width - 2));
         int y = Math.max(2, anchorY);
         this.koil$sharedArea = new Rect2i(x, y, width, height);
         SuggestionPopupRenderer.render(context, client.textRenderer, x, y, width, visibleEntries, selectedIndex - this.koil$scrollOffset, mouseX, mouseY);
@@ -107,7 +108,7 @@ public abstract class MixinChatInputSuggestorSuggestionWindow {
             cir.setReturnValue(true);
             return;
         }
-        int row = (mouseY - (area.getY() + 4)) / SuggestionPopupRenderer.ROW_HEIGHT;
+        int row = SuggestionPopupRenderer.rowAt(area.getY(), mouseY);
         int absoluteRow = this.koil$scrollOffset + row;
         if (row >= 0 && row < this.koil$visibleRows && absoluteRow < suggestions.size()) {
             accessor.koil$select(absoluteRow);

@@ -8,6 +8,8 @@ import com.spirit.koil.api.chat.RichChatAttachment;
 import com.spirit.koil.api.chat.RichChatAttachmentType;
 import com.spirit.koil.api.util.file.audio.AudioManager;
 import com.spirit.koil.api.util.file.media.image.ImageFormatSupport;
+import com.spirit.koil.api.util.file.media.video.VideoMetadata;
+import com.spirit.koil.api.util.file.media.video.VideoProbeResult;
 import com.spirit.koil.api.util.file.media.video.VideoService;
 
 import javax.imageio.ImageIO;
@@ -238,7 +240,22 @@ public final class RichChatUploadStorage {
     }
 
     private static int[] imageDimensions(Path path, RichChatAttachmentType type) {
-        if (path == null || !(type == RichChatAttachmentType.IMAGE || type == RichChatAttachmentType.GIF)) {
+        if (path == null || type == null) {
+            return new int[]{0, 0};
+        }
+        if (type == RichChatAttachmentType.VIDEO) {
+            try {
+                VideoProbeResult probe = VideoService.probe(path.toFile());
+                VideoMetadata metadata = probe == null ? null : probe.metadata();
+                if (metadata != null) {
+                    return new int[]{Math.max(0, metadata.width()), Math.max(0, metadata.height())};
+                }
+            } catch (Exception ignored) {
+                return new int[]{0, 0};
+            }
+            return new int[]{0, 0};
+        }
+        if (!(type == RichChatAttachmentType.IMAGE || type == RichChatAttachmentType.GIF)) {
             return new int[]{0, 0};
         }
         try {

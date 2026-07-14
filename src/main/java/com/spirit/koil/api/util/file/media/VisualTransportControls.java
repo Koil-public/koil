@@ -8,6 +8,13 @@ import net.minecraft.util.Identifier;
 
 import java.awt.Color;
 
+import static com.spirit.koil.api.design.uiColorVal.uiColorBackgroundBorder;
+import static com.spirit.koil.api.design.uiColorVal.uiColorContentBase;
+import static com.spirit.koil.api.design.uiColorVal.uiColorIDEAudioTimestampBarBorder;
+import static com.spirit.koil.api.design.uiColorVal.uiColorIDEAudioTimestampBarFill;
+import static com.spirit.koil.api.design.uiColorVal.uiColorIDEAudioTimestampBarLine;
+import static com.spirit.koil.api.design.uiColorVal.uiColorIDEAudioTimestampText;
+
 @Environment(EnvType.CLIENT)
 public final class VisualTransportControls {
     private VisualTransportControls() {
@@ -20,7 +27,7 @@ public final class VisualTransportControls {
         int barHeight = 12;
         int controlPadding = 6;
         int iconSize = 16;
-        int footerHeight = 30;
+        int footerHeight = Math.max(16, spec.footerHeight());
         int mediaHeight = Math.max(1, spec.height());
         int footerTop = spec.footerBelowMedia() ? spec.y() + mediaHeight : spec.y() + mediaHeight - footerHeight;
         int borderHeight = mediaHeight + (spec.footerBelowMedia() && spec.hovered() ? footerHeight : 0);
@@ -122,11 +129,42 @@ public final class VisualTransportControls {
         return minutes + ":" + (seconds < 10L ? "0" : "") + seconds;
     }
 
+    public static PreviewFooterSpec koilPreviewFooterSpec(int x, int y, int width, int height, boolean gifOnly, boolean hovered, boolean drawCenterPlayOverlay, Identifier playButton, Identifier pauseButton, Identifier stopButton) {
+        return new PreviewFooterSpec(
+                x,
+                y,
+                width,
+                height,
+                30,
+                false,
+                gifOnly,
+                hovered,
+                drawCenterPlayOverlay,
+                playButton,
+                pauseButton,
+                stopButton,
+                new Color(uiColorBackgroundBorder, true).getRGB(),
+                withAlpha(uiColorContentBase, 176),
+                withAlpha(uiColorContentBase, 188),
+                new Color(uiColorIDEAudioTimestampBarFill, true).getRGB(),
+                new Color(uiColorIDEAudioTimestampBarBorder, true).getRGB(),
+                new Color(uiColorIDEAudioTimestampBarLine, true).getRGB(),
+                new Color(uiColorIDEAudioTimestampText, true).getRGB()
+        );
+    }
+
+    private static int withAlpha(int argbColor, int alpha) {
+        Color color = new Color(argbColor, true);
+        int clampedAlpha = Math.max(0, Math.min(255, alpha));
+        return new Color(color.getRed(), color.getGreen(), color.getBlue(), clampedAlpha).getRGB();
+    }
+
     public record PreviewFooterSpec(
             int x,
             int y,
             int width,
             int height,
+            int footerHeight,
             boolean footerBelowMedia,
             boolean gifOnly,
             boolean hovered,

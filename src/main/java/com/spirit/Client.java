@@ -8,10 +8,12 @@ import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.console.ConsoleRequestBridge;
 import com.spirit.koil.api.f3.F3CommandBridge;
 import com.spirit.koil.api.f3.F3SnapshotService;
+import com.spirit.koil.api.multiplayer.ServerCommandBridge;
 import com.spirit.koil.api.performance.PerformanceCommandBridge;
 import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
 import com.spirit.koil.api.stats.global.GlobalActivityClient;
+import com.spirit.koil.api.world.WorldCommandBridge;
 import com.spirit.koil.chat.internal.RichChatPrivacyNoticeClient;
 import com.spirit.koil.chat.internal.sync.RichChatSyncClientBridge;
 import net.fabricmc.api.ClientModInitializer;
@@ -51,5 +53,7 @@ public class Client implements ClientModInitializer {
         AutomationRouter.registerClientCommands();
         PerformanceCommandBridge.registerClientCommands();
         F3CommandBridge.registerClientCommands();
+        ServerCommandBridge.registerClientCommands();
+        WorldCommandBridge.registerClientCommands();
     }
 }

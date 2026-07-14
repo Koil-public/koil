@@ -16,7 +16,9 @@
   "client": [
     "client.KoilSkinPlayerMixin",
     "client.MinecraftClientMixin",
+    "client.MixinClientPlayNetworkHandler",
     "client.gui.MixinChatHud",
+    "client.gui.MixinChatInputSuggestor",
     "client.gui.MixinChatInputSuggestorSuggestionWindow",
     "client.gui.MixinChatScreen",
     "client.gui.MixinInGameHud",

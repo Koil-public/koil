@@ -3,6 +3,7 @@ package com.spirit.koil.chat.internal.latex;
 import com.spirit.koil.api.chat.RichChatSegment;
 import com.spirit.koil.api.chat.RichChatSegmentType;
 import com.spirit.koil.chat.internal.LocalMultilineChatBridge;
+import com.spirit.koil.chat.internal.RichChatBodyWrapFormatter;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.text.MutableText;
@@ -148,14 +149,21 @@ public final class RichChatLatexFormatter {
 
     private static Text formatBlock(String label, String source, String currentOutput, boolean hasFollowingVisibleText) {
         boolean hasTextBefore = currentLineHasText(currentOutput);
+        String indent = bodyIndentForCurrentLine(currentOutput);
+        int maxFormulaWidth = availableFormulaWidth(indent);
         if ("LaTeX".equals(label)) {
             MutableText text = Text.empty();
             if (hasTextBefore) {
                 text.append(Text.literal("\n"));
             }
-            int maxFormulaWidth = availableFormulaWidth("");
+            if (!indent.isEmpty()) {
+                text.append(Text.literal(indent));
+            }
             text.append(Text.literal(RichChatLatexTextureCache.marker(source, RichChatLatexTextureCache.Mode.BLOCK, 0, maxFormulaWidth)).formatted(Formatting.WHITE));
-            appendVerticalReservation(text, source, RichChatLatexTextureCache.Mode.BLOCK, "", maxFormulaWidth, hasFollowingVisibleText);
+            appendVerticalReservation(text, source, RichChatLatexTextureCache.Mode.BLOCK, indent, maxFormulaWidth, hasFollowingVisibleText);
+            if (hasFollowingVisibleText && !indent.isEmpty()) {
+                text.append(Text.literal(indent));
+            }
             return text;
         }
         MutableText text = Text.empty();
@@ -223,7 +231,7 @@ public final class RichChatLatexFormatter {
         }
         int lineWidth = currentLineWidth(currentOutput);
         int formulaWidth = RichChatLatexTextureCache.layoutAdvance(source, mode);
-        return lineWidth + formulaWidth > RichChatLatexTextureCache.currentChatContentWidth();
+        return lineWidth + formulaWidth > RichChatBodyWrapFormatter.currentWrapWidth();
     }
 
     private static int currentLineWidth(String currentOutput) {
@@ -245,7 +253,7 @@ public final class RichChatLatexFormatter {
 
     private static int availableFormulaWidth(String indent) {
         int used = textWidth(indent);
-        return Math.max(24, RichChatLatexTextureCache.currentChatContentWidth() - used);
+        return Math.max(24, RichChatBodyWrapFormatter.currentWrapWidth() - used);
     }
 
     private static int textWidth(String text) {
@@ -325,15 +333,9 @@ public final class RichChatLatexFormatter {
         }
         int lineStart = currentOutput.lastIndexOf('\n') + 1;
         String line = currentOutput.substring(lineStart);
-        if (line.startsWith("<")) {
-            int end = line.indexOf("> ");
-            if (end >= 0) {
-                return LocalMultilineChatBridge.indentForPrefix(line.substring(0, end + 2));
-            }
-        }
-        int firstSpace = line.indexOf(' ');
-        if (firstSpace > 0 && firstSpace <= 32) {
-            return LocalMultilineChatBridge.indentForPrefix(line.substring(0, firstSpace + 1));
+        String prefix = RichChatBodyWrapFormatter.detectVisibleBodyPrefix(line);
+        if (!prefix.isEmpty()) {
+            return LocalMultilineChatBridge.indentForPrefix(prefix);
         }
         return "";
     }

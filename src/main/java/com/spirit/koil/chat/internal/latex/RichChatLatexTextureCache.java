@@ -1,6 +1,7 @@
 package com.spirit.koil.chat.internal.latex;
 
 import com.spirit.client.gui.skin.SkinTextureTools;
+import com.spirit.koil.chat.internal.RichChatBodyWrapFormatter;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
@@ -297,7 +298,7 @@ public final class RichChatLatexTextureCache {
     }
 
     private static int maxDisplayWidth(Mode mode) {
-        int chatWidth = Math.max(48, currentChatContentWidth() - 4);
+        int chatWidth = Math.max(48, RichChatBodyWrapFormatter.currentWrapWidth() - 4);
         if (mode == Mode.INLINE) {
             return Math.max(24, Math.min(MAX_INLINE_DISPLAY_WIDTH, chatWidth));
         }

@@ -2257,25 +2257,17 @@ public class FileExplorerScreen extends Screen {
                 context,
                 this.textRenderer,
                 session,
-                new VisualTransportControls.PreviewFooterSpec(
+                VisualTransportControls.koilPreviewFooterSpec(
                         x,
                         y,
                         width,
                         height,
-                        false,
                         gifOnly,
                         hovered,
                         true,
                         PLAY_BUTTON,
                         PAUSE_BUTTON,
-                        STOP_BUTTON,
-                        new Color(uiColorBackgroundBorder, true).getRGB(),
-                        withAlpha(uiColorContentBase, 176),
-                        withAlpha(uiColorContentBase, 188),
-                        fillColor,
-                        borderColor,
-                        lineColor,
-                        textColor
+                        STOP_BUTTON
                 )
         );
         visualPrimaryControlBounds = layout.primaryBounds();

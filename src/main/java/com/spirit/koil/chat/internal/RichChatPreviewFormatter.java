@@ -14,8 +14,11 @@ public final class RichChatPreviewFormatter {
         Text rewritten = RichChatLatexFormatter.format(message);
         rewritten = RichChatPrivateMessageBridge.observeAndRewrite(rewritten);
         rewritten = RichChatCodeBlockBridge.rewrite(rewritten);
-        if (rewritten == null || !RichChatPrivateMessageBridge.isPrivateMessageLine(rewritten.getString())) {
-            rewritten = RichChatBodyWrapFormatter.format(rewritten);
+        if (rewritten != null) {
+            RichChatRowType rowType = RichChatRowClassifier.classify(rewritten, null);
+            if (rowType == RichChatRowType.PLAYER_CHAT || rowType == RichChatRowType.PRIVATE_MESSAGE) {
+                rewritten = RichChatBodyWrapFormatter.format(rewritten, rowType);
+            }
         }
         return rewritten;
     }

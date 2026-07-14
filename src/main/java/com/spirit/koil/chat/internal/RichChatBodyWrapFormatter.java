@@ -13,8 +13,8 @@ import java.util.Map;
 
 public final class RichChatBodyWrapFormatter {
     private static final int MAX_CACHE = 256;
-    private static final int WRAP_SAFETY_MARGIN = 52;
-    private static final int EXTRA_TEXT_WRAP_RIGHT = 54;
+    private static final int WRAP_SAFETY_MARGIN = 60;
+    private static final int EXTRA_TEXT_WRAP_RIGHT = 90;
     private static final Map<String, Text> CACHE = new LinkedHashMap<>(MAX_CACHE, 0.75F, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Text> eldest) {
@@ -26,6 +26,10 @@ public final class RichChatBodyWrapFormatter {
     }
 
     public static Text format(Text message) {
+        return format(message, RichChatRowType.UNKNOWN);
+    }
+
+    public static Text format(Text message, RichChatRowType rowType) {
         if (message == null) {
             return null;
         }
@@ -34,8 +38,9 @@ public final class RichChatBodyWrapFormatter {
             return message;
         }
 
-        int wrapWidth = RichChatLatexTextureCache.currentChatContentWidth() + EXTRA_TEXT_WRAP_RIGHT;
-        String cacheKey = wrapWidth + ":" + visible;
+        int wrapWidth = currentWrapWidth();
+        RichChatRowType safeType = rowType == null ? RichChatRowType.UNKNOWN : rowType;
+        String cacheKey = safeType.name() + ":" + wrapWidth + ":" + visible;
         synchronized (CACHE) {
             Text cached = CACHE.get(cacheKey);
             if (cached != null) {
@@ -43,7 +48,7 @@ public final class RichChatBodyWrapFormatter {
             }
         }
 
-        String wrapped = wrapVisibleText(visible, wrapWidth);
+        String wrapped = wrapVisibleText(visible, wrapWidth, safeType);
         if (wrapped.equals(visible)) {
             return message;
         }
@@ -55,7 +60,11 @@ public final class RichChatBodyWrapFormatter {
         return formatted;
     }
 
-    private static String wrapVisibleText(String visible, int wrapWidth) {
+    public static int currentWrapWidth() {
+        return RichChatLatexTextureCache.currentChatContentWidth() + EXTRA_TEXT_WRAP_RIGHT;
+    }
+
+    private static String wrapVisibleText(String visible, int wrapWidth, RichChatRowType rowType) {
         String[] lines = visible.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
         StringBuilder result = new StringBuilder(visible.length() + 32);
         boolean changed = false;
@@ -63,7 +72,7 @@ public final class RichChatBodyWrapFormatter {
             if (i > 0) {
                 result.append('\n');
             }
-            String wrapped = wrapLine(lines[i], wrapWidth);
+            String wrapped = wrapLine(lines[i], wrapWidth, rowType);
             changed |= !wrapped.equals(lines[i]);
             result.append(wrapped);
             int spacerLines = headerSpacerLines(lines, i);
@@ -75,7 +84,7 @@ public final class RichChatBodyWrapFormatter {
         return changed ? result.toString() : visible;
     }
 
-    private static String wrapLine(String line, int wrapWidth) {
+    private static String wrapLine(String line, int wrapWidth, RichChatRowType rowType) {
         if (line == null || line.isEmpty()) {
             return line == null ? "" : line;
         }
@@ -89,13 +98,17 @@ public final class RichChatBodyWrapFormatter {
             return line;
         }
 
-        String prefix = detectBodyPrefix(visibleLine);
+        if (rowType == null || !rowType.usesBodyIndent()) {
+            return line;
+        }
+
+        String prefix = detectVisibleBodyPrefix(visibleLine, rowType);
         if (prefix.isEmpty()) {
             return line;
         }
 
         String indent = LocalMultilineChatBridge.indentForPrefix(prefix);
-        int safetyMargin = WRAP_SAFETY_MARGIN + (isPrivateOrNamedPrefix(prefix) ? 12 : 0);
+        int safetyMargin = WRAP_SAFETY_MARGIN + (isPrivateOrNamedPrefix(prefix) ? 28 : 0);
         int firstWidth = Math.max(24, wrapWidth - renderer.getWidth(prefix) - safetyMargin);
         int continuationWidth = Math.max(24, wrapWidth - renderer.getWidth(indent) - safetyMargin);
         if (firstWidth <= 24 || continuationWidth <= 24) {
@@ -236,7 +249,11 @@ public final class RichChatBodyWrapFormatter {
         return Math.max(1, marker.entry().advanceWidth());
     }
 
-    private static String detectBodyPrefix(String line) {
+    public static String detectVisibleBodyPrefix(String line) {
+        return detectVisibleBodyPrefix(line, null);
+    }
+
+    public static String detectVisibleBodyPrefix(String line, RichChatRowType rowType) {
         if (line == null || line.isEmpty()) {
             return "";
         }
@@ -244,11 +261,16 @@ public final class RichChatBodyWrapFormatter {
         if (leadingWhitespace > 0) {
             return line.substring(0, leadingWhitespace);
         }
-        if (line.startsWith("<")) {
+        boolean allowNamedPrefix = rowType == null || rowType == RichChatRowType.PLAYER_CHAT || rowType == RichChatRowType.PRIVATE_MESSAGE;
+        boolean allowPrivatePrefix = rowType == null || rowType == RichChatRowType.PRIVATE_MESSAGE;
+        if (allowNamedPrefix && line.startsWith("<")) {
             int end = line.indexOf("> ");
             if (end >= 0) {
                 return line.substring(0, end + 2);
             }
+        }
+        if (!allowPrivatePrefix) {
+            return "";
         }
         String[] privatePrefixes = {
                 "You whisper to ",
@@ -286,8 +308,8 @@ public final class RichChatBodyWrapFormatter {
             return 0;
         }
         String visibleLine = RichChatPrivateMessageBridge.stripVisibleMarkersForLayout(line);
-        String prefix = detectBodyPrefix(visibleLine);
-        String content = prefix.isEmpty() ? visibleLine : visibleLine.substring(prefix.length());
+        String prefix = detectVisibleBodyPrefix(visibleLine);
+        String content = (prefix.isEmpty() ? visibleLine : visibleLine.substring(prefix.length())).stripLeading();
         if (content.startsWith("# ") || content.startsWith("## ")) {
             return 2;
         }

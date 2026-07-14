@@ -4,10 +4,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.util.Identifier;
 
-/**
- * @deprecated as is unused, review before removal
- */
-@Deprecated
 public class ClickableImage {
     private final Identifier texture;
     private final int x, y, width, height;

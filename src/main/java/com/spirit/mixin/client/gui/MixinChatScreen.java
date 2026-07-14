@@ -1,7 +1,11 @@
 package com.spirit.mixin.client.gui;
 
 import com.mojang.brigadier.ParseResults;
+import com.mojang.brigadier.context.ParsedArgument;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.suggestion.Suggestion;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.spirit.client.gui.SuggestionPopupRenderer;
 import com.spirit.koil.api.automation.cli.AutomationChatHudRenderer;
 import com.spirit.koil.api.chat.RichChatMessageData;
 import com.spirit.koil.api.chat.RichChatScope;
@@ -11,9 +15,12 @@ import com.spirit.koil.chat.internal.LocalOverflowChatBridge;
 import com.spirit.koil.chat.internal.LocalMultilineChatBridge;
 import com.spirit.koil.chat.internal.MultilineChatInputLayout;
 import com.spirit.koil.chat.internal.RichChatPrivateChunkBridge;
+import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
 import com.spirit.koil.chat.internal.RichChatPrivateMessageBridge;
 import com.spirit.koil.chat.internal.RichChatPreviewFormatter;
 import com.spirit.koil.chat.internal.RichChatMessageStore;
+import com.spirit.koil.chat.internal.input.KoilCommandAnalysisService;
+import com.spirit.koil.chat.internal.input.VanillaBackedChatInputController;
 import com.spirit.koil.chat.internal.latex.RichChatLatexDetector;
 import com.spirit.koil.chat.internal.replace.EditorResult;
 import com.spirit.koil.chat.internal.replace.Replacer;
@@ -31,8 +38,10 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.command.CommandSource;
+import net.minecraft.client.gui.screen.ChatInputSuggestor;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.util.math.Rect2i;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.OrderedText;
 import net.minecraft.text.Style;
@@ -64,6 +73,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -82,7 +92,13 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     @Unique private static final Pattern KOIL_CLIPBOARD_URL = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
     @Unique private static final Pattern KOIL_PRIVATE_COMMAND = Pattern.compile("^/(?:msg|tell|w)\\s+(\\S+)(?:\\s+(.*))?$", Pattern.CASE_INSENSITIVE);
     @Unique private static final Pattern KOIL_EXECUTE_PRIVATE_COMMAND = Pattern.compile("^/execute\\s+as\\s+(\\S+)\\s+run\\s+(msg|tell|w)\\s+(\\S+)(?:\\s+(.*))?$", Pattern.CASE_INSENSITIVE);
+    @Unique private static final int KOIL_VANILLA_INFO_COLOR = 0xFFAAAAAA;
+    @Unique private static final int KOIL_VANILLA_ERROR_COLOR = 0xFFFF5555;
+    @Unique private static final int[] KOIL_VANILLA_HIGHLIGHT_COLORS = new int[] {0xFF55FFFF, 0xFFFFFF55, 0xFF55FF55, 0xFFFF55FF, 0xFFFFAA00};
+    @Unique private static final int KOIL_SINGLE_LINE_TEXT_INSET = 1;
+    @Unique private static final int KOIL_MULTILINE_TEXT_INSET = 3;
     @Shadow protected TextFieldWidget chatField;
+    @Shadow private ChatInputSuggestor chatInputSuggestor;
     @Shadow public abstract String normalize(String chatText);
 
     @Unique private int koil$draftScrollLine;
@@ -95,6 +111,14 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     @Unique private int koil$draftClickCount;
     @Unique private final PopupMenu koil$pmMenu = new PopupMenu();
     @Unique private final PopupMenu koil$pmTargetMenu = new PopupMenu();
+    @Unique private CompletableFuture<Suggestions> koil$customSuggestionFuture;
+    @Unique private String koil$customSuggestionRequestKey = "";
+    @Unique private KoilDraftSuggestionContext koil$customSuggestionContext;
+    @Unique private List<Suggestion> koil$customSuggestions = List.of();
+    @Unique private List<SuggestionPopupRenderer.Entry> koil$customSuggestionEntries = List.of();
+    @Unique private Rect2i koil$customSuggestionArea;
+    @Unique private int koil$customSuggestionSelection;
+    @Unique private int koil$customSuggestionScroll;
 
     protected MixinChatScreen(Text title) {
         super(title);
@@ -120,6 +144,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         koil$chatScrollbarDragging = false;
         koil$pmMenu.close();
         koil$pmTargetMenu.close();
+        koil$clearCustomSuggestions();
     }
 
     @Inject(method = "keyPressed", at = @At("TAIL"))
@@ -192,10 +217,64 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
 
         if (koil$isMultilineDraft()) {
-            if (keyCode == GLFW.GLFW_KEY_UP && koil$moveCursorVertically(-1)) {
+            if (keyCode == GLFW.GLFW_KEY_TAB) {
+                if (koil$applySelectedCustomSuggestion()) {
+                    cir.setReturnValue(true);
+                    return;
+                }
+            } else if (keyCode == GLFW.GLFW_KEY_PAGE_UP && koil$moveCustomSuggestionSelectionByPage(-1)) {
                 cir.setReturnValue(true);
+                return;
+            } else if (keyCode == GLFW.GLFW_KEY_PAGE_DOWN && koil$moveCustomSuggestionSelectionByPage(1)) {
+                cir.setReturnValue(true);
+                return;
+            } else if (keyCode == GLFW.GLFW_KEY_HOME && koil$setCustomSuggestionSelection(0)) {
+                cir.setReturnValue(true);
+                return;
+            } else if (keyCode == GLFW.GLFW_KEY_END && koil$setCustomSuggestionSelection(Integer.MAX_VALUE)) {
+                cir.setReturnValue(true);
+                return;
+            } else if (keyCode == GLFW.GLFW_KEY_UP && koil$moveCustomSuggestionSelection(-1)) {
+                cir.setReturnValue(true);
+                return;
+            } else if (keyCode == GLFW.GLFW_KEY_DOWN && koil$moveCustomSuggestionSelection(1)) {
+                cir.setReturnValue(true);
+                return;
+            } else if (keyCode == GLFW.GLFW_KEY_UP && koil$moveCursorVertically(-1)) {
+                cir.setReturnValue(true);
+                return;
             } else if (keyCode == GLFW.GLFW_KEY_DOWN && koil$moveCursorVertically(1)) {
                 cir.setReturnValue(true);
+                return;
+            }
+        } else {
+            if (keyCode == GLFW.GLFW_KEY_TAB && koil$applySelectedCustomSuggestion()) {
+                cir.setReturnValue(true);
+                return;
+            }
+            if (keyCode == GLFW.GLFW_KEY_PAGE_UP && koil$moveCustomSuggestionSelectionByPage(-1)) {
+                cir.setReturnValue(true);
+                return;
+            }
+            if (keyCode == GLFW.GLFW_KEY_PAGE_DOWN && koil$moveCustomSuggestionSelectionByPage(1)) {
+                cir.setReturnValue(true);
+                return;
+            }
+            if (keyCode == GLFW.GLFW_KEY_HOME && koil$setCustomSuggestionSelection(0)) {
+                cir.setReturnValue(true);
+                return;
+            }
+            if (keyCode == GLFW.GLFW_KEY_END && koil$setCustomSuggestionSelection(Integer.MAX_VALUE)) {
+                cir.setReturnValue(true);
+                return;
+            }
+            if (keyCode == GLFW.GLFW_KEY_UP && koil$moveCustomSuggestionSelection(-1)) {
+                cir.setReturnValue(true);
+                return;
+            }
+            if (keyCode == GLFW.GLFW_KEY_DOWN && koil$moveCustomSuggestionSelection(1)) {
+                cir.setReturnValue(true);
+                return;
             }
         }
     }
@@ -339,7 +418,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 RichChatSyncClientBridge.send(richMessage);
             }
             if (networkText.startsWith("/")) {
-                minecraft.player.networkHandler.sendChatCommand(networkText.substring(1));
+                koil$sendTrackedChatCommand(minecraft, networkText.substring(1));
             } else {
                 minecraft.player.networkHandler.sendChatMessage(networkText);
             }
@@ -380,7 +459,12 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             if (richMessage != null && RichChatSyncClientBridge.canSync()) {
                 RichChatSyncClientBridge.send(richMessage);
             }
-            minecraft.player.networkHandler.sendChatCommand(command);
+            if (minecraft.inGameHud != null) {
+                String visiblePrefix = "You whisper to " + RichChatPrivateMessageBridge.targetPlayer() + ": ";
+                koil$addFormattedPreviewMessage(minecraft, koil$visibleLocalMultiline(historyText, visiblePrefix));
+                LocalOverflowChatBridge.remember(visiblePrefix, List.of(routedBody));
+            }
+            koil$sendTrackedChatCommand(minecraft, command);
         }
         cir.setReturnValue(true);
     }
@@ -393,7 +477,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             if (minecraft != null && minecraft.player != null && minecraft.player.networkHandler != null) {
                 String normalizedCommand = koil$truncateDraft(chatText == null ? "" : chatText.replace("\r\n", "\n").replace('\r', '\n')).trim();
                 if (!normalizedCommand.isEmpty()) {
-                    minecraft.player.networkHandler.sendChatCommand(normalizedCommand.substring(1));
+                    koil$sendTrackedChatCommand(minecraft, normalizedCommand.substring(1));
                 }
             }
             cir.setReturnValue(true);
@@ -424,7 +508,12 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             if (richMessage != null && RichChatSyncClientBridge.canSync()) {
                 RichChatSyncClientBridge.send(richMessage);
             }
-            minecraft.player.networkHandler.sendChatCommand(command);
+            if (minecraft.inGameHud != null) {
+                String visiblePrefix = "You whisper to " + targetPlayer + ": ";
+                koil$addFormattedPreviewMessage(minecraft, koil$visibleLocalMultiline(normalizedBody, visiblePrefix));
+                LocalOverflowChatBridge.remember(visiblePrefix, List.of(routedBody));
+            }
+            koil$sendTrackedChatCommand(minecraft, command);
         }
         cir.setReturnValue(true);
     }
@@ -437,7 +526,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             if (minecraft != null && minecraft.player != null && minecraft.player.networkHandler != null) {
                 String normalizedCommand = koil$truncateDraft(chatText == null ? "" : chatText.replace("\r\n", "\n").replace('\r', '\n')).trim();
                 if (!normalizedCommand.isEmpty()) {
-                    minecraft.player.networkHandler.sendChatCommand(normalizedCommand.substring(1));
+                    koil$sendTrackedChatCommand(minecraft, normalizedCommand.substring(1));
                 }
             }
             cir.setReturnValue(true);
@@ -453,7 +542,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             return;
         }
         if (minecraft != null && minecraft.player != null && minecraft.player.networkHandler != null) {
-            minecraft.player.networkHandler.sendChatCommand(command);
+            koil$sendTrackedChatCommand(minecraft, command);
         }
         cir.setReturnValue(true);
     }
@@ -506,7 +595,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 RichChatSyncClientBridge.send(richMessage);
             }
             if (networkText.startsWith("/")) {
-                minecraft.player.networkHandler.sendChatCommand(networkText.substring(1));
+                koil$sendTrackedChatCommand(minecraft, networkText.substring(1));
             } else {
                 minecraft.player.networkHandler.sendChatMessage(networkText);
             }
@@ -566,7 +655,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             if (richMessage != null && RichChatSyncClientBridge.canSync()) {
                 RichChatSyncClientBridge.send(richMessage);
             }
-            minecraft.player.networkHandler.sendChatCommand(command);
+            koil$sendTrackedChatCommand(minecraft, command);
             RichChatUploadDraft.clear();
         }
         cir.setReturnValue(true);
@@ -628,7 +717,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             if (richMessage != null && RichChatSyncClientBridge.canSync()) {
                 RichChatSyncClientBridge.send(richMessage);
             }
-            minecraft.player.networkHandler.sendChatCommand(normalizedCommand.substring(1));
+            koil$sendTrackedChatCommand(minecraft, normalizedCommand.substring(1));
             RichChatUploadDraft.clear();
         }
         cir.setReturnValue(true);
@@ -735,7 +824,6 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/widget/TextFieldWidget;render(Lnet/minecraft/client/gui/DrawContext;IIF)V"))
     private void koil$renderVanillaOrMultilineField(TextFieldWidget field, DrawContext context, int mouseX, int mouseY, float delta) {
         if (!koil$isMultilineDraft()) {
-            field.render(context, mouseX, mouseY, delta);
             koil$renderSingleLineDraftPreview(context, field);
         }
     }
@@ -772,6 +860,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
         if (!koil$isMultilineDraft()) {
             MultilineChatInputLayout.clear();
+            koil$renderCustomSuggestionPopup(context, mouseX, mouseY);
             RichChatAttachmentRenderer.renderFocused(context, this.width, this.height, mouseX, mouseY);
             koil$pmMenu.render(context, mouseX, mouseY);
             koil$pmTargetMenu.render(context, mouseX, mouseY);
@@ -796,7 +885,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         int background = MinecraftClient.getInstance().options.getTextBackgroundColor(Integer.MIN_VALUE);
         context.fill(left, top, right, bottom, background);
 
-        int textX = left + 4;
+        int textX = left + KOIL_MULTILINE_TEXT_INSET;
         int textY = top + 5;
         for (int i = 0; i < visibleLines; i++) {
             int lineIndex = firstLine + i;
@@ -825,6 +914,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             context.fill(trackX, trackTop, trackX + 1, trackBottom, 0x66303030);
             context.fill(trackX - 1, nubY, trackX + 2, nubY + nubHeight, 0xCCBFC7D5);
         }
+        koil$renderCustomSuggestionPopup(context, mouseX, mouseY);
         RichChatAttachmentRenderer.renderFocused(context, this.width, this.height, mouseX, mouseY);
         koil$pmMenu.render(context, mouseX, mouseY);
         koil$pmTargetMenu.render(context, mouseX, mouseY);
@@ -833,6 +923,13 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)
     private void koil$automationHudMouseClicked(double mouseX, double mouseY, int button, CallbackInfoReturnable<Boolean> cir) {
+        if (button == 0 && koil$mouseInsideCustomSuggestionPopup(mouseX, mouseY)) {
+            if (koil$clickCustomSuggestion(mouseX, mouseY)) {
+                cir.setReturnValue(true);
+                return;
+            }
+        }
+
         if (button == 0 && koil$pmTargetMenu.isOpen()) {
             PopupMenu.MenuEntry selected = koil$pmTargetMenu.click(mouseX, mouseY);
             if (selected != null) {
@@ -961,6 +1058,11 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Inject(method = "mouseScrolled", at = @At("HEAD"), cancellable = true)
     private void koil$scrollMultilineDraft(double mouseX, double mouseY, double amount, CallbackInfoReturnable<Boolean> cir) {
+        if (koil$scrollCustomSuggestionPopup(mouseX, mouseY, amount)) {
+            cir.setReturnValue(true);
+            return;
+        }
+
         if (RichChatAttachmentRenderer.mouseScrolled(mouseX, mouseY, amount)) {
             cir.setReturnValue(true);
             return;
@@ -1223,7 +1325,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
 
         String textLine = lines.get(line);
-        int relativeX = Math.max(0, (int)mouseX - 6);
+        int relativeX = Math.max(0, (int)mouseX - (2 + KOIL_MULTILINE_TEXT_INSET));
         int column = this.textRenderer.trimToWidth(textLine, relativeX).length();
         return Math.min(chatField.getText().length(), index + Math.min(column, textLine.length()));
     }
@@ -1529,21 +1631,42 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (lines.isEmpty()) {
             return;
         }
+        KoilStatusLine primary = koil$primaryStatusLine();
+        if (primary == null) {
+            return;
+        }
         int buttonRight = 2 + 46 + 4 + 36;
         int left = buttonRight + 4;
         int right = Math.max(left + 96, this.width - 2);
         int bottom = Math.max(16, koil$inputPanelTop() - 3);
-        int rowHeight = this.textRenderer.fontHeight + 1;
-        int height = Math.max(13, 4 + lines.size() * rowHeight + 2);
+        int height = 13;
         int top = bottom - height;
         int background = MinecraftClient.getInstance().options.getTextBackgroundColor(Integer.MIN_VALUE);
         context.fill(left, top, right, bottom, background);
-        int accent = koil$statusPopupAccentColor();
-        context.fill(left, top, right, bottom, accent);
-        int textY = top + 3;
-        for (String line : lines) {
-            context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(line, Math.max(20, right - left - 24))), left + 5, textY, 0xE0E0E0);
-            textY += rowHeight;
+        context.fill(left, top, left + 1, bottom, primary.accentColor());
+        context.fill(left + 1, bottom - 1, right, bottom, primary.accentColor());
+        int textX = left + 5;
+        int textY = top + Math.max(1, (height - this.textRenderer.fontHeight) / 2);
+        int textWidth = Math.max(20, right - left - (RichChatUploadDraft.hasPending() ? 24 : 8));
+        String visibleText = this.textRenderer.trimToWidth(primary.text(), textWidth);
+        int highlightStart = Math.max(0, Math.min(primary.highlightStart(), visibleText.length()));
+        int highlightEnd = Math.max(highlightStart, Math.min(primary.highlightEnd(), visibleText.length()));
+        if (highlightStart <= 0 || highlightEnd <= highlightStart) {
+            context.drawTextWithShadow(this.textRenderer, Text.literal(visibleText), textX, textY, primary.color());
+        } else {
+            String before = visibleText.substring(0, highlightStart);
+            String focus = visibleText.substring(highlightStart, highlightEnd);
+            String after = visibleText.substring(highlightEnd);
+            int cursorX = textX;
+            if (!before.isEmpty()) {
+                cursorX = context.drawTextWithShadow(this.textRenderer, Text.literal(before), cursorX, textY, primary.color());
+            }
+            if (!focus.isEmpty()) {
+                cursorX = context.drawTextWithShadow(this.textRenderer, Text.literal(focus), cursorX, textY, primary.highlightColor());
+            }
+            if (!after.isEmpty()) {
+                context.drawTextWithShadow(this.textRenderer, Text.literal(after), cursorX, textY, primary.color());
+            }
         }
         if (RichChatUploadDraft.hasPending()) {
             int removeX = right - 18;
@@ -1753,7 +1876,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             LocalOverflowChatBridge.remember(visiblePrefix, sentChunks);
         }
         for (String chunk : sentChunks) {
-            minecraft.player.networkHandler.sendChatCommand("msg " + targetPlayer + " " + chunk);
+            koil$sendTrackedChatCommand(minecraft, "msg " + targetPlayer + " " + chunk);
         }
         cir.setReturnValue(true);
     }
@@ -1775,7 +1898,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         for (int i = 0; i < chunkParts.size(); i++) {
             KoilChunkPart part = chunkParts.get(i);
             String encoded = RichChatPrivateChunkBridge.encode(chunkGroupTimestamp, i, chunkParts.size(), part.prependSpace(), part.text());
-            minecraft.player.networkHandler.sendChatCommand("execute as " + executorName + " run " + whisperCommand + " " + targetPlayer + " " + encoded);
+            koil$sendTrackedChatCommand(minecraft, "execute as " + executorName + " run " + whisperCommand + " " + targetPlayer + " " + encoded);
         }
         cir.setReturnValue(true);
     }
@@ -1820,7 +1943,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             LocalOverflowChatBridge.remember(visiblePrefix, sentChunks);
         }
         for (String chunk : sentChunks) {
-            minecraft.player.networkHandler.sendChatCommand("msg " + targetPlayer + " " + chunk);
+            koil$sendTrackedChatCommand(minecraft, "msg " + targetPlayer + " " + chunk);
         }
         RichChatUploadDraft.clear();
         cir.setReturnValue(true);
@@ -1939,7 +2062,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 continue;
             }
             if (trimmed.startsWith("/")) {
-                minecraft.player.networkHandler.sendChatCommand(trimmed.substring(1));
+                koil$sendTrackedChatCommand(minecraft, trimmed.substring(1));
             } else {
                 minecraft.player.networkHandler.sendChatMessage(trimmed);
             }
@@ -1949,65 +2072,410 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Override
     public boolean koil$useCustomChatSuggestionAnchor() {
-        return koil$isMultilineDraft();
+        return true;
     }
 
     @Override
     public int koil$chatSuggestionAnchorX(net.minecraft.client.util.math.Rect2i vanillaArea, int popupWidth, boolean commandSuggestion) {
-        if (!koil$isMultilineDraft()) {
+        if (chatField == null || this.textRenderer == null) {
             return vanillaArea == null ? 2 : vanillaArea.getX();
         }
-        List<String> lines = koil$splitLines(chatField.getText());
-        String beforeCursor = koil$lineBeforeCursor(lines, chatField.getCursor());
-        int tokenStart = 0;
-        for (int i = beforeCursor.length() - 1; i >= 0; i--) {
-            char c = beforeCursor.charAt(i);
-            if (Character.isWhitespace(c)) {
-                tokenStart = i + 1;
-                break;
-            }
+        String beforeCursor;
+        int baseX;
+        if (!koil$isMultilineDraft()) {
+            String text = chatField.getText() == null ? "" : chatField.getText();
+            int cursor = Math.max(0, Math.min(chatField.getCursor(), text.length()));
+            beforeCursor = text.substring(0, cursor);
+            baseX = chatField.getX() + KOIL_SINGLE_LINE_TEXT_INSET;
+        } else {
+            List<String> lines = koil$splitLines(chatField.getText());
+            beforeCursor = koil$lineBeforeCursor(lines, chatField.getCursor());
+            baseX = 2 + KOIL_MULTILINE_TEXT_INSET;
         }
-        if (commandSuggestion && beforeCursor.startsWith("/")) {
-            tokenStart = 0;
-        }
-        return 6 + this.textRenderer.getWidth(beforeCursor.substring(0, Math.max(0, Math.min(tokenStart, beforeCursor.length()))));
+        return VanillaBackedChatInputController.suggestionAnchorX(chatField, this.textRenderer, vanillaArea, popupWidth, koil$isMultilineDraft(), beforeCursor, commandSuggestion, baseX);
     }
 
     @Override
     public int koil$chatSuggestionAnchorY(int popupHeight) {
-        return Math.max(2, koil$draftTop() - popupHeight - 2);
+        if (!koil$isMultilineDraft() && chatField != null) {
+            return VanillaBackedChatInputController.suggestionAnchorY(chatField, popupHeight, false, 0, 0, 0);
+        }
+        List<String> lines = koil$splitLines(chatField.getText());
+        int lineHeight = this.textRenderer.fontHeight + 2;
+        int visibleLines = koil$visibleLineCount(lines);
+        int cursorLine = koil$cursorLine(lines, chatField.getCursor());
+        int firstLine = koil$firstVisibleLine(lines, visibleLines, cursorLine);
+        int visibleCursorLine = Math.max(0, Math.min(visibleLines - 1, cursorLine - firstLine));
+        return VanillaBackedChatInputController.suggestionAnchorY(chatField, popupHeight, true, koil$draftTop(), visibleCursorLine, lineHeight);
+    }
+
+    @Unique
+    private void koil$renderCustomSuggestionPopup(DrawContext context, int mouseX, int mouseY) {
+        koil$pollCustomSuggestions();
+        if (context == null || this.textRenderer == null || chatField == null || RichChatAttachmentRenderer.hasFocusedAttachment()) {
+            koil$customSuggestionArea = null;
+            return;
+        }
+        if (koil$customSuggestionEntries.isEmpty()) {
+            koil$customSuggestionArea = null;
+            return;
+        }
+        int visibleRows = Math.min(SuggestionPopupRenderer.MAX_VISIBLE_ROWS, koil$customSuggestionEntries.size());
+        koil$customSuggestionScroll = Math.max(0, Math.min(koil$customSuggestionScroll, Math.max(0, koil$customSuggestionEntries.size() - visibleRows)));
+        koil$customSuggestionSelection = Math.max(0, Math.min(koil$customSuggestionSelection, koil$customSuggestionEntries.size() - 1));
+        if (koil$customSuggestionSelection < koil$customSuggestionScroll) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection;
+        } else if (koil$customSuggestionSelection >= koil$customSuggestionScroll + visibleRows) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection - visibleRows + 1;
+        }
+        int width = SuggestionPopupRenderer.preferredWidth(this.textRenderer, koil$customSuggestionEntries);
+        int height = SuggestionPopupRenderer.preferredHeight(visibleRows);
+        Rect2i vanillaArea = chatField == null ? new Rect2i(2, 2, width, height) : new Rect2i(chatField.getX(), chatField.getY(), chatField.getWidth(), chatField.getHeight());
+        int x = Math.max(2, Math.min(koil$chatSuggestionAnchorX(vanillaArea, width, true), this.width - width - 2));
+        int y = Math.max(2, koil$chatSuggestionAnchorY(height));
+        koil$customSuggestionArea = new Rect2i(x, y, width, height);
+        List<SuggestionPopupRenderer.Entry> visibleEntries = koil$customSuggestionEntries.subList(
+                koil$customSuggestionScroll,
+                Math.min(koil$customSuggestionEntries.size(), koil$customSuggestionScroll + visibleRows)
+        );
+        SuggestionPopupRenderer.render(
+                context,
+                this.textRenderer,
+                x,
+                y,
+                width,
+                visibleEntries,
+                koil$customSuggestionSelection - koil$customSuggestionScroll,
+                mouseX,
+                mouseY
+        );
+    }
+
+    @Unique
+    private void koil$pollCustomSuggestions() {
+        KoilDraftSuggestionContext context = koil$currentSuggestionContext();
+        if (context == null) {
+            koil$clearCustomSuggestions();
+            return;
+        }
+        String requestKey = context.requestKey();
+        if (!requestKey.equals(koil$customSuggestionRequestKey)) {
+            koil$customSuggestionRequestKey = requestKey;
+            koil$customSuggestionContext = context;
+            koil$customSuggestions = List.of();
+            koil$customSuggestionEntries = List.of();
+            koil$customSuggestionSelection = 0;
+            koil$customSuggestionScroll = 0;
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client == null || client.getNetworkHandler() == null || client.getNetworkHandler().getCommandDispatcher() == null) {
+                koil$customSuggestionFuture = null;
+                return;
+            }
+            try {
+                ParseResults<CommandSource> parse = client.getNetworkHandler().getCommandDispatcher().parse(
+                        context.commandText(),
+                        client.getNetworkHandler().getCommandSource()
+                );
+                koil$customSuggestionFuture = client.getNetworkHandler().getCommandDispatcher().getCompletionSuggestions(parse, context.commandCursor());
+            } catch (Exception ignored) {
+                koil$customSuggestionFuture = null;
+            }
+        }
+        if (koil$customSuggestionFuture == null || !koil$customSuggestionFuture.isDone()) {
+            return;
+        }
+        Suggestions suggestions;
+        try {
+            suggestions = koil$customSuggestionFuture.join();
+        } catch (Exception ignored) {
+            suggestions = null;
+        }
+        koil$customSuggestionFuture = null;
+        List<Suggestion> nextSuggestions = suggestions == null ? List.of() : suggestions.getList();
+        koil$customSuggestions = nextSuggestions == null ? List.of() : List.copyOf(nextSuggestions);
+        List<SuggestionPopupRenderer.Entry> entries = new ArrayList<>(koil$customSuggestions.size());
+        for (Suggestion suggestion : koil$customSuggestions) {
+            String value = suggestion == null ? "" : suggestion.getText();
+            String detail = suggestion == null || suggestion.getTooltip() == null ? "" : suggestion.getTooltip().getString();
+            entries.add(new SuggestionPopupRenderer.Entry(koil$suggestionKind(value), koil$suggestionKindColor(value), value, detail));
+        }
+        koil$customSuggestionEntries = List.copyOf(entries);
+        if (koil$customSuggestionSelection >= koil$customSuggestionEntries.size()) {
+            koil$customSuggestionSelection = Math.max(0, koil$customSuggestionEntries.size() - 1);
+        }
+    }
+
+    @Unique
+    private KoilDraftSuggestionContext koil$currentSuggestionContext() {
+        if (chatField == null) {
+            return null;
+        }
+        String text = chatField.getText() == null ? "" : chatField.getText().replace("\r\n", "\n").replace('\r', '\n');
+        int cursor = Math.max(0, Math.min(chatField.getCursor(), text.length()));
+        if (!koil$isMultilineDraft()) {
+            if (!text.startsWith("/") || cursor <= 0) {
+                return null;
+            }
+            String commandText = text.substring(1);
+            return new KoilDraftSuggestionContext(0, text.length(), text, cursor, commandText, Math.max(0, cursor - 1));
+        }
+        List<String> lines = koil$splitLines(text);
+        int cursorLine = koil$cursorLine(lines, cursor);
+        int lineStart = koil$lineGlobalStart(lines, cursorLine);
+        String line = cursorLine >= 0 && cursorLine < lines.size() ? lines.get(cursorLine) : "";
+        int localCursor = Math.max(0, Math.min(line.length(), cursor - lineStart));
+        if (!line.startsWith("/") || localCursor <= 0) {
+            return null;
+        }
+        return new KoilDraftSuggestionContext(
+                lineStart,
+                lineStart + line.length(),
+                line,
+                localCursor,
+                line.substring(1),
+                Math.max(0, localCursor - 1)
+        );
+    }
+
+    @Unique
+    private boolean koil$applySelectedCustomSuggestion() {
+        return koil$applyCustomSuggestion(koil$customSuggestionSelection);
+    }
+
+    @Unique
+    private boolean koil$moveCustomSuggestionSelection(int direction) {
+        koil$pollCustomSuggestions();
+        if (direction == 0 || koil$customSuggestionEntries.isEmpty()) {
+            return false;
+        }
+        koil$customSuggestionSelection = Math.max(0, Math.min(koil$customSuggestionEntries.size() - 1, koil$customSuggestionSelection + direction));
+        int visibleRows = Math.min(SuggestionPopupRenderer.MAX_VISIBLE_ROWS, koil$customSuggestionEntries.size());
+        if (koil$customSuggestionSelection < koil$customSuggestionScroll) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection;
+        } else if (koil$customSuggestionSelection >= koil$customSuggestionScroll + visibleRows) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection - visibleRows + 1;
+        }
+        return true;
+    }
+
+    @Unique
+    private boolean koil$moveCustomSuggestionSelectionByPage(int direction) {
+        koil$pollCustomSuggestions();
+        if (direction == 0 || koil$customSuggestionEntries.isEmpty()) {
+            return false;
+        }
+        int visibleRows = Math.min(SuggestionPopupRenderer.MAX_VISIBLE_ROWS, koil$customSuggestionEntries.size());
+        int delta = Math.max(1, visibleRows - 1) * direction;
+        koil$customSuggestionSelection = Math.max(0, Math.min(koil$customSuggestionEntries.size() - 1, koil$customSuggestionSelection + delta));
+        if (koil$customSuggestionSelection < koil$customSuggestionScroll) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection;
+        } else if (koil$customSuggestionSelection >= koil$customSuggestionScroll + visibleRows) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection - visibleRows + 1;
+        }
+        return true;
+    }
+
+    @Unique
+    private boolean koil$setCustomSuggestionSelection(int selection) {
+        koil$pollCustomSuggestions();
+        if (koil$customSuggestionEntries.isEmpty()) {
+            return false;
+        }
+        koil$customSuggestionSelection = Math.max(0, Math.min(koil$customSuggestionEntries.size() - 1, selection));
+        int visibleRows = Math.min(SuggestionPopupRenderer.MAX_VISIBLE_ROWS, koil$customSuggestionEntries.size());
+        if (koil$customSuggestionSelection < koil$customSuggestionScroll) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection;
+        } else if (koil$customSuggestionSelection >= koil$customSuggestionScroll + visibleRows) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection - visibleRows + 1;
+        }
+        return true;
+    }
+
+    @Unique
+    private boolean koil$applyCustomSuggestion(int suggestionIndex) {
+        koil$pollCustomSuggestions();
+        if (chatField == null || koil$customSuggestionContext == null || suggestionIndex < 0 || suggestionIndex >= koil$customSuggestions.size()) {
+            return false;
+        }
+        Suggestion suggestion = koil$customSuggestions.get(suggestionIndex);
+        if (suggestion == null) {
+            return false;
+        }
+        String replacement = "/" + suggestion.apply(koil$customSuggestionContext.commandText());
+        String text = chatField.getText() == null ? "" : chatField.getText();
+        String next = koil$truncateDraft(
+                text.substring(0, Math.max(0, Math.min(text.length(), koil$customSuggestionContext.lineStart())))
+                        + replacement
+                        + text.substring(Math.max(0, Math.min(text.length(), koil$customSuggestionContext.lineEnd())))
+        );
+        chatField.setText(next);
+        int cursor = Math.min(chatField.getText().length(), koil$customSuggestionContext.lineStart() + replacement.length());
+        chatField.setCursor(cursor);
+        chatField.setSelectionStart(cursor);
+        chatField.setSelectionEnd(cursor);
+        koil$multilineSelectionAnchor = cursor;
+        koil$customSuggestionRequestKey = "";
+        koil$customSuggestionArea = null;
+        return true;
+    }
+
+    @Unique
+    private boolean koil$mouseInsideCustomSuggestionPopup(double mouseX, double mouseY) {
+        return koil$customSuggestionArea != null
+                && SuggestionPopupRenderer.containsRow(
+                koil$customSuggestionArea.getX(),
+                koil$customSuggestionArea.getY(),
+                koil$customSuggestionArea.getWidth(),
+                koil$customSuggestionArea.getHeight(),
+                mouseX,
+                mouseY
+        );
+    }
+
+    @Unique
+    private boolean koil$clickCustomSuggestion(double mouseX, double mouseY) {
+        koil$pollCustomSuggestions();
+        if (!koil$mouseInsideCustomSuggestionPopup(mouseX, mouseY)) {
+            return false;
+        }
+        int row = SuggestionPopupRenderer.rowAt(koil$customSuggestionArea.getY(), mouseY);
+        int visibleRows = Math.min(SuggestionPopupRenderer.MAX_VISIBLE_ROWS, koil$customSuggestionEntries.size());
+        if (row < 0 || row >= visibleRows) {
+            return true;
+        }
+        int index = koil$customSuggestionScroll + row;
+        koil$customSuggestionSelection = Math.max(0, Math.min(index, koil$customSuggestionEntries.size() - 1));
+        return koil$applySelectedCustomSuggestion();
+    }
+
+    @Unique
+    private boolean koil$scrollCustomSuggestionPopup(double mouseX, double mouseY, double amount) {
+        koil$pollCustomSuggestions();
+        if (!koil$mouseInsideCustomSuggestionPopup(mouseX, mouseY) || koil$customSuggestionEntries.isEmpty()) {
+            return false;
+        }
+        int direction = amount > 0.0D ? -1 : amount < 0.0D ? 1 : 0;
+        if (direction == 0) {
+            return true;
+        }
+        koil$customSuggestionSelection = Math.max(0, Math.min(koil$customSuggestionEntries.size() - 1, koil$customSuggestionSelection + direction));
+        int visibleRows = Math.min(SuggestionPopupRenderer.MAX_VISIBLE_ROWS, koil$customSuggestionEntries.size());
+        int maxScroll = Math.max(0, koil$customSuggestionEntries.size() - visibleRows);
+        if (koil$customSuggestionSelection < koil$customSuggestionScroll) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection;
+        } else if (koil$customSuggestionSelection >= koil$customSuggestionScroll + visibleRows) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection - visibleRows + 1;
+        }
+        koil$customSuggestionScroll = Math.max(0, Math.min(maxScroll, koil$customSuggestionScroll));
+        return true;
+    }
+
+    @Unique
+    private void koil$clearCustomSuggestions() {
+        koil$customSuggestionFuture = null;
+        koil$customSuggestionRequestKey = "";
+        koil$customSuggestionContext = null;
+        koil$customSuggestions = List.of();
+        koil$customSuggestionEntries = List.of();
+        koil$customSuggestionArea = null;
+        koil$customSuggestionSelection = 0;
+        koil$customSuggestionScroll = 0;
+    }
+
+    @Unique
+    private String koil$suggestionKind(String value) {
+        if (value == null || value.isBlank()) {
+            return "ARG";
+        }
+        if (value.startsWith("/")) {
+            return "CMD";
+        }
+        if (value.startsWith("@") || value.contains(":")) {
+            return "MC";
+        }
+        return "ARG";
+    }
+
+    @Unique
+    private int koil$suggestionKindColor(String value) {
+        if (value == null || value.isBlank()) {
+            return 0xA0D8DEE8;
+        }
+        if (value.startsWith("/")) {
+            return 0xFFD7C16D;
+        }
+        if (value.startsWith("@")) {
+            return 0xFF8FD0E3;
+        }
+        if (value.contains(":")) {
+            return 0xFFA9D98A;
+        }
+        return 0xA0D8DEE8;
     }
 
     @Unique
     private void koil$renderSingleLineDraftPreview(DrawContext context, TextFieldWidget field) {
-        if (context == null || field == null || field.getText() == null || field.getText().isEmpty()) {
+        if (context == null || field == null || this.textRenderer == null) {
             return;
         }
         if (!(field instanceof TextFieldWidgetAccessor accessor)) {
             return;
         }
-        String text = field.getText();
-        boolean command = text.startsWith("/");
-        boolean rich = RichChatAttachmentRenderer.containsLiveFormatting(text) || koil$looksLikeHeader(text);
-        if (!command && !rich) {
-            return;
-        }
+        String text = field.getText() == null ? "" : field.getText();
         int first = Math.max(0, Math.min(accessor.koil$getFirstCharacterIndex(), text.length()));
         String visible = this.textRenderer.trimToWidth(text.substring(first), field.getInnerWidth());
-        int x = field.getX() + 4;
-        int y = field.getY() + Math.max(1, (field.getHeight() - this.textRenderer.fontHeight) / 2);
-        context.enableScissor(field.getX() + 1, field.getY() + 1, field.getX() + field.getWidth() - 1, field.getY() + field.getHeight() - 1);
-        koil$renderDraftLine(context, visible, x, y, field.getInnerWidth());
+        int x = field.getX() + KOIL_SINGLE_LINE_TEXT_INSET;
+        int y = field.getY() + Math.max(1, (field.getHeight() - this.textRenderer.fontHeight) / 2) - 1;
+        context.enableScissor(field.getX() + 1, field.getY(), field.getX() + field.getWidth() - 1, field.getY() + field.getHeight() - 1);
+        koil$renderSingleLineSelection(context, accessor, text, first, visible, x, y);
+        if (!visible.isEmpty()) {
+            VanillaBackedChatInputController.renderStyledLine(context, this.textRenderer, MinecraftClient.getInstance(), visible, x, y, field.getInnerWidth());
+        }
+        koil$renderSingleLineCursor(context, field, text, first, visible, x, y);
         context.disableScissor();
     }
 
     @Unique
-    private void koil$renderDraftLine(DrawContext context, String line, int x, int y, int maxWidth) {
-        if (line == null || line.isEmpty()) {
+    private void koil$renderSingleLineSelection(DrawContext context, TextFieldWidgetAccessor accessor, String text, int first, String visible, int x, int y) {
+        if (context == null || accessor == null || text == null) {
             return;
         }
-        List<KoilStyledChunk> chunks = line.startsWith("/") ? koil$commandPreviewChunks(line) : koil$formattedPreviewChunks(line);
-        koil$drawStyledChunks(context, chunks, x, y, maxWidth);
+        int selectionStart = Math.max(0, Math.min(text.length(), Math.min(accessor.koil$getSelectionStart(), accessor.koil$getSelectionEnd())));
+        int selectionEnd = Math.max(0, Math.min(text.length(), Math.max(accessor.koil$getSelectionStart(), accessor.koil$getSelectionEnd())));
+        if (selectionStart >= selectionEnd) {
+            return;
+        }
+        int visibleEnd = Math.min(text.length(), first + visible.length());
+        int clippedStart = Math.max(first, selectionStart);
+        int clippedEnd = Math.min(visibleEnd, selectionEnd);
+        if (clippedStart >= clippedEnd) {
+            return;
+        }
+        int selectionX1 = x + this.textRenderer.getWidth(text.substring(first, clippedStart));
+        int selectionX2 = x + this.textRenderer.getWidth(text.substring(first, clippedEnd));
+        context.fill(selectionX1, y - 1, selectionX2, y + this.textRenderer.fontHeight + 1, 0x804A8FD6);
+    }
+
+    @Unique
+    private void koil$renderSingleLineCursor(DrawContext context, TextFieldWidget field, String text, int first, String visible, int x, int y) {
+        if (context == null || field == null || text == null || !field.isFocused()) {
+            return;
+        }
+        if ((System.currentTimeMillis() / 300L) % 2L != 0L) {
+            return;
+        }
+        int cursor = Math.max(0, Math.min(field.getCursor(), text.length()));
+        int visibleEnd = Math.min(text.length(), first + visible.length());
+        if (cursor < first || cursor > visibleEnd) {
+            return;
+        }
+        int cursorX = x + this.textRenderer.getWidth(text.substring(first, cursor));
+        context.fill(cursorX, y - 2, cursorX + 1, y + this.textRenderer.fontHeight, 0xFFFFFFFF);
+    }
+
+    @Unique
+    private void koil$renderDraftLine(DrawContext context, String line, int x, int y, int maxWidth) {
+        VanillaBackedChatInputController.renderStyledLine(context, this.textRenderer, MinecraftClient.getInstance(), line, x, y, maxWidth);
     }
 
     @Unique
@@ -2023,7 +2491,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 continue;
             }
             OrderedText ordered = Text.literal(visible).setStyle(chunk.style()).asOrderedText();
-            cursor = RichChatAttachmentRenderer.renderOrDrawText(context, this.textRenderer, ordered, cursor, y, chunk.color());
+            cursor = RichChatAttachmentRenderer.renderPreviewOrDrawText(context, this.textRenderer, ordered, cursor, y, chunk.color());
         }
     }
 
@@ -2033,51 +2501,37 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (line == null || line.isEmpty()) {
             return chunks;
         }
-        int index = 0;
-        while (index < line.length()) {
-            char c = line.charAt(index);
-            if (Character.isWhitespace(c)) {
-                int end = index + 1;
-                while (end < line.length() && Character.isWhitespace(line.charAt(end))) {
-                    end++;
-                }
-                chunks.add(new KoilStyledChunk(line.substring(index, end), Style.EMPTY, 0xFFE0E0E0));
-                index = end;
-                continue;
-            }
-            int end = index + 1;
-            boolean quoted = c == '"' || c == '\'';
-            if (quoted) {
-                while (end < line.length() && line.charAt(end) != c) {
-                    end++;
-                }
-                if (end < line.length()) {
-                    end++;
-                }
-            } else {
-                while (end < line.length() && !Character.isWhitespace(line.charAt(end))) {
-                    end++;
-                }
-            }
-            String token = line.substring(index, end);
-            int color = 0xFFE0E0E0;
-            Style style = Style.EMPTY;
-            if (index == 0) {
-                color = 0xFFD7C16D;
-                style = style.withBold(true);
-            } else if (token.startsWith("@")) {
-                color = 0xFF8FD0E3;
-            } else if (quoted) {
-                color = 0xFFA9D98A;
-            } else if (token.matches("-?\\d+(?:\\.\\d+)?")) {
-                color = 0xFF8FC5FF;
-            } else if (token.contains(":")) {
-                color = 0xFFA9D98A;
-            }
-            chunks.add(new KoilStyledChunk(token, style, color));
-            index = end;
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.getNetworkHandler() == null || client.getNetworkHandler().getCommandDispatcher() == null || !line.startsWith("/")) {
+            return koil$fallbackCommandPreviewChunks(line);
         }
-        return chunks;
+        try {
+            String commandText = line.substring(1);
+            ParseResults<CommandSource> parse = client.getNetworkHandler().getCommandDispatcher().parse(commandText, client.getNetworkHandler().getCommandSource());
+            List<KoilChunkStyleSpan> spans = new ArrayList<>();
+            int colorIndex = -1;
+            for (Object value : parse.getContext().getLastChild().getArguments().values()) {
+                if (!(value instanceof ParsedArgument<?, ?> argument) || argument.getRange() == null) {
+                    continue;
+                }
+                colorIndex = (colorIndex + 1) % KOIL_VANILLA_HIGHLIGHT_COLORS.length;
+                int start = Math.max(1, 1 + argument.getRange().getStart());
+                int end = Math.max(start, Math.min(line.length(), 1 + argument.getRange().getEnd()));
+                spans.add(new KoilChunkStyleSpan(start, end, Style.EMPTY, KOIL_VANILLA_HIGHLIGHT_COLORS[colorIndex]));
+            }
+            KoilStatusLine diagnostic = koil$commandFailureLine(line, 0, parse, null, false);
+            if (diagnostic != null && diagnostic.highlightStart() >= 0) {
+                spans.add(new KoilChunkStyleSpan(
+                        Math.max(0, diagnostic.highlightStart()),
+                        Math.max(Math.max(0, diagnostic.highlightStart()), diagnostic.highlightEnd()),
+                        Style.EMPTY,
+                        diagnostic.highlightColor()
+                ));
+            }
+            return koil$styledChunksFromSpans(line, spans);
+        } catch (Exception ignored) {
+            return koil$fallbackCommandPreviewChunks(line);
+        }
     }
 
     @Unique
@@ -2180,84 +2634,318 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (!upload.isBlank()) {
             lines.add(upload);
         }
-        String command = koil$commandPreviewStatus();
-        if (!command.isBlank()) {
-            lines.add(command);
+        KoilCommandAnalysisService.Analysis analysis = KoilCommandAnalysisService.analyzeDraft(
+                MinecraftClient.getInstance(),
+                chatField == null ? "" : chatField.getText(),
+                koil$isSequentialMultilineCommand(chatField == null ? "" : chatField.getText()),
+                true
+        );
+        if (analysis != null && analysis.status() != null && !analysis.status().text().isBlank()) {
+            lines.add(analysis.status().text());
+            lines.addAll(analysis.details());
         }
-        String math = koil$mathPreviewStatus();
-        if (!math.isBlank()) {
-            lines.add(math);
+        KoilStatusLine math = koil$mathPreviewStatusLine();
+        if (math != null && !math.text().isBlank()) {
+            lines.add(math.text());
         }
         return lines;
     }
 
     @Unique
     private int koil$statusPopupAccentColor() {
-        String command = koil$commandPreviewStatus();
-        if (command.startsWith("Will fail")) {
-            return 0x44E06A6A;
-        }
-        if (command.startsWith("Command") || command.startsWith("Will run")) {
-            return 0x446A92E0;
-        }
-        if (!koil$mathPreviewStatus().isBlank()) {
-            return 0x447C6AE0;
-        }
-        return RichChatUploadDraft.isReady() ? 0x446BCB8F : RichChatUploadDraft.isProcessing() ? 0x44E0C15C : 0x44E06A6A;
+        KoilStatusLine primary = koil$primaryStatusLine();
+        return primary == null ? 0x446BCB8F : primary.accentColor();
     }
 
     @Unique
-    private String koil$commandPreviewStatus() {
-        String text = chatField == null ? "" : chatField.getText();
-        String trimmed = text == null ? "" : text.trim();
-        if (trimmed.isEmpty() || !trimmed.startsWith("/")) {
-            return "";
+    private KoilStatusLine koil$primaryStatusLine() {
+        String upload = RichChatUploadDraft.statusText();
+        if (!upload.isBlank()) {
+            int accent = RichChatUploadDraft.isReady() ? 0x446BCB8F : RichChatUploadDraft.isProcessing() ? 0x44E0C15C : 0x44E06A6A;
+            return new KoilStatusLine(upload, 0xFFE0E0E0, -1, -1, 0xFFE0E0E0, accent);
         }
-        if (koil$isSequentialMultilineCommand(text)) {
-            long commands = Arrays.stream(text.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1))
-                    .map(String::trim)
-                    .filter(line -> !line.isEmpty() && line.startsWith("/"))
-                    .count();
-            return "Will run " + commands + " commands in order";
+        KoilStatusLine command = koil$commandPreview(null);
+        if (command != null && !command.text().isBlank()) {
+            return command;
         }
+        return koil$mathPreviewStatusLine();
+    }
+
+    @Unique
+    private KoilStatusLine koil$commandPreviewStatusLine() {
+        return koil$commandPreview(null);
+    }
+
+    @Unique
+    private KoilStatusLine koil$commandPreview(List<String> detailsOut) {
+        KoilCommandAnalysisService.Analysis analysis = KoilCommandAnalysisService.analyzeDraft(
+                MinecraftClient.getInstance(),
+                chatField == null ? "" : chatField.getText(),
+                koil$isSequentialMultilineCommand(chatField == null ? "" : chatField.getText()),
+                detailsOut != null
+        );
+        if (analysis == null || analysis.status() == null) {
+            return null;
+        }
+        koil$appendAll(detailsOut, analysis.details());
+        KoilCommandAnalysisService.StatusLine status = analysis.status();
+        return new KoilStatusLine(status.text(), status.color(), status.highlightStart(), status.highlightEnd(), status.highlightColor(), status.accentColor());
+    }
+
+    @Unique
+    private KoilStatusLine koil$commandFailureLine(String commandLine, int lineNumber, ParseResults<CommandSource> parse, List<String> detailsOut, boolean allowSuggestions) {
+        CommandSyntaxException exception = parse.getExceptions().isEmpty() ? null : parse.getExceptions().values().iterator().next();
+        int cursor = parse.getReader().canRead()
+                ? parse.getReader().getCursor()
+                : (exception == null ? 0 : Math.max(0, exception.getCursor()));
+        String label = lineNumber > 0 ? "L" + lineNumber + ": " : "";
+        int tokenStart = koil$commandTokenStart(commandLine, cursor);
+        int tokenEnd = koil$commandTokenEnd(commandLine, cursor);
+        String token = tokenStart >= 0 && tokenStart < tokenEnd && tokenEnd <= commandLine.length()
+                ? commandLine.substring(tokenStart, tokenEnd)
+                : "";
+        String summary = koil$humanizeCommandProblem(commandLine, token, parse, exception);
+        List<String> details = new ArrayList<>();
+        if (!token.isBlank()) {
+            details.add("Field: " + token);
+        }
+        details.add("At: " + Math.max(1, cursor + 1));
+        List<String> suggestions = allowSuggestions ? koil$commandSuggestions(commandText(commandLine), parse) : List.of();
+        if (!suggestions.isEmpty()) {
+            details.add("Try: " + String.join(", ", suggestions));
+        } else if (koil$looksLikeIncompleteCommand(exception, parse)) {
+            details.add("Try: add the next required argument or value.");
+        }
+        koil$appendAll(detailsOut, details);
+        String visible = label + summary;
+        int tokenIndexInSummary = token.isBlank() ? -1 : summary.lastIndexOf(token);
+        int highlightStart = Math.max(0, Math.min(visible.length(), label.length() + Math.max(0, tokenIndexInSummary)));
+        int highlightEnd = token.isBlank() ? highlightStart : Math.min(visible.length(), highlightStart + token.length());
+        if (highlightEnd <= highlightStart) {
+            highlightStart = Math.max(0, Math.min(commandLine.length(), tokenStart));
+            highlightEnd = Math.max(highlightStart, Math.min(commandLine.length(), tokenEnd));
+            String display = label + commandLine;
+            return new KoilStatusLine(display, KOIL_VANILLA_INFO_COLOR, label.length() + highlightStart, label.length() + highlightEnd, KOIL_VANILLA_ERROR_COLOR, 0x44E06A6A);
+        }
+        return new KoilStatusLine(visible, KOIL_VANILLA_INFO_COLOR, highlightStart, highlightEnd, KOIL_VANILLA_ERROR_COLOR, 0x44E06A6A);
+    }
+
+    @Unique
+    private void koil$appendAll(List<String> target, List<String> values) {
+        if (target != null && values != null && !values.isEmpty()) {
+            target.addAll(values);
+        }
+    }
+
+    @Unique
+    private String commandText(String commandLine) {
+        return commandLine != null && commandLine.startsWith("/") ? commandLine.substring(1) : (commandLine == null ? "" : commandLine);
+    }
+
+    @Unique
+    private String koil$humanizeCommandProblem(String commandLine, String token, ParseResults<CommandSource> parse, CommandSyntaxException exception) {
+        String raw = exception == null || exception.getRawMessage() == null ? "" : exception.getRawMessage().getString();
+        String lower = raw == null ? "" : raw.toLowerCase(java.util.Locale.ROOT);
+        if (koil$looksLikeIncompleteCommand(exception, parse)) {
+            return token.isBlank() ? "Missing required argument" : "Missing or incomplete value near " + token;
+        }
+        if (lower.contains("unknown command")) {
+            return token.isBlank() ? "Unknown command" : "Unknown command or argument " + token;
+        }
+        if (lower.contains("expected")) {
+            return token.isBlank() ? "Missing required value" : "Invalid or missing value for " + token;
+        }
+        if (lower.contains("integer") || lower.contains("number") || lower.contains("double") || lower.contains("float")) {
+            return token.isBlank() ? "Invalid number" : "Invalid numeric value " + token;
+        }
+        if (lower.contains("literal incorrect")) {
+            return token.isBlank() ? "Unexpected argument" : "Unexpected argument " + token;
+        }
+        if (parse != null && parse.getReader().canRead()) {
+            return token.isBlank() ? "Unexpected extra text" : "Unexpected extra text: " + token;
+        }
+        return token.isBlank() ? "Command syntax error" : "Command syntax error near " + token;
+    }
+
+    @Unique
+    private boolean koil$looksLikeIncompleteCommand(CommandSyntaxException exception, ParseResults<CommandSource> parse) {
+        String raw = exception == null || exception.getRawMessage() == null ? "" : exception.getRawMessage().getString();
+        String lower = raw == null ? "" : raw.toLowerCase(java.util.Locale.ROOT);
+        return lower.contains("unknown or incomplete command")
+                || lower.contains("expected")
+                || (parse != null && !parse.getReader().canRead() && !parse.getExceptions().isEmpty());
+    }
+
+    @Unique
+    private int koil$commandTokenStart(String commandLine, int cursor) {
+        int visibleCursor = Math.max(1, Math.min(commandLine.length(), cursor + 1));
+        int start = visibleCursor;
+        while (start > 1 && !Character.isWhitespace(commandLine.charAt(start - 1))) {
+            start--;
+        }
+        return start;
+    }
+
+    @Unique
+    private int koil$commandTokenEnd(String commandLine, int cursor) {
+        int visibleCursor = Math.max(1, Math.min(commandLine.length(), cursor + 1));
+        int end = visibleCursor;
+        while (end < commandLine.length() && !Character.isWhitespace(commandLine.charAt(end))) {
+            end++;
+        }
+        return end;
+    }
+
+    @Unique
+    private List<String> koil$commandSuggestions(String commandText, ParseResults<CommandSource> parse) {
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.getNetworkHandler() == null || client.getNetworkHandler().getCommandDispatcher() == null) {
-            return "Command preview unavailable";
+        if (client == null || client.getNetworkHandler() == null || client.getNetworkHandler().getCommandDispatcher() == null || parse == null) {
+            return List.of();
         }
         try {
-            String commandText = trimmed.substring(1);
-            ParseResults<CommandSource> parse = client.getNetworkHandler().getCommandDispatcher().parse(commandText, client.getNetworkHandler().getCommandSource());
-            if (!parse.getExceptions().isEmpty()) {
-                CommandSyntaxException exception = parse.getExceptions().values().iterator().next();
-                String message = exception == null || exception.getRawMessage() == null ? "unknown command error" : exception.getRawMessage().getString();
-                return "Will fail: " + message;
+            Suggestions suggestions = client.getNetworkHandler().getCommandDispatcher().getCompletionSuggestions(parse).join();
+            LinkedHashSet<String> ordered = new LinkedHashSet<>();
+            for (Suggestion suggestion : suggestions.getList()) {
+                if (suggestion == null) {
+                    continue;
+                }
+                String applied = suggestion.apply(commandText == null ? "" : commandText);
+                if (applied == null || applied.isBlank()) {
+                    continue;
+                }
+                String visible = "/" + applied.trim();
+                ordered.add(visible);
+                if (ordered.size() >= 3) {
+                    break;
+                }
             }
-            if (parse.getReader().canRead()) {
-                return "Will fail: unexpected text near \"" + parse.getReader().getRemaining() + "\"";
-            }
-            return "Command syntax looks valid";
-        } catch (Exception exception) {
-            String message = exception.getMessage() == null ? "command parse error" : exception.getMessage().replace('\n', ' ').replace('\r', ' ').trim();
-            return "Will fail: " + message;
+            return List.copyOf(ordered);
+        } catch (Exception ignored) {
+            return List.of();
         }
     }
 
     @Unique
-    private String koil$mathPreviewStatus() {
+    private int koil$commandArgumentColor(String token) {
+        if (token == null || token.isEmpty()) {
+            return KOIL_VANILLA_INFO_COLOR;
+        }
+        if (token.startsWith("@")) {
+            return KOIL_VANILLA_HIGHLIGHT_COLORS[0];
+        }
+        if (token.startsWith("\"") || token.startsWith("'")) {
+            return KOIL_VANILLA_HIGHLIGHT_COLORS[2];
+        }
+        if (token.matches("-?\\d+(?:\\.\\d+)?")) {
+            return KOIL_VANILLA_HIGHLIGHT_COLORS[4];
+        }
+        if (token.contains(":")) {
+            return KOIL_VANILLA_HIGHLIGHT_COLORS[2];
+        }
+        return KOIL_VANILLA_INFO_COLOR;
+    }
+
+    @Unique
+    private List<KoilStyledChunk> koil$fallbackCommandPreviewChunks(String line) {
+        List<KoilStyledChunk> chunks = new ArrayList<>();
+        int index = 0;
+        while (index < line.length()) {
+            char c = line.charAt(index);
+            if (Character.isWhitespace(c)) {
+                int end = index + 1;
+                while (end < line.length() && Character.isWhitespace(line.charAt(end))) {
+                    end++;
+                }
+                chunks.add(new KoilStyledChunk(line.substring(index, end), Style.EMPTY, KOIL_VANILLA_INFO_COLOR));
+                index = end;
+                continue;
+            }
+            int end = index + 1;
+            boolean quoted = c == '"' || c == '\'';
+            if (quoted) {
+                while (end < line.length() && line.charAt(end) != c) {
+                    end++;
+                }
+                if (end < line.length()) {
+                    end++;
+                }
+            } else {
+                while (end < line.length() && !Character.isWhitespace(line.charAt(end))) {
+                    end++;
+                }
+            }
+            String token = line.substring(index, end);
+            Style style = Style.EMPTY;
+            int color = index == 0 ? KOIL_VANILLA_INFO_COLOR : koil$commandArgumentColor(token);
+            chunks.add(new KoilStyledChunk(token, style, color));
+            index = end;
+        }
+        return chunks;
+    }
+
+    @Unique
+    private List<KoilStyledChunk> koil$styledChunksFromSpans(String line, List<KoilChunkStyleSpan> spans) {
+        List<KoilStyledChunk> chunks = new ArrayList<>();
+        if (line == null || line.isEmpty()) {
+            return chunks;
+        }
+        spans.sort(java.util.Comparator.comparingInt(KoilChunkStyleSpan::start).thenComparingInt(span -> span.end() - span.start()));
+        int cursor = 0;
+        while (cursor < line.length()) {
+            KoilChunkStyleSpan active = null;
+            for (KoilChunkStyleSpan span : spans) {
+                if (cursor >= span.start() && cursor < span.end()) {
+                    active = span;
+                }
+            }
+            int next = line.length();
+            if (active != null) {
+                next = active.end();
+            } else {
+                for (KoilChunkStyleSpan span : spans) {
+                    if (span.start() > cursor) {
+                        next = Math.min(next, span.start());
+                    }
+                }
+            }
+            if (next <= cursor) {
+                next = cursor + 1;
+            }
+            String piece = line.substring(cursor, Math.min(line.length(), next));
+            if (active == null) {
+                chunks.add(new KoilStyledChunk(piece, Style.EMPTY, KOIL_VANILLA_INFO_COLOR));
+            } else {
+                chunks.add(new KoilStyledChunk(piece, active.style(), active.color()));
+            }
+            cursor = next;
+        }
+        return chunks;
+    }
+
+    @Unique
+    private KoilStatusLine koil$mathPreviewStatusLine() {
         String text = chatField == null ? "" : chatField.getText();
         String trimmed = text == null ? "" : text.trim();
         if (trimmed.isEmpty() || trimmed.startsWith("/")) {
-            return "";
+            return null;
         }
-        Double value = koil$evaluateLatexExpression(trimmed);
+        int equalsIndex = trimmed.lastIndexOf('=');
+        if (equalsIndex <= 0) {
+            return null;
+        }
+        String expression = trimmed.substring(0, equalsIndex).trim();
+        if (expression.isEmpty()) {
+            return null;
+        }
+        Double value = koil$evaluateLatexExpression(expression);
         if (value != null) {
-            return "[Latex Formula]: " + koil$formatNumber(value);
+            return new KoilStatusLine("Answer: " + koil$formatNumber(value), 0xFFE0E0E0, -1, -1, 0xFFE0E0E0, 0x447C6AE0);
         }
-        if (!koil$looksLikeMathExpression(trimmed)) {
-            return "";
+        if (!koil$looksLikeMathExpression(expression)) {
+            return null;
         }
-        Double math = koil$evaluateExpression(trimmed);
-        return math == null ? "" : "Math: " + koil$formatNumber(math);
+        Double math = koil$evaluateExpression(expression);
+        return math == null ? null : new KoilStatusLine("Answer: " + koil$formatNumber(math), 0xFFE0E0E0, -1, -1, 0xFFE0E0E0, 0x447C6AE0);
     }
 
     @Unique
@@ -2391,10 +3079,41 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     }
 
     @Unique
+    private void koil$sendTrackedChatCommand(MinecraftClient minecraft, String command) {
+        if (minecraft == null || minecraft.player == null || minecraft.player.networkHandler == null || command == null || command.isBlank()) {
+            return;
+        }
+        RichChatCommandOutputBridge.rememberOutgoingChatCommand(command);
+        minecraft.player.networkHandler.sendChatCommand(command);
+    }
+
+    @Unique
     private record KoilStyledChunk(String text, Style style, int color) {
     }
 
     @Unique
     private record KoilMarkerMatch(String marker, int start) {
+    }
+
+    @Unique
+    private record KoilStatusLine(String text, int color, int highlightStart, int highlightEnd, int highlightColor, int accentColor) {
+    }
+
+    @Unique
+    private record KoilChunkStyleSpan(int start, int end, Style style, int color) {
+    }
+
+    @Unique
+    private record KoilDraftSuggestionContext(
+            int lineStart,
+            int lineEnd,
+            String lineText,
+            int localCursor,
+            String commandText,
+            int commandCursor
+    ) {
+        private String requestKey() {
+            return lineStart + ":" + lineEnd + ":" + localCursor + ":" + lineText;
+        }
     }
 }

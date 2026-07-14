@@ -1,7 +1,5 @@
 package com.spirit.koil.chat.internal.replace;
 
-import net.minecraft.network.packet.s2c.play.BlockEntityUpdateS2CPacket;
-
 import java.util.List;
 
 public class ReplacementRule {

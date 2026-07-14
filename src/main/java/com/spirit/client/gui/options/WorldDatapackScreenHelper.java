@@ -1,5 +1,6 @@
 package com.spirit.client.gui.options;
 
+import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
@@ -27,6 +28,7 @@ public final class WorldDatapackScreenHelper {
         }
         if (isRemoteServer(minecraft)) {
             if (minecraft.player != null && minecraft.player.hasPermissionLevel(2)) {
+                RichChatCommandOutputBridge.rememberOutgoingChatCommand("datapack list");
                 minecraft.player.networkHandler.sendChatCommand("datapack list");
                 minecraft.player.sendMessage(Text.literal("Requested server datapack list. Remote server datapacks cannot be managed from a local pack file screen unless the server exposes those files."), false);
             }
