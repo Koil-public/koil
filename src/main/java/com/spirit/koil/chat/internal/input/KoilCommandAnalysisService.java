@@ -1,6 +1,7 @@
 package com.spirit.koil.chat.internal.input;
 
 import com.mojang.brigadier.ParseResults;
+import com.mojang.brigadier.context.CommandContextBuilder;
 import com.mojang.brigadier.context.ParsedArgument;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.Suggestion;
@@ -54,7 +55,7 @@ public final class KoilCommandAnalysisService {
             try {
                 String commandText = commandText(line);
                 ParseResults<CommandSource> parse = client.getNetworkHandler().getCommandDispatcher().parse(commandText, client.getNetworkHandler().getCommandSource());
-                if (!parse.getExceptions().isEmpty() || parse.getReader().canRead()) {
+                if (!isExecutableParse(parse)) {
                     return failureAnalysis(commandText, line, sequentialMultiline ? i + 1 : 0, parse, allowSuggestions && !sequentialMultiline);
                 }
             } catch (Exception exception) {
@@ -70,6 +71,12 @@ public final class KoilCommandAnalysisService {
     }
 
     public static List<StyledChunk> highlightLine(MinecraftClient client, String line) {
+        // Non-editor consumers (for example echoed command feedback) have no
+        // active cursor, so they keep syntax colours without an error-red span.
+        return highlightLine(client, line, -1);
+    }
+
+    public static List<StyledChunk> highlightLine(MinecraftClient client, String line, int activeCursor) {
         if (line == null || line.isEmpty()) {
             return List.of();
         }
@@ -80,8 +87,9 @@ public final class KoilCommandAnalysisService {
             ParseResults<CommandSource> parse = client.getNetworkHandler().getCommandDispatcher().parse(commandText(line), client.getNetworkHandler().getCommandSource());
             List<StyleSpan> spans = new ArrayList<>();
             int colorIndex = -1;
-            if (parse.getContext() != null && parse.getContext().getLastChild() != null) {
-                for (Object value : parse.getContext().getLastChild().getArguments().values()) {
+            CommandContextBuilder<CommandSource> commandContext = parse.getContext();
+            while (commandContext != null) {
+                for (Object value : commandContext.getArguments().values()) {
                     if (!(value instanceof ParsedArgument<?, ?> argument) || argument.getRange() == null) {
                         continue;
                     }
@@ -90,12 +98,22 @@ public final class KoilCommandAnalysisService {
                     int end = Math.max(start, Math.min(line.length(), 1 + argument.getRange().getEnd()));
                     spans.add(new StyleSpan(start, end, Style.EMPTY, colorForToken(line.substring(start, end), colorIndex)));
                 }
+                commandContext = commandContext.getChild();
             }
-            Analysis diagnostic = failureAnalysis(commandText(line), line, 0, parse, false);
-            if (diagnostic != null && diagnostic.status() != null && diagnostic.status().highlightStart() >= 0) {
+            Analysis diagnostic = isExecutableParse(parse)
+                    ? null
+                    : failureAnalysis(commandText(line), line, 0, parse, false);
+            TokenRange activeToken = activeToken(line, activeCursor);
+            TokenRange failureToken = failureToken(line, parse);
+            if (diagnostic != null
+                    && diagnostic.status() != null
+                    && parse.getReader().canRead()
+                    && activeToken != null
+                    && failureToken != null
+                    && activeToken.overlaps(failureToken)) {
                 spans.add(new StyleSpan(
-                        Math.max(0, diagnostic.status().highlightStart()),
-                        Math.max(Math.max(0, diagnostic.status().highlightStart()), diagnostic.status().highlightEnd()),
+                        activeToken.start(),
+                        activeToken.end(),
                         Style.EMPTY,
                         diagnostic.status().highlightColor()
                 ));
@@ -107,10 +125,8 @@ public final class KoilCommandAnalysisService {
     }
 
     private static Analysis failureAnalysis(String commandText, String commandLine, int lineNumber, ParseResults<CommandSource> parse, boolean allowSuggestions) {
-        CommandSyntaxException exception = parse.getExceptions().isEmpty() ? null : parse.getExceptions().values().iterator().next();
-        int cursor = parse.getReader().canRead()
-                ? parse.getReader().getCursor()
-                : (exception == null ? 0 : Math.max(0, exception.getCursor()));
+        CommandSyntaxException exception = mostRelevantException(parse);
+        int cursor = failureCursor(parse, exception);
         String label = lineNumber > 0 ? "L" + lineNumber + ": " : "";
         int tokenStart = tokenStart(commandLine, cursor);
         int tokenEnd = tokenEnd(commandLine, cursor);
@@ -119,15 +135,19 @@ public final class KoilCommandAnalysisService {
                 : "";
         String summary = humanizeProblem(token, parse, exception);
         List<String> details = new ArrayList<>();
+        String rawProblem = rawProblem(exception);
         if (!token.isBlank()) {
-            details.add("Field: " + token);
+            details.add("Token: \"" + token + "\"");
         }
-        details.add("At: " + Math.max(1, cursor + 1));
+        details.add("Position: column " + Math.max(1, cursor + 2));
+        if (!rawProblem.isBlank() && !summary.equalsIgnoreCase(rawProblem)) {
+            details.add("Minecraft: " + rawProblem);
+        }
         List<String> suggestions = allowSuggestions ? suggestions(commandText, parse) : List.of();
         if (!suggestions.isEmpty()) {
-            details.add("Try: " + String.join(", ", suggestions));
+            details.add("Valid here: " + String.join(", ", suggestions));
         } else if (looksLikeIncompleteCommand(exception, parse)) {
-            details.add("Try: add the next required argument or value.");
+            details.add("Next step: add the required argument or subcommand after the last valid token.");
         }
 
         String visible = label + summary;
@@ -146,28 +166,89 @@ public final class KoilCommandAnalysisService {
         return new Analysis(status, List.copyOf(details));
     }
 
+    private static boolean isExecutableParse(ParseResults<CommandSource> parse) {
+        if (parse == null || parse.getReader().canRead() || parse.getContext() == null) {
+            return false;
+        }
+        CommandContextBuilder<CommandSource> context = parse.getContext();
+        while (context.getChild() != null) {
+            context = context.getChild();
+        }
+        return context.getCommand() != null;
+    }
+
     private static String humanizeProblem(String token, ParseResults<CommandSource> parse, CommandSyntaxException exception) {
-        String raw = exception == null || exception.getRawMessage() == null ? "" : exception.getRawMessage().getString();
-        String lower = raw == null ? "" : raw.toLowerCase(Locale.ROOT);
-        if (looksLikeIncompleteCommand(exception, parse)) {
-            return token.isBlank() ? "Missing required argument" : "Missing or incomplete value near " + token;
-        }
+        String raw = rawProblem(exception);
+        String lower = raw.toLowerCase(Locale.ROOT);
         if (lower.contains("unknown command")) {
-            return token.isBlank() ? "Unknown command" : "Unknown command or argument " + token;
+            return token.isBlank() ? "Unknown command" : "Minecraft does not recognize \"" + token + "\" here";
         }
-        if (lower.contains("expected")) {
-            return token.isBlank() ? "Missing required value" : "Invalid or missing value for " + token;
+        if (lower.contains("literal incorrect") || lower.contains("incorrect argument")) {
+            return token.isBlank() ? "Unexpected argument" : "\"" + token + "\" is not valid at this position";
         }
         if (lower.contains("integer") || lower.contains("number") || lower.contains("double") || lower.contains("float")) {
-            return token.isBlank() ? "Invalid number" : "Invalid numeric value " + token;
+            return token.isBlank() ? "A numeric value is required" : "\"" + token + "\" is not a valid number";
         }
-        if (lower.contains("literal incorrect")) {
-            return token.isBlank() ? "Unexpected argument" : "Unexpected argument " + token;
+        if (looksLikeIncompleteCommand(exception, parse) && (parse == null || !parse.getReader().canRead())) {
+            return token.isBlank() ? "Command is incomplete" : "Command is incomplete after \"" + token + "\"";
+        }
+        if (lower.contains("expected")) {
+            return token.isBlank() ? "A required value is missing" : "Minecraft expected a different value at \"" + token + "\"";
         }
         if (parse != null && parse.getReader().canRead()) {
-            return token.isBlank() ? "Unexpected extra text" : "Unexpected extra text: " + token;
+            return token.isBlank() ? "Unexpected text after the last valid argument" : "Unexpected text \"" + token + "\"";
         }
-        return token.isBlank() ? "Command syntax error" : "Command syntax error near " + token;
+        return raw.isBlank() ? (token.isBlank() ? "Command syntax error" : "Command failed near \"" + token + "\"") : raw;
+    }
+
+    private static CommandSyntaxException mostRelevantException(ParseResults<CommandSource> parse) {
+        if (parse == null || parse.getExceptions().isEmpty()) {
+            return null;
+        }
+        return parse.getExceptions().values().stream()
+                .max(Comparator.comparingInt(exception -> Math.max(-1, exception == null ? -1 : exception.getCursor())))
+                .orElse(null);
+    }
+
+    private static int failureCursor(ParseResults<CommandSource> parse, CommandSyntaxException exception) {
+        int readerCursor = parse == null || parse.getReader() == null ? 0 : Math.max(0, parse.getReader().getCursor());
+        int exceptionCursor = exception == null ? -1 : exception.getCursor();
+        return Math.max(readerCursor, exceptionCursor);
+    }
+
+    private static String rawProblem(CommandSyntaxException exception) {
+        if (exception == null || exception.getRawMessage() == null) {
+            return "";
+        }
+        String raw = exception.getRawMessage().getString();
+        return raw == null ? "" : raw.replace('\n', ' ').replace('\r', ' ').trim();
+    }
+
+    private static TokenRange failureToken(String commandLine, ParseResults<CommandSource> parse) {
+        if (commandLine == null || commandLine.isEmpty() || parse == null || !parse.getReader().canRead()) {
+            return null;
+        }
+        int cursor = failureCursor(parse, mostRelevantException(parse));
+        return new TokenRange(tokenStart(commandLine, cursor), tokenEnd(commandLine, cursor));
+    }
+
+    private static TokenRange activeToken(String line, int cursor) {
+        if (line == null || line.length() <= 1 || cursor <= 1) {
+            return null;
+        }
+        int safeCursor = Math.max(1, Math.min(line.length(), cursor));
+        if (Character.isWhitespace(line.charAt(safeCursor - 1))) {
+            return null;
+        }
+        int start = safeCursor - 1;
+        while (start > 1 && !Character.isWhitespace(line.charAt(start - 1))) {
+            start--;
+        }
+        int end = safeCursor;
+        while (end < line.length() && !Character.isWhitespace(line.charAt(end))) {
+            end++;
+        }
+        return new TokenRange(start, end);
     }
 
     private static boolean looksLikeIncompleteCommand(CommandSyntaxException exception, ParseResults<CommandSource> parse) {
@@ -331,5 +412,11 @@ public final class KoilCommandAnalysisService {
     }
 
     private record StyleSpan(int start, int end, Style style, int color) {
+    }
+
+    private record TokenRange(int start, int end) {
+        private boolean overlaps(TokenRange other) {
+            return other != null && start < other.end && other.start < end;
+        }
     }
 }

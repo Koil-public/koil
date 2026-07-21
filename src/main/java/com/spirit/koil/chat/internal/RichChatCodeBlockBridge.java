@@ -15,9 +15,13 @@ import java.util.UUID;
 public final class RichChatCodeBlockBridge {
     public static final char MARKER_START = '\uE360';
     public static final char MARKER_END = '\uE361';
+    /** Invisible one-chat-row reserve after a code card's taller final line. */
+    public static final char SPACER_MARKER = '\uE362';
     private static final int CODE_BLOCK_WIDTH_REDUCTION = 43;
     private static final int CODE_BLOCK_HORIZONTAL_PADDING = 4;
     private static final int CODE_BLOCK_MENU_WIDTH = 18;
+    /** Keep chat cards compact; the menu opens untouched source in the editor. */
+    public static final int MAX_VISIBLE_DISPLAY_LINES = 10;
     private static final int MAX_BLOCKS = 256;
     private static final Map<String, CodeBlock> BLOCKS = new LinkedHashMap<>(MAX_BLOCKS, 0.75F, true) {
         @Override
@@ -87,7 +91,7 @@ public final class RichChatCodeBlockBridge {
     }
 
     public static boolean containsMarker(String text) {
-        return text != null && text.indexOf(MARKER_START) >= 0;
+        return text != null && (text.indexOf(MARKER_START) >= 0 || text.indexOf(SPACER_MARKER) >= 0);
     }
 
     public static Marker nextMarker(String text, int fromIndex) {
@@ -147,6 +151,9 @@ public final class RichChatCodeBlockBridge {
             String line = lines[i];
             String pmMarker = RichChatPrivateMessageBridge.leadingMarkerPrefix(line);
             String stripped = pmMarker.isEmpty() ? line : line.substring(pmMarker.length());
+            if (stripped.length() == 1 && stripped.charAt(0) == SPACER_MARKER) {
+                continue;
+            }
             Marker marker = nextMarker(stripped, 0);
             if (marker == null || marker.start() != 0 || marker.end() != stripped.length()) {
                 builder.append(line);
@@ -180,7 +187,11 @@ public final class RichChatCodeBlockBridge {
             int strip = Math.min(commonIndent, leadingWhitespace(line));
             normalized.add(line.substring(Math.min(strip, line.length())));
         }
-        List<String> displayLines = wrappedDisplayLines(normalized, commonIndent);
+        List<String> allDisplayLines = wrappedDisplayLines(normalized, commonIndent);
+        boolean truncated = allDisplayLines.size() > MAX_VISIBLE_DISPLAY_LINES;
+        List<String> displayLines = truncated
+                ? List.copyOf(allDisplayLines.subList(0, MAX_VISIBLE_DISPLAY_LINES))
+                : allDisplayLines;
         String blockId = UUID.randomUUID().toString();
         String safeFirstPrefix = firstPrefix == null ? "" : firstPrefix;
         String safeContinuationPrefix = continuationPrefix == null ? "" : continuationPrefix;
@@ -192,6 +203,8 @@ public final class RichChatCodeBlockBridge {
                             language == null ? "" : language.trim(),
                             normalized,
                             displayLines,
+                            allDisplayLines.size(),
+                            truncated,
                             repeat(' ', commonIndent),
                             safeFirstPrefix,
                             safeContinuationPrefix
@@ -202,6 +215,10 @@ public final class RichChatCodeBlockBridge {
             String visiblePrefix = row == 0 ? safeFirstPrefix : safeContinuationPrefix;
             output.add((markerPrefix == null ? "" : markerPrefix) + visiblePrefix + MARKER_START + "CODE:" + blockId + ":" + row + MARKER_END);
         }
+        // A code renderer line is taller than a vanilla chat line. Reserve one
+        // invisible row after the card so its final border cannot be cut by the
+        // first row of the next message.
+        output.add((markerPrefix == null ? "" : markerPrefix) + safeContinuationPrefix + SPACER_MARKER);
     }
 
     private static List<String> wrappedDisplayLines(List<String> lines, int commonIndent) {
@@ -322,6 +339,8 @@ public final class RichChatCodeBlockBridge {
             String language,
             List<String> originalLines,
             List<String> displayLines,
+            int totalDisplayLines,
+            boolean truncated,
             String chatIndent,
             String firstVisiblePrefix,
             String continuationVisiblePrefix

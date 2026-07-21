@@ -11,6 +11,7 @@ public enum RichChatRowType {
     COMMAND_BLOCK_IMPULSE,
     COMMAND_BLOCK_CHAIN,
     COMMAND_BLOCK_REPEATING,
+    ATTENTION,
     UNKNOWN;
 
     public boolean usesBodyIndent() {

@@ -50,12 +50,16 @@ public final class VanillaBackedChatInputController {
                 && (text.startsWith("/") || RichChatAttachmentRenderer.containsLiveFormatting(text) || looksLikeHeader(text));
     }
 
-    public static void renderStyledLine(DrawContext context, TextRenderer renderer, MinecraftClient client, String line, int x, int y, int maxWidth) {
+    public static int renderStyledLine(DrawContext context, TextRenderer renderer, MinecraftClient client, String line, int x, int y, int maxWidth) {
+        return renderStyledLine(context, renderer, client, line, x, y, maxWidth, line == null ? -1 : line.length());
+    }
+
+    public static int renderStyledLine(DrawContext context, TextRenderer renderer, MinecraftClient client, String line, int x, int y, int maxWidth, int activeCursor) {
         if (line == null || line.isEmpty()) {
-            return;
+            return x;
         }
         List<KoilCommandAnalysisService.StyledChunk> chunks = line.startsWith("/")
-                ? KoilCommandAnalysisService.highlightLine(client, line)
+                ? KoilCommandAnalysisService.highlightLine(client, line, activeCursor)
                 : formattedPreviewChunks(line);
         int cursor = x;
         int right = x + Math.max(8, maxWidth);
@@ -70,6 +74,24 @@ public final class VanillaBackedChatInputController {
             OrderedText ordered = Text.literal(visible).setStyle(chunk.style()).asOrderedText();
             cursor = RichChatAttachmentRenderer.renderPreviewOrDrawText(context, renderer, ordered, cursor, y, chunk.color());
         }
+        return cursor;
+    }
+
+    /** Measures text with the same styled chunks used by the live draft draw. */
+    public static int styledLineWidth(TextRenderer renderer, MinecraftClient client, String line) {
+        if (renderer == null || line == null || line.isEmpty()) {
+            return 0;
+        }
+        List<KoilCommandAnalysisService.StyledChunk> chunks = line.startsWith("/")
+                ? KoilCommandAnalysisService.highlightLine(client, line)
+                : formattedPreviewChunks(line);
+        int width = 0;
+        for (KoilCommandAnalysisService.StyledChunk chunk : chunks) {
+            if (chunk != null && chunk.text() != null && !chunk.text().isEmpty()) {
+                width += renderer.getWidth(Text.literal(chunk.text()).setStyle(chunk.style()));
+            }
+        }
+        return width;
     }
 
     private static List<KoilCommandAnalysisService.StyledChunk> formattedPreviewChunks(String line) {
@@ -117,13 +139,11 @@ public final class VanillaBackedChatInputController {
                 continue;
             }
             String inner = text.substring(match.start() + match.marker().length(), close);
-            out.add(new KoilCommandAnalysisService.StyledChunk(match.marker(), Style.EMPTY, 0xFFA8B0BC));
             if ("||".equals(match.marker())) {
                 out.add(new KoilCommandAnalysisService.StyledChunk(inner, baseStyle.withObfuscated(true), 0xFFE0E0E0));
             } else {
                 collectFormattedChunks(inner, applyDraftStyle(baseStyle, match.marker()), out);
             }
-            out.add(new KoilCommandAnalysisService.StyledChunk(match.marker(), Style.EMPTY, 0xFFA8B0BC));
             index = close + match.marker().length();
         }
     }

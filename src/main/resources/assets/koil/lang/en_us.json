@@ -1,0 +1,24 @@
+{
+  "koil.chat.enabled": "Rich Chat",
+  "koil.chat.media": "Rich media",
+  "koil.chat.images": "Rich images",
+  "koil.chat.audio": "Rich audio",
+  "koil.chat.video": "Rich videos",
+  "koil.chat.gifs": "Rich GIFs",
+  "koil.chat.files": "Rich files",
+  "koil.chat.latex": "Rich LaTeX",
+  "koil.chat.effects": "Rich text effects",
+  "koil.chat.timestamps": "Rich timestamps",
+  "koil.chat.indicators": "Rich message bars"
+  ,"koil.chat.option.richChatEnabled": "Rich Chat"
+  ,"koil.chat.option.richChatMedia": "Rich media"
+  ,"koil.chat.option.richChatImages": "Rich images"
+  ,"koil.chat.option.richChatAudio": "Rich audio"
+  ,"koil.chat.option.richChatVideo": "Rich videos"
+  ,"koil.chat.option.richChatGifs": "Rich GIFs"
+  ,"koil.chat.option.richChatFiles": "Rich files"
+  ,"koil.chat.option.richChatLatex": "Rich LaTeX"
+  ,"koil.chat.option.richChatEffects": "Rich text effects"
+  ,"koil.chat.option.richChatTimestamps": "Rich timestamps"
+  ,"koil.chat.option.richChatIndicators": "Rich message bars"
+}

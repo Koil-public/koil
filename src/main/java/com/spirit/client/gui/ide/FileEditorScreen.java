@@ -8,10 +8,13 @@ import com.spirit.client.gui.UiSoundHelper;
 import com.spirit.client.gui.mod.ModConfigScreen;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.util.file.media.video.VideoService;
+import com.spirit.koil.chat.internal.upload.RichChatUploadDraft;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Style;
@@ -55,7 +58,7 @@ public class FileEditorScreen extends Screen {
     private static final String TOP_BAR_CHOOSE_LABEL = "Open";
     private static final String TOP_BAR_SAVE_LABEL = "Save";
     private static final String TOP_BAR_CLEAR_LABEL = "Clear";
-    private static final String TOP_BAR_RELOAD_LABEL = "Reset";
+    private static final String TOP_BAR_RELOAD_LABEL = "Share";
     private static final int SEARCH_DROPDOWN_MAX_VISIBLE_ROWS = 8;
     private static final int SEARCH_DROPDOWN_ROW_HEIGHT = 18;
     private static final int SEARCH_DROPDOWN_PADDING = 6;
@@ -697,8 +700,10 @@ public class FileEditorScreen extends Screen {
             if (button == 0) {
                 UiSoundHelper.playButtonClick();
             }
-            loadFileContent();
-            resetCursorBlink();
+            if (fileItem != null && fileItem.isFile()) {
+                RichChatUploadDraft.stage(fileItem.toPath());
+                MinecraftClient.getInstance().setScreen(new ChatScreen(""));
+            }
             return true;
         }
 

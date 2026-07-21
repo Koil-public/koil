@@ -1,0 +1,64 @@
+package com.spirit.koil.chat.internal;
+
+import com.spirit.koil.chat.internal.input.KoilCommandAnalysisService;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.text.Text;
+
+import java.util.List;
+
+/** Applies the same Brigadier palette used by Koil's live command editor to
+ * command feedback which includes a saved or echoed command. */
+public final class RichChatCommandFeedbackFormatter {
+    private RichChatCommandFeedbackFormatter() {
+    }
+
+    public static boolean hasHighlightableCommand(String text) {
+        return text != null && (text.indexOf('/') >= 0 || commandEchoStart(text) >= 0);
+    }
+
+    public static int render(DrawContext context, TextRenderer renderer, String text, int x, int y, int fallbackColor) {
+        if (context == null || renderer == null || text == null) {
+            return x;
+        }
+        int slash = text.indexOf('/');
+        int commandStart = slash >= 0 ? slash : commandEchoStart(text);
+        if (commandStart < 0) {
+            return context.drawTextWithShadow(renderer, Text.literal(text), x, y, fallbackColor);
+        }
+        int cursor = context.drawTextWithShadow(renderer, Text.literal(text.substring(0, commandStart)), x, y, fallbackColor);
+        String command = text.substring(commandStart);
+        boolean syntheticSlash = !command.startsWith("/");
+        if (syntheticSlash) command = "/" + command;
+        List<KoilCommandAnalysisService.StyledChunk> chunks = KoilCommandAnalysisService.highlightLine(MinecraftClient.getInstance(), command);
+        for (KoilCommandAnalysisService.StyledChunk chunk : chunks) {
+            if (chunk == null || chunk.text() == null || chunk.text().isEmpty()) {
+                continue;
+            }
+            String chunkText = chunk.text();
+            if (syntheticSlash && chunkText.startsWith("/")) {
+                chunkText = chunkText.substring(1);
+            }
+            if (chunkText.isEmpty()) continue;
+            int alpha = fallbackColor & 0xFF000000;
+            int color = alpha | (chunk.color() & 0x00FFFFFF);
+            cursor = context.drawTextWithShadow(renderer, Text.literal(chunkText).setStyle(chunk.style()), cursor, y, color);
+        }
+        return cursor;
+    }
+
+    private static int commandEchoStart(String text) {
+        if (text == null) return -1;
+        String lower = text.toLowerCase(java.util.Locale.ROOT);
+        for (String prefix : List.of("set command block command to: ", "command block command: ", "command: ")) {
+            int at = lower.indexOf(prefix);
+            if (at >= 0) return at + prefix.length();
+        }
+        int colon = text.lastIndexOf(": ");
+        if (lower.contains("command") && colon >= 0 && colon + 2 < text.length()) {
+            return colon + 2;
+        }
+        return -1;
+    }
+}

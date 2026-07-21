@@ -2,6 +2,7 @@ package com.spirit.koil.chat.internal.upload;
 
 import com.spirit.koil.api.chat.RichChatAttachment;
 import com.spirit.koil.api.chat.RichChatAttachmentType;
+import com.spirit.koil.chat.api.RichChatSettings;
 import com.spirit.client.gui.InfoPopup;
 import com.spirit.client.gui.PopupMenu;
 import com.spirit.client.gui.ide.EditorSyntaxHighlighter;
@@ -10,6 +11,7 @@ import com.spirit.client.gui.ide.FileExplorerScreen;
 import com.spirit.client.gui.ide.TextFileViewSupport;
 import com.spirit.koil.api.design.uiColorVal;
 import com.spirit.koil.chat.internal.RichChatCodeBlockBridge;
+import com.spirit.koil.chat.internal.RichChatCommandFeedbackFormatter;
 import com.spirit.koil.api.util.file.audio.AudioManager;
 import com.spirit.koil.api.util.file.media.VisualPlaybackSession;
 import com.spirit.koil.api.util.file.media.VisualPlaybackState;
@@ -27,6 +29,7 @@ import com.spirit.koil.chat.internal.latex.RichChatLatexTextureRenderer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.OrderedText;
 import net.minecraft.text.Style;
@@ -54,6 +57,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class RichChatAttachmentRenderer {
     private static final int MAX_THUMB_WIDTH = 269;
@@ -83,6 +88,7 @@ public final class RichChatAttachmentRenderer {
     private static final Map<String, UsernameHover> USERNAME_HOVERS = new ConcurrentHashMap<>();
     private static final Map<String, HoverTooltip> HOVER_TOOLTIPS = new ConcurrentHashMap<>();
     private static final Map<String, SpoilerBounds> SPOILER_BOUNDS = new ConcurrentHashMap<>();
+    private static final Map<String, LinkBounds> LINK_BOUNDS = new ConcurrentHashMap<>();
     private static final Map<UUID, VisualPlaybackSession> VIDEO_SESSIONS = new ConcurrentHashMap<>();
     private static final Map<UUID, String> VIDEO_SESSION_KEYS = new ConcurrentHashMap<>();
     private static final Map<UUID, VisualPlaybackSession> GIF_SESSIONS = new ConcurrentHashMap<>();
@@ -92,6 +98,7 @@ public final class RichChatAttachmentRenderer {
     private static final Set<String> VISIBLE_SPOILERS = ConcurrentHashMap.newKeySet();
     private static final Set<String> REVEALED_SPOILERS = ConcurrentHashMap.newKeySet();
     private static FocusState focusState;
+    private static RichChatAttachment pinnedAttachment;
     private static RichChatAttachment actionMenuAttachment;
     private static String actionMenuCodeBlockId;
     private static SeekDrag seekDrag;
@@ -101,6 +108,7 @@ public final class RichChatAttachmentRenderer {
     private static double frameMouseY;
     private static long lastVideoClickTime;
     private static UUID lastVideoClickAttachmentId;
+    private static final Pattern MASKED_LINK = Pattern.compile("\\[([^\\]\\n]+)]\\(([^)\\n]+)\\)");
 
     private RichChatAttachmentRenderer() {
     }
@@ -129,12 +137,159 @@ public final class RichChatAttachmentRenderer {
         USERNAME_HOVERS.clear();
         HOVER_TOOLTIPS.clear();
         SPOILER_BOUNDS.clear();
+        LINK_BOUNDS.clear();
         frameMouseX = mouseX;
         frameMouseY = mouseY;
     }
 
     public static boolean hasFocusedAttachment() {
         return focusState != null;
+    }
+
+    public static int pinnedPanelHeight(MinecraftClient client) {
+        RichChatAttachment attachment = pinnedAttachment;
+        if (attachment == null || client == null || client.player == null || !attachmentTypeEnabled(attachment.type())) {
+            return 0;
+        }
+        if (attachment.type() == RichChatAttachmentType.AUDIO) {
+            return 42;
+        }
+        if (attachment.type() == RichChatAttachmentType.FILE) {
+            return 36;
+        }
+        return pinnedVisualSize(client, attachment).height();
+    }
+
+    public static void renderPinnedPanel(DrawContext context, MinecraftClient client, int y) {
+        RichChatAttachment attachment = pinnedAttachment;
+        int height = pinnedPanelHeight(client);
+        if (context == null || client == null || attachment == null || height <= 0) {
+            return;
+        }
+        int width = pinnedPanelWidth(client);
+        int background = pinnedPanelBackground(client);
+        context.fill(0, y, width, y + height, background);
+        context.fill(0, y, 2, y + height, 0xFF6F8FBD);
+        if (attachment.type() == RichChatAttachmentType.AUDIO) {
+            renderPinnedAudio(context, client, attachment, width, y, height);
+        } else if (attachment.type() == RichChatAttachmentType.FILE) {
+            renderPinnedFile(context, client, attachment, width, y, height);
+        } else {
+            renderPinnedVisual(context, client, attachment, width, y, height);
+        }
+        int menuX = width - MENU_BUTTON_SIZE - 3;
+        int menuY = y + 2;
+        drawMoreButton(context, client.textRenderer, menuX, menuY, actionMenuAttachment != null && sameAttachment(actionMenuAttachment, attachment), 230);
+        putButton(context, new ButtonKey("pinned:" + attachment.attachmentId(), ButtonAction.MENU), attachment, menuX, menuY, MENU_BUTTON_SIZE, MENU_BUTTON_SIZE);
+    }
+
+    private static void renderPinnedVisual(DrawContext context, MinecraftClient client, RichChatAttachment attachment, int panelWidth, int y, int panelHeight) {
+        Identifier textureId = null;
+        int sourceWidth = Math.max(1, attachment.width());
+        int sourceHeight = Math.max(1, attachment.height());
+        if (attachment.type() == RichChatAttachmentType.VIDEO) {
+            VisualPlaybackSession session = videoSession(attachment, Math.max(1, panelWidth), Math.max(1, panelHeight));
+            if (session != null) {
+                session.update(System.currentTimeMillis());
+                textureId = session.currentFrameTexture();
+                sourceWidth = Math.max(1, session.frameWidth());
+                sourceHeight = Math.max(1, session.frameHeight());
+            }
+            if (textureId == null) {
+                File file = attachmentFile(attachment);
+                VideoPreviewSnapshot preview = file == null ? null : VideoService.requestPreview(file, panelWidth, panelHeight);
+                ImageTexture thumbnail = preview == null ? null : preview.thumbnail();
+                if (thumbnail != null) {
+                    textureId = thumbnail.textureId();
+                    sourceWidth = Math.max(1, thumbnail.width());
+                    sourceHeight = Math.max(1, thumbnail.height());
+                }
+            }
+        } else if (attachment.type() == RichChatAttachmentType.GIF) {
+            VisualPlaybackSession session = gifSession(attachment, Math.max(1, panelWidth), Math.max(1, panelHeight));
+            if (session != null) {
+                if (session.state() != VisualPlaybackState.PLAYING) {
+                    session.play();
+                }
+                session.update(System.currentTimeMillis());
+                textureId = session.currentFrameTexture();
+                sourceWidth = Math.max(1, session.frameWidth());
+                sourceHeight = Math.max(1, session.frameHeight());
+            }
+        }
+        if (textureId == null) {
+            ImageTexture texture = thumbnail(attachment.attachmentId(), attachment);
+            if (texture != null) {
+                textureId = texture.textureId();
+                sourceWidth = Math.max(1, texture.width());
+                sourceHeight = Math.max(1, texture.height());
+            }
+        }
+        if (textureId == null) {
+            context.drawTextWithShadow(client.textRenderer, Text.literal("[media loading]"), 7, y + Math.max(3, (panelHeight - client.textRenderer.fontHeight) / 2), 0xFFE0E0E0);
+            return;
+        }
+        int availableWidth = Math.max(1, panelWidth - 2);
+        float scale = Math.min(availableWidth / (float) sourceWidth, panelHeight / (float) sourceHeight);
+        int drawWidth = Math.max(1, Math.min(availableWidth, Math.round(sourceWidth * scale)));
+        int drawHeight = Math.max(1, Math.min(panelHeight, Math.round(sourceHeight * scale)));
+        int drawX = 2;
+        int drawY = y + Math.max(0, (panelHeight - drawHeight) / 2);
+        context.drawTexture(textureId, drawX, drawY, drawWidth, drawHeight, 0, 0, sourceWidth, sourceHeight, sourceWidth, sourceHeight);
+        BOUNDS.put("pinned:" + attachment.attachmentId(), screenBounds(context, attachment.attachmentId(), attachment, drawX, drawY, drawWidth, drawHeight));
+    }
+
+    private static void renderPinnedFile(DrawContext context, MinecraftClient client, RichChatAttachment attachment, int width, int y, int height) {
+        Identifier icon = FIleIconHelper.resolve(attachment.fileName());
+        drawTextureWithAlpha(context, icon, 6, y + 3, 0, 0, 16, 16, 16, 16, 255);
+        int textWidth = Math.max(24, width - 48);
+        context.drawTextWithShadow(client.textRenderer, Text.literal(trimWithEllipsis(client.textRenderer, attachment.fileName(), textWidth)), 26, y + 3, 0xFFF5F7FA);
+        context.drawTextWithShadow(client.textRenderer, Text.literal(trimWithEllipsis(client.textRenderer, fileDescription(attachment), textWidth)), 26, y + 14, CARD_TEXT_SECONDARY);
+    }
+
+    private static void renderPinnedAudio(DrawContext context, MinecraftClient client, RichChatAttachment attachment, int width, int y, int height) {
+        renderPinnedFile(context, client, attachment, width, y, height);
+        File file = attachmentFile(attachment);
+        boolean current = file != null && AudioManager.isCurrentAudioFile(file) && sameAttachmentId(activeAudioAttachmentId, attachment.attachmentId());
+        boolean playing = current && AudioManager.isAudioPlaying();
+        int playX = 26;
+        int stopX = 46;
+        int controlY = y + 23;
+        drawIconButton(context, playX, controlY, playing ? FileExplorerScreen.PAUSE_BUTTON : FileExplorerScreen.PLAY_BUTTON);
+        drawIconButton(context, stopX, controlY, FileExplorerScreen.STOP_BUTTON);
+        putButton(context, new ButtonKey("pinned:" + attachment.attachmentId(), ButtonAction.PLAY_PAUSE), attachment, playX, controlY, 16, 16);
+        putButton(context, new ButtonKey("pinned:" + attachment.attachmentId(), ButtonAction.STOP), attachment, stopX, controlY, 16, 16);
+    }
+
+    private static PreviewSize pinnedVisualSize(MinecraftClient client, RichChatAttachment attachment) {
+        int width = pinnedPanelWidth(client);
+        int sourceWidth = attachment == null ? width : Math.max(1, attachment.width());
+        int sourceHeight = attachment == null ? 90 : Math.max(1, attachment.height());
+        if (sourceWidth <= 1 || sourceHeight <= 1) {
+            sourceWidth = 16;
+            sourceHeight = 9;
+        }
+        float scale = Math.min(width / (float) sourceWidth, 148.0F / sourceHeight);
+        return new PreviewSize(width, Math.max(MIN_THUMB_HEIGHT, Math.min(148, Math.round(sourceHeight * scale))));
+    }
+
+    private static int pinnedPanelWidth(MinecraftClient client) {
+        int chatWidth = client == null || client.inGameHud == null ? 0 : client.inGameHud.getChatHud().getWidth();
+        int screenWidth = client == null || client.getWindow() == null ? 320 : client.getWindow().getScaledWidth();
+        return Math.min(screenWidth, Math.max(190, chatWidth + 12));
+    }
+
+    private static int pinnedPanelBackground(MinecraftClient client) {
+        double opacity = client == null ? 0.5D : Math.max(0.48D, client.options.getTextBackgroundOpacity().getValue());
+        return (Math.max(0, Math.min(220, (int) (255.0D * opacity))) << 24) | 0x050607;
+    }
+
+    private static boolean sameAttachment(RichChatAttachment first, RichChatAttachment second) {
+        return first != null && second != null && sameAttachmentId(first.attachmentId(), second.attachmentId());
+    }
+
+    private static boolean sameAttachmentId(UUID first, UUID second) {
+        return first != null && first.equals(second);
     }
 
     public static int renderOrDrawText(DrawContext context, TextRenderer renderer, OrderedText orderedText, int x, int y, int color) {
@@ -155,6 +310,11 @@ public final class RichChatAttachmentRenderer {
                         displayText
                 );
         if (style == RichChatPrivateMessageBridge.VisualStyle.HIDE) {
+            return x;
+        }
+        // Continuation indentation and private-message metadata can surround
+        // this invisible reserve token. It must never escape as a glyph.
+        if (displayText.strip().length() == 1 && displayText.strip().charAt(0) == RichChatCodeBlockBridge.SPACER_MARKER) {
             return x;
         }
         int effectiveColor = style == RichChatPrivateMessageBridge.VisualStyle.DIM ? RichChatPrivateMessageBridge.dimColor(color) : color;
@@ -190,6 +350,13 @@ public final class RichChatAttachmentRenderer {
         }
         if (!LocalRichAttachmentBridge.containsMarker(displayText) && containsRichFormatting(displayText)) {
             int right = renderFormattedText(context, renderer, displayText, x, y, effectiveColor, style);
+            RichChatTimestampBridge.render(context, renderer, text, x, y);
+            return right;
+        }
+        if (!LocalRichAttachmentBridge.containsMarker(displayText)
+                && !italicizeDimmed
+                && RichChatCommandFeedbackFormatter.hasHighlightableCommand(displayText)) {
+            int right = RichChatCommandFeedbackFormatter.render(context, renderer, displayText, x, y, effectiveColor);
             RichChatTimestampBridge.render(context, renderer, text, x, y);
             return right;
         }
@@ -291,6 +458,23 @@ public final class RichChatAttachmentRenderer {
                     color
             );
         }
+        QuoteStyle quoteStyle = detectQuoteStyle(content);
+        if (quoteStyle != null) {
+            if (!quoteStyle.leadingWhitespace().isEmpty()) {
+                cursor = RichChatLatexTextureRenderer.renderOrDrawText(context, renderer, Text.literal(quoteStyle.leadingWhitespace()).setStyle(baseStyle).asOrderedText(), cursor, y, color);
+            }
+            int quoteColor = withMultipliedAlpha(style == RichChatPrivateMessageBridge.VisualStyle.DIM ? 0xFF59616C : 0xFF7B8794, lineAlpha(color));
+            context.fill(cursor, y - 1, cursor + 2, y + renderer.fontHeight, quoteColor);
+            cursor += 5;
+            content = quoteStyle.content();
+        }
+        SubtextStyle subtextStyle = detectSubtextStyle(content);
+        if (subtextStyle != null) {
+            content = subtextStyle.content();
+            baseStyle = mergeStyles(baseStyle, Style.EMPTY.withColor(Formatting.DARK_GRAY));
+            contentScale = 0.82F;
+            contentYOffset = 1;
+        }
         HeaderStyle headerStyle = detectHeaderStyle(content);
         content = headerStyle == null ? content : headerStyle.content();
         if (headerStyle != null) {
@@ -323,8 +507,17 @@ public final class RichChatAttachmentRenderer {
         }
         OrderedText orderedText = Text.literal(segment.text()).setStyle(segment.style()).asOrderedText();
         int segmentColor = color;
-        if (segment.style() != null && segment.style().getColor() != null) {
+        if (RichChatSettings.chatColorsEnabled() && segment.style() != null && segment.style().getColor() != null) {
             segmentColor = ((color >>> 24) << 24) | (segment.style().getColor().getRgb() & 0x00FFFFFF);
+        }
+        int width = Math.max(1, Math.round(renderer.getWidth(segment.text()) * Math.max(0.01F, scale)));
+        int height = Math.max(1, Math.round((renderer.fontHeight + 2) * Math.max(0.01F, scale)));
+        if (segment.inlineCode()) {
+            // Keep the inline card inside the current text row; the old extra
+            // lower padding painted into the following chat message.
+            int cardY = y - 1;
+            context.fill(cursorX - 1, cardY, cursorX + width + 1, cardY + renderer.fontHeight, withMultipliedAlpha(0x9E1B2028, (segmentColor >>> 24) & 0xFF));
+            context.drawBorder(cursorX - 1, cardY, width + 2, renderer.fontHeight, withMultipliedAlpha(0x9E333C49, (segmentColor >>> 24) & 0xFF));
         }
         int right;
         if (Math.abs(scale - 1.0F) < 0.01F) {
@@ -340,6 +533,9 @@ public final class RichChatAttachmentRenderer {
         if (segment.spoilerKey() != null && segment.obfuscated()) {
             rememberSpoilerBounds(context, renderer, segment.spoilerKey(), lineX, cursorX, y, segment.text(), scale);
         }
+        if (segment.linkTarget() != null && !segment.linkTarget().isBlank()) {
+            rememberLinkBounds(context, renderer, segment.linkTarget(), cursorX, y, width, height);
+        }
         return right;
     }
 
@@ -351,36 +547,68 @@ public final class RichChatAttachmentRenderer {
         while (index < text.length()) {
             MarkerMatch match = nextFormattingMarker(text, index);
             if (match == null) {
-                out.add(new RenderedSegment(text.substring(index), baseStyle, null, false));
+                appendPlainAndLinks(text.substring(index), baseStyle, out);
                 return;
             }
             if (match.start() > index) {
-                out.add(new RenderedSegment(text.substring(index, match.start()), baseStyle, null, false));
+                appendPlainAndLinks(text.substring(index, match.start()), baseStyle, out);
             }
             int close = text.indexOf(match.marker(), match.start() + match.marker().length());
             if (close < 0) {
-                out.add(new RenderedSegment(match.marker(), baseStyle, null, false));
+                out.add(new RenderedSegment(match.marker(), baseStyle, null, false, false, null));
                 index = match.start() + match.marker().length();
                 continue;
             }
             String inner = text.substring(match.start() + match.marker().length(), close);
             if (inner.isEmpty()) {
-                out.add(new RenderedSegment(match.marker(), baseStyle, null, false));
+                out.add(new RenderedSegment(match.marker(), baseStyle, null, false, false, null));
                 index = match.start() + match.marker().length();
                 continue;
             }
             if ("||".equals(match.marker())) {
                 String spoilerKey = lineKey + ":spoiler:" + spoilerCounter[0]++;
+                VISIBLE_SPOILERS.add(spoilerKey);
                 if (REVEALED_SPOILERS.contains(spoilerKey)) {
                     collectFormattedSegments(inner, baseStyle, lineKey, spoilerCounter, out);
                 } else {
-                    out.add(new RenderedSegment(inner, baseStyle.withObfuscated(true), spoilerKey, true));
+                    out.add(new RenderedSegment(inner, baseStyle.withObfuscated(true), spoilerKey, true, false, null));
                 }
+            } else if ("`".equals(match.marker())) {
+                out.add(new RenderedSegment(inner, baseStyle.withColor(Formatting.GRAY), null, false, true, null));
             } else {
                 collectFormattedSegments(inner, applyStyle(baseStyle, match.marker()), lineKey, spoilerCounter, out);
             }
             index = close + match.marker().length();
         }
+    }
+
+    private static void appendPlainAndLinks(String text, Style baseStyle, java.util.List<RenderedSegment> out) {
+        if (text == null || text.isEmpty()) {
+            return;
+        }
+        Matcher matcher = MASKED_LINK.matcher(text);
+        int cursor = 0;
+        while (matcher.find()) {
+            if (matcher.start() > cursor) {
+                out.add(new RenderedSegment(text.substring(cursor, matcher.start()), baseStyle, null, false, false, null));
+            }
+            String label = matcher.group(1);
+            String target = matcher.group(2).trim();
+            Formatting linkColor = isCommandLink(target) ? Formatting.GOLD : Formatting.BLUE;
+            out.add(new RenderedSegment(label, baseStyle.withUnderline(true).withColor(linkColor), null, false, false, target));
+            cursor = matcher.end();
+        }
+        if (cursor < text.length()) {
+            out.add(new RenderedSegment(text.substring(cursor), baseStyle, null, false, false, null));
+        }
+    }
+
+    private static boolean isCommandLink(String target) {
+        if (target == null) {
+            return false;
+        }
+        String value = target.trim();
+        return value.startsWith("/") || value.regionMatches(true, 0, "command:/", 0, "command:/".length());
     }
 
     private static void rememberSpoilerBounds(DrawContext context, TextRenderer renderer, String spoilerKey, int lineX, int x, int y, String rawText, float scale) {
@@ -414,10 +642,10 @@ public final class RichChatAttachmentRenderer {
         }
         String visiblePrefix = detectVisibleTextPrefix(text);
         String content = visiblePrefix.isEmpty() ? text : text.substring(visiblePrefix.length());
-        if (content.contains("***") || content.contains("**") || content.contains("__") || content.contains("*") || content.contains("--") || content.contains("||")) {
+        if (content.contains("***") || content.contains("**") || content.contains("__") || content.contains("*") || content.contains("--") || content.contains("||") || content.contains("`") || MASKED_LINK.matcher(content).find()) {
             return true;
         }
-        return detectHeaderStyle(content) != null;
+        return detectHeaderStyle(content) != null || detectSubtextStyle(content) != null || detectQuoteStyle(content) != null;
     }
 
     private static HeaderStyle detectHeaderStyle(String text) {
@@ -450,6 +678,32 @@ public final class RichChatAttachmentRenderer {
             default -> 0;
         };
         return new HeaderStyle(text.substring(leadingWhitespace + hashes + 1), style, scale, yOffset, text.substring(0, leadingWhitespace));
+    }
+
+    private static SubtextStyle detectSubtextStyle(String text) {
+        if (text == null || !text.startsWith("-# ")) {
+            return null;
+        }
+        return new SubtextStyle(text.substring(3));
+    }
+
+    private static QuoteStyle detectQuoteStyle(String text) {
+        if (text == null) {
+            return null;
+        }
+        int start = 0;
+        while (start < text.length() && Character.isWhitespace(text.charAt(start))) {
+            start++;
+        }
+        String leading = text.substring(0, start);
+        String body = text.substring(start);
+        if (body.startsWith(">>>")) {
+            return new QuoteStyle(leading, body.substring(3).stripLeading());
+        }
+        if (body.startsWith(">")) {
+            return new QuoteStyle(leading, body.substring(1).stripLeading());
+        }
+        return null;
     }
 
     private static String detectVisibleTextPrefix(String text) {
@@ -505,7 +759,7 @@ public final class RichChatAttachmentRenderer {
     private static MarkerMatch nextFormattingMarker(String text, int from) {
         int best = Integer.MAX_VALUE;
         String chosen = null;
-        for (String marker : new String[]{"***", "**", "__", "--", "||", "*"}) {
+        for (String marker : new String[]{"***", "**", "__", "--", "||", "`", "*"}) {
             int at = text.indexOf(marker, from);
             if (at >= 0 && at < best) {
                 best = at;
@@ -513,6 +767,19 @@ public final class RichChatAttachmentRenderer {
             }
         }
         return chosen == null ? null : new MarkerMatch(best, chosen);
+    }
+
+    private static void rememberLinkBounds(DrawContext context, TextRenderer renderer, String target, int x, int y, int width, int height) {
+        if (context == null || renderer == null || target == null || target.isBlank()) {
+            return;
+        }
+        Matrix4f matrix = context.getMatrices().peek().getPositionMatrix();
+        Vector4f topLeft = new Vector4f(x, y, 0.0F, 1.0F);
+        Vector4f bottomRight = new Vector4f(x + width, y + height, 0.0F, 1.0F);
+        topLeft.mul(matrix);
+        bottomRight.mul(matrix);
+        String key = target + "@" + x + ":" + y;
+        LINK_BOUNDS.put(key, new LinkBounds(target, Math.round(Math.min(topLeft.x(), bottomRight.x())), Math.round(Math.min(topLeft.y(), bottomRight.y())), Math.max(1, Math.round(Math.abs(bottomRight.x() - topLeft.x()))), Math.max(1, Math.round(Math.abs(bottomRight.y() - topLeft.y())))));
     }
 
     private static int anchoredMarkerX(TextRenderer renderer, int lineX, LocalRichAttachmentBridge.Marker marker, RichChatAttachment attachment, int fallbackX) {
@@ -534,6 +801,14 @@ public final class RichChatAttachmentRenderer {
         RichChatAttachment attachment = LocalRichAttachmentBridge.attachment(marker).orElse(null);
         if (attachment == null) {
             String fallback = "[attachment]";
+            context.drawTextWithShadow(renderer, fallback, x, y, color);
+            return renderer.getWidth(fallback);
+        }
+        if (!attachmentTypeEnabled(attachment.type())) {
+            if (marker.row() > 0) {
+                return 0;
+            }
+            String fallback = "[" + attachment.type().name().toLowerCase(java.util.Locale.ROOT) + " hidden]";
             context.drawTextWithShadow(renderer, fallback, x, y, color);
             return renderer.getWidth(fallback);
         }
@@ -622,6 +897,31 @@ public final class RichChatAttachmentRenderer {
         return 0;
     }
 
+    private static boolean attachmentTypeEnabled(RichChatAttachmentType type) {
+        if (type == null) {
+            return false;
+        }
+        return switch (type) {
+            case IMAGE -> RichChatSettings.imagesEnabled();
+            case AUDIO -> RichChatSettings.audioEnabled();
+            case VIDEO -> RichChatSettings.videoEnabled();
+            case GIF -> RichChatSettings.gifsEnabled();
+            default -> RichChatSettings.filesEnabled();
+        };
+    }
+
+    private static void enableAttachmentType(RichChatAttachmentType type) {
+        if (type == null) return;
+        switch (type) {
+            case IMAGE -> RichChatSettings.set(RichChatSettings.IMAGES, true);
+            case AUDIO -> RichChatSettings.set(RichChatSettings.AUDIO, true);
+            case VIDEO -> RichChatSettings.set(RichChatSettings.VIDEO, true);
+            case GIF -> RichChatSettings.set(RichChatSettings.GIFS, true);
+            default -> RichChatSettings.set(RichChatSettings.FILES, true);
+        }
+        RichChatSettings.set(RichChatSettings.MEDIA, true);
+    }
+
     private static int renderFileMarker(DrawContext context, TextRenderer renderer, LocalRichAttachmentBridge.Marker marker, RichChatAttachment attachment, int lineX, int x, int y, int color, RichChatPrivateMessageBridge.VisualStyle style, int chatAlpha) {
         int row = Math.max(0, marker.row());
         int lineHeight = Math.max(1, RichChatLatexTextureCache.currentChatLineHeight());
@@ -646,7 +946,7 @@ public final class RichChatAttachmentRenderer {
         Identifier icon = FIleIconHelper.resolve(attachment.fileName());
         int iconX = drawX;
         int iconY = drawY + 1;
-        int menuX = drawX + width - MENU_BUTTON_SIZE;
+        int menuX = drawX + width - MENU_BUTTON_SIZE - 4;
         int textX = iconX + 18;
         int textWidth = Math.max(36, menuX - textX - 4);
         drawTextureWithAlpha(context, icon, iconX, iconY, 0, 0, 16, 16, 16, 16, chatAlpha);
@@ -931,16 +1231,21 @@ public final class RichChatAttachmentRenderer {
         int viewportTop = RichChatRenderContext.currentChatViewportTop();
         int viewportBottom = RichChatRenderContext.currentChatViewportBottom();
         int clippedTop = Math.max(drawY, viewportTop);
-        int clippedBottom = Math.min(drawY + rowHeight, viewportBottom + EXTRA_RENDER_BOTTOM);
+        // The first code row carries a 14px menu while a text row is shorter.
+        // Include its full paint/hit area so the scissor cannot cut its edge.
+        int cardHeight = marker.row() == 0 ? Math.max(rowHeight, MENU_BUTTON_SIZE + 2) : rowHeight;
+        int clippedBottom = Math.min(drawY + cardHeight, viewportBottom + EXTRA_RENDER_BOTTOM);
         if (clippedBottom <= clippedTop || width <= 0) {
             return lineX;
         }
 
-        int fillBase = 0x8814171C;
+        // Hide the per-row vanilla chat surface so it cannot show through as
+        // horizontal dark bands inside a multi-line code card.
+        int fillBase = 0xD814171C;
         int borderBase = 0xB81E242D;
         int fill = withMultipliedAlpha(style == RichChatPrivateMessageBridge.VisualStyle.DIM ? RichChatPrivateMessageBridge.dimColor(fillBase) : fillBase, chatAlpha);
         int border = withMultipliedAlpha(style == RichChatPrivateMessageBridge.VisualStyle.DIM ? RichChatPrivateMessageBridge.dimColor(borderBase) : borderBase, chatAlpha);
-        context.enableScissor(drawX, clippedTop, drawX + width, clippedBottom);
+        context.enableScissor(drawX, clippedTop, drawX + width + 1, clippedBottom);
         context.fill(drawX, clippedTop, drawX + width, clippedBottom, fill);
         if (marker.row() == 0) {
             context.fill(drawX, drawY, drawX + width, drawY + 1, border);
@@ -951,7 +1256,7 @@ public final class RichChatAttachmentRenderer {
         context.fill(drawX, clippedTop, drawX + 1, clippedBottom, border);
         context.fill(drawX + width - 1, clippedTop, drawX + width, clippedBottom, border);
 
-        int menuX = drawX + width - MENU_BUTTON_SIZE;
+        int menuX = drawX + width - MENU_BUTTON_SIZE - 4;
         int contentX = drawX + CODE_BLOCK_PADDING;
         int contentWidth = Math.max(24, menuX - contentX - (marker.row() == 0 ? 4 : 0));
         renderCodeSyntaxLine(context, renderer, RichChatCodeBlockBridge.syntaxFileName(block), block.displayLines().get(marker.row()), contentX, drawY + 1, contentWidth, style, chatAlpha);
@@ -979,7 +1284,8 @@ public final class RichChatAttachmentRenderer {
             if (visible.isEmpty()) {
                 continue;
             }
-            int color = withMultipliedAlpha(style == RichChatPrivateMessageBridge.VisualStyle.DIM ? RichChatPrivateMessageBridge.dimColor(span.color()) : span.color(), chatAlpha);
+            int syntaxColor = RichChatSettings.chatColorsEnabled() ? span.color() : 0xFFF5F7FA;
+            int color = withMultipliedAlpha(style == RichChatPrivateMessageBridge.VisualStyle.DIM ? RichChatPrivateMessageBridge.dimColor(syntaxColor) : syntaxColor, chatAlpha);
             cursor = RichChatLatexTextureRenderer.renderOrDrawText(context, renderer, Text.literal(visible).asOrderedText(), cursor, y, color);
         }
     }
@@ -1114,6 +1420,13 @@ public final class RichChatAttachmentRenderer {
             return true;
         }
         if (button == 0) {
+            Optional<LinkBounds> linkHit = LINK_BOUNDS.values().stream()
+                    .filter(bounds -> mouseX >= bounds.x() && mouseX <= bounds.x() + bounds.width() && mouseY >= bounds.y() && mouseY <= bounds.y() + bounds.height())
+                    .findFirst();
+            if (linkHit.isPresent()) {
+                openMaskedLink(linkHit.get().target());
+                return true;
+            }
             Optional<SpoilerBounds> spoilerHit = SPOILER_BOUNDS.values().stream()
                     .filter(bounds -> mouseX >= bounds.x() && mouseX <= bounds.x() + bounds.width() && mouseY >= bounds.y() && mouseY <= bounds.y() + bounds.height())
                     .findFirst();
@@ -1444,11 +1757,17 @@ public final class RichChatAttachmentRenderer {
             MinecraftClient client = MinecraftClient.getInstance();
             int width = client == null || client.getWindow() == null ? 320 : client.getWindow().getScaledWidth();
             int height = client == null || client.getWindow() == null ? 240 : client.getWindow().getScaledHeight();
-            ACTION_MENU.toggleAtPointer(mouseX, mouseY, width, height, List.of(
-                    new PopupMenu.MenuEntry("download", "Download"),
-                    new PopupMenu.MenuEntry("file_info", "File Info")
-            ));
+            ACTION_MENU.toggleAtPointer(mouseX, mouseY, width, height, attachmentMenuEntries(bounds.attachment()));
         }
+    }
+
+    private static List<PopupMenu.MenuEntry> attachmentMenuEntries(RichChatAttachment attachment) {
+        boolean pinned = sameAttachment(pinnedAttachment, attachment);
+        return List.of(
+                new PopupMenu.MenuEntry(pinned ? "unpin" : "pin", pinned ? "Unpin" : "Pin"),
+                new PopupMenu.MenuEntry("download", "Download"),
+                new PopupMenu.MenuEntry("file_info", "File Info")
+        );
     }
 
     private static void runCodeButtonAction(CodeButtonBounds bounds, double mouseX, double mouseY) {
@@ -1463,6 +1782,7 @@ public final class RichChatAttachmentRenderer {
         int height = client == null || client.getWindow() == null ? 240 : client.getWindow().getScaledHeight();
         ACTION_MENU.toggleAtPointer(mouseX, mouseY, width, height, List.of(
                 new PopupMenu.MenuEntry("code_copy", "Copy"),
+                new PopupMenu.MenuEntry("code_view", "View full"),
                 new PopupMenu.MenuEntry("code_download", "Download")
         ));
     }
@@ -1471,7 +1791,13 @@ public final class RichChatAttachmentRenderer {
         if (attachment == null || action == null) {
             return;
         }
-        if ("download".equals(action)) {
+        if ("pin".equals(action)) {
+            pinnedAttachment = attachment;
+        } else if ("unpin".equals(action)) {
+            if (sameAttachment(pinnedAttachment, attachment)) {
+                pinnedAttachment = null;
+            }
+        } else if ("download".equals(action)) {
             downloadAttachment(attachment);
         } else if ("file_info".equals(action)) {
             MinecraftClient client = MinecraftClient.getInstance();
@@ -1508,6 +1834,48 @@ public final class RichChatAttachmentRenderer {
                     client.inGameHud.getChatHud().addMessage(Text.literal("Code block download failed."));
                 }
             }
+            return;
+        }
+        if ("code_view".equals(action)) {
+            openCodeBlockInReadOnlyEditor(block);
+        }
+    }
+
+    private static void openCodeBlockInReadOnlyEditor(RichChatCodeBlockBridge.CodeBlock block) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || block == null) {
+            return;
+        }
+        try {
+            Path directory = Path.of("koil", "cache", "chat_code");
+            Files.createDirectories(directory);
+            String extension = codeBlockExtension(RichChatCodeBlockBridge.syntaxFileName(block));
+            Path source = directory.resolve("code-" + block.id() + extension);
+            Files.writeString(source, String.join("\n", block.originalLines()), StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            TextFileViewSupport.openReadOnlyEditor(client.currentScreen, source.toFile());
+        } catch (Exception ignored) {
+            if (client.inGameHud != null) {
+                client.inGameHud.getChatHud().addMessage(Text.literal("Could not open the full code block."));
+            }
+        }
+    }
+
+    /** A command link only fills chat; it never silently executes server commands. */
+    private static void openMaskedLink(String target) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || target == null || target.isBlank()) {
+            return;
+        }
+        String normalized = target.trim();
+        if (normalized.startsWith("command:")) {
+            normalized = normalized.substring("command:".length()).trim();
+        }
+        if (normalized.startsWith("/")) {
+            client.setScreen(new ChatScreen(normalized));
+            return;
+        }
+        if (normalized.regionMatches(true, 0, "https://", 0, 8) || normalized.regionMatches(true, 0, "http://", 0, 7)) {
+            net.minecraft.util.Util.getOperatingSystem().open(normalized);
         }
     }
 
@@ -2338,7 +2706,20 @@ public final class RichChatAttachmentRenderer {
     private record HeaderStyle(String content, Style style, float scale, int yOffset, String leadingWhitespace) {
     }
 
-    private record RenderedSegment(String text, Style style, String spoilerKey, boolean obfuscated) {
+    private record SubtextStyle(String content) {
+    }
+
+    private record QuoteStyle(String leadingWhitespace, String content) {
+    }
+
+    private record LinkBounds(String target, int x, int y, int width, int height) {
+    }
+
+    private record HiddenAttachmentBounds(String occurrenceId, RichChatAttachmentType type, int x, int y, int width, int height) {
+        private boolean contains(double mouseX, double mouseY) { return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height + 2; }
+    }
+
+    private record RenderedSegment(String text, Style style, String spoilerKey, boolean obfuscated, boolean inlineCode, String linkTarget) {
     }
 
     private static void recordUsernameHover(DrawContext context, TextRenderer renderer, String visibleLine, int x, int y) {
@@ -2380,6 +2761,23 @@ public final class RichChatAttachmentRenderer {
         for (HoverTooltip hover : HOVER_TOOLTIPS.values()) {
             if (mouseX >= hover.x() && mouseX <= hover.x() + hover.width() && mouseY >= hover.y() && mouseY <= hover.y() + hover.height()) {
                 context.drawTooltip(client.textRenderer, Text.literal(hover.text()), mouseX, mouseY);
+                return;
+            }
+        }
+        for (LinkBounds link : LINK_BOUNDS.values()) {
+            if (mouseX >= link.x() && mouseX <= link.x() + link.width() && mouseY >= link.y() && mouseY <= link.y() + link.height()) {
+                String target = link.target();
+                if (isCommandLink(target)) {
+                    String command = target.startsWith("command:") ? target.substring("command:".length()).trim() : target;
+                    java.util.List<Text> lines = new java.util.ArrayList<>();
+                    lines.add(Text.literal("Masked command"));
+                    for (com.spirit.koil.chat.internal.input.KoilCommandAnalysisService.StyledChunk chunk : com.spirit.koil.chat.internal.input.KoilCommandAnalysisService.highlightLine(client, command)) {
+                        lines.add(Text.literal(chunk.text()).setStyle(chunk.style().withColor(chunk.color() & 0x00FFFFFF)));
+                    }
+                    context.drawTooltip(client.textRenderer, lines, mouseX, mouseY);
+                } else {
+                    context.drawTooltip(client.textRenderer, java.util.List.of(Text.literal("Masked link"), Text.literal(target)), mouseX, mouseY);
+                }
                 return;
             }
         }

@@ -2,6 +2,7 @@ package com.spirit.mixin.client.gui;
 
 import com.google.gson.JsonElement;
 import com.spirit.client.gui.InfoPopup;
+import com.spirit.client.gui.ActiveAudioControlPopup;
 import com.spirit.client.gui.PopupMenu;
 import com.spirit.client.gui.ScreenChromeHost;
 import com.spirit.client.gui.VanillaScreenToolResolver;
@@ -11,6 +12,7 @@ import com.spirit.client.gui.ide.FileEditorScreen;
 import com.spirit.client.gui.ide.FileExplorerScreen;
 import com.spirit.client.gui.main.KoilMenuScreen;
 import com.spirit.client.gui.measure.PixelDifferenceOverlay;
+import com.spirit.client.gui.measure.PixelMagnifierOverlay;
 import com.spirit.client.gui.mod.ModConfigScreen;
 import com.spirit.client.gui.mod.ModMenuScreen;
 import com.spirit.client.gui.mod.ModScreen;
@@ -73,6 +75,8 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
             "This can be wrong. Verify important content before acting on it."
     );
     @Unique private final PopupMenu koil$screenToolsMenu = new PopupMenu();
+    @Unique private final PopupMenu koil$screenToolsSubmenu = new PopupMenu();
+    @Unique private final ActiveAudioControlPopup koil$activeAudioPopup = new ActiveAudioControlPopup();
     @Unique private final InfoPopup koil$screenInfoPopup = new InfoPopup();
     @Unique private final InfoPopup koil$machineGeneratedPopup = new InfoPopup();
 
@@ -112,8 +116,11 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
         boolean showMachineGeneratedBadge = koil$showsMachineGeneratedBadge();
         if (!showToolsButton && !showMachineGeneratedBadge) {
             koil$screenToolsMenu.close();
+            koil$screenToolsSubmenu.close();
+            koil$activeAudioPopup.close();
             koil$screenInfoPopup.close();
             koil$machineGeneratedPopup.close();
+            PixelMagnifierOverlay.render(context, mouseX, mouseY);
             PixelDifferenceOverlay.render(context, mouseX, mouseY);
             return;
         }
@@ -147,20 +154,29 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
         }
 
         koil$screenToolsMenu.render(context, mouseX, mouseY);
+        koil$screenToolsSubmenu.render(context, mouseX, mouseY);
+        koil$activeAudioPopup.render(context, mouseX, mouseY);
         koil$screenInfoPopup.render(context);
         koil$machineGeneratedPopup.render(context);
+        // Magnifier samples the already-rendered screen before the tape line
+        // is drawn, keeping simultaneous measurement readable.
+        PixelMagnifierOverlay.render(context, mouseX, mouseY);
         PixelDifferenceOverlay.render(context, mouseX, mouseY);
         context.getMatrices().pop();
     }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (PixelDifferenceOverlay.mouseClicked(mouseX, mouseY, button)) {
-            return true;
-        }
         if (koil$consumeScreenChromeClick(mouseX, mouseY, button)) {
             return true;
         }
+        if (koil$activeAudioPopup.mouseClicked(mouseX, mouseY, button)) {
+            return true;
+        }
+        if (PixelDifferenceOverlay.mouseClicked(mouseX, mouseY, button)) {
+            return true;
+        }
+        PixelMagnifierOverlay.mouseClicked();
         return super.mouseClicked(mouseX, mouseY, button);
     }
 
@@ -183,9 +199,17 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
+        if (PixelMagnifierOverlay.mouseScrolled(amount)) {
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, amount);
+    }
+
     @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
     private void koil$consumePixelDifferenceKey(int keyCode, int scanCode, int modifiers, CallbackInfoReturnable<Boolean> cir) {
-        if (PixelDifferenceOverlay.keyPressed(keyCode)) {
+        if (PixelDifferenceOverlay.keyPressed(keyCode) || PixelMagnifierOverlay.keyPressed(keyCode)) {
             cir.setReturnValue(true);
         }
     }
@@ -229,19 +253,67 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
             }
         }
 
+        if (button == 0 && koil$activeAudioPopup.isOpen()) {
+            koil$activeAudioPopup.close();
+            return false;
+        }
+
+        // Child menus have priority. Clicking their content closes both only
+        // after a real action; clicking elsewhere is handled below as a true
+        // click-away instead of leaving a detached child open.
+        if (button == 0 && koil$screenToolsSubmenu.isOpen() && koil$screenToolsSubmenu.contains(mouseX, mouseY)) {
+            PopupMenu.MenuEntry selected = koil$screenToolsSubmenu.click(mouseX, mouseY);
+            if (selected != null) {
+                VanillaScreenToolResolver.ResolvedScreenTools tools = koil$resolvedTools();
+                koil$screenToolsMenu.close();
+                if (!VanillaScreenToolResolver.handleSharedMediaAction(selected.id()) && tools != null) {
+                    koil$handleToolAction(selected.id(), tools, mouseX, mouseY);
+                }
+            }
+            return true;
+        }
+
         if (button == 0 && koil$screenToolsMenu.isOpen()) {
             VanillaScreenToolResolver.ResolvedScreenTools tools = koil$resolvedTools();
-            PopupMenu.MenuEntry selected = koil$screenToolsMenu.click(mouseX, mouseY);
+            PopupMenu.MenuEntry selected = koil$screenToolsMenu.clickKeepingOpen(mouseX, mouseY);
             if (selected != null && tools != null) {
+                if ("ui_appearance".equals(selected.id())) {
+                    koil$screenToolsSubmenu.close();
+                    koil$screenToolsSubmenu.openBeside(koil$screenToolsMenu, screenWidth, screenHeight, VanillaScreenToolResolver.appearanceActions());
+                    return true;
+                }
+                if ("screen_tools".equals(selected.id())) {
+                    koil$screenToolsSubmenu.close();
+                    koil$screenToolsSubmenu.openBeside(koil$screenToolsMenu, screenWidth, screenHeight, VanillaScreenToolResolver.screenToolActions());
+                    return true;
+                }
+                if ("media_controls".equals(selected.id())) {
+                    koil$screenToolsSubmenu.close();
+                    koil$activeAudioPopup.openAtPointer(mouseX, mouseY, screenWidth, screenHeight);
+                    return true;
+                }
+                koil$screenToolsMenu.close();
+                koil$screenToolsSubmenu.close();
+                koil$activeAudioPopup.close();
                 koil$handleToolAction(selected.id(), tools, mouseX, mouseY);
                 return true;
             }
-            if (!koil$screenToolsMenu.isOpen()) {
-                return true;
+            if (!koil$screenToolsMenu.contains(mouseX, mouseY)) {
+                koil$screenToolsMenu.close();
+                koil$screenToolsSubmenu.close();
+                return false;
             }
         }
 
+        if (button == 0 && (koil$screenToolsMenu.isOpen() || koil$screenToolsSubmenu.isOpen())) {
+            koil$screenToolsMenu.close();
+            koil$screenToolsSubmenu.close();
+            koil$activeAudioPopup.close();
+            return false;
+        }
+
         if ((koil$screenToolsMenu.isOpen() && koil$screenToolsMenu.contains(mouseX, mouseY))
+                || (koil$screenToolsSubmenu.isOpen() && koil$screenToolsSubmenu.contains(mouseX, mouseY))
                 || (koil$screenInfoPopup.isOpen() && koil$screenInfoPopup.contains(mouseX, mouseY))
                 || (koil$machineGeneratedPopup.isOpen() && koil$machineGeneratedPopup.contains(mouseX, mouseY))) {
             return true;
@@ -252,9 +324,12 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
     @Inject(method = "removed", at = @At("TAIL"))
     private void koil$closeVanillaToolsPopups(CallbackInfo ci) {
         koil$screenToolsMenu.close();
+        koil$screenToolsSubmenu.close();
+        koil$activeAudioPopup.close();
         koil$screenInfoPopup.close();
         koil$machineGeneratedPopup.close();
         PixelDifferenceOverlay.clearForRemovedScreen();
+        PixelMagnifierOverlay.clear();
     }
 
     @Inject(method = "renderBackgroundTexture", at = @At(value = "HEAD"), cancellable = true)

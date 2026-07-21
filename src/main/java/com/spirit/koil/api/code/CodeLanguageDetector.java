@@ -15,6 +15,7 @@ public final class CodeLanguageDetector {
     private static final Pattern XML_TAG = Pattern.compile("</?[A-Za-z][^>]*>");
     private static final Pattern CSS_RULE = Pattern.compile("[.#]?[A-Za-z0-9_-]+\\s*\\{");
     private static final Pattern JAVA_CLASS = Pattern.compile("\\b(public\\s+)?(class|interface|enum|record)\\s+[A-Z][A-Za-z0-9_]*");
+    private static final Pattern JAVA_MEMBER = Pattern.compile("\\b(public|private|protected)\\s+(static\\s+)?[A-Za-z_][A-Za-z0-9_<>, ?\\[\\]]*\\s+[A-Za-z_][A-Za-z0-9_]*\\s*\\(");
     private static final Pattern CSHARP_CLASS = Pattern.compile("\\b(namespace|using\\s+System|Console\\.WriteLine|public\\s+class)\\b");
     private static final Pattern PYTHON_DEF = Pattern.compile("(?m)^\\s*(def|class)\\s+[A-Za-z_][A-Za-z0-9_]*\\s*[:(]");
     private static final Pattern JS_PATTERN = Pattern.compile("\\b(const|let|var|function|=>|console\\.log|import\\s+.+\\s+from)\\b");
@@ -56,6 +57,7 @@ public final class CodeLanguageDetector {
         add(scores, CodeLanguage.CSS, contains(lower, "{", "}", ":") ? 0.6 : 0.0, "css rule structure");
 
         add(scores, CodeLanguage.JAVA, matches(JAVA_CLASS, text) * 3.0, "java type declaration");
+        add(scores, CodeLanguage.JAVA, matches(JAVA_MEMBER, text) * 2.5, "java member declaration");
         add(scores, CodeLanguage.JAVA, contains(lower, "system.out.println", "import java", "package ") ? 2.0 : 0.0, "java runtime/imports");
 
         add(scores, CodeLanguage.CSHARP, matches(CSHARP_CLASS, text) * 2.8, "csharp namespace/runtime");
@@ -102,6 +104,15 @@ public final class CodeLanguageDetector {
     }
 
     public static LanguageGuess bestGuess(String source) {
+        String text = source == null ? "" : source.replace("\r\n", "\n").replace('\r', '\n');
+        // A fence without a language label should still prefer Java when the
+        // source contains unmistakable Java structure. This avoids a lone
+        // generic-like `<T>` being mistaken for an XML tag.
+        if (JAVA_CLASS.matcher(text).find() || (JAVA_MEMBER.matcher(text).find()
+                && (text.contains(";") || text.contains("{")))
+                || text.contains("System.out.")) {
+            return new LanguageGuess(CodeLanguage.JAVA, 1.0D, List.of("java structure"));
+        }
         return detect(source).guesses().get(0);
     }
 

@@ -13,8 +13,25 @@ import java.util.Map;
 
 public final class RichChatBodyWrapFormatter {
     private static final int MAX_CACHE = 256;
-    private static final int WRAP_SAFETY_MARGIN = 60;
-    private static final int EXTRA_TEXT_WRAP_RIGHT = 90;
+    // The margin protects glyph overhang and the vanilla chat scissor edge.
+    // Reducing this by 12px reclaims the requested usable chat width without
+    // lying to the width calculation (which previously caused ChatHud to wrap
+    // a second time and create alternating blank rows).
+    private static final int WRAP_SAFETY_MARGIN = 48;
+    // A single unbroken token is cut by trimToWidth, then can be measured a
+    // fraction wider by ChatHud's native glyph path. Keep a small hard-token
+    // buffer without making ordinary word-wrapped text narrower.
+    private static final int HARD_TOKEN_WRAP_SAFETY = 6;
+    // When the PM filter is inactive, the native row does not need the wide
+    // filtered-view guard. Reclaim the measured open room without changing
+    // the stable filtered-chat budget.
+    private static final int UNFILTERED_PRIVATE_RECLAIM = 64;
+    private static final int UNFILTERED_LONG_TOKEN_RECLAIM = 62;
+    private static final int UNFILTERED_WORD_MESSAGE_RECLAIM = 58;
+    // PM tags are injected after this formatter produces logical lines.  They
+    // are invisible to the player, but ChatHud still measures them. Reserve
+    // their width now so ChatHud never makes a second, untagged visual wrap.
+    private static final String PRIVATE_MARKER_WIDTH_SAMPLE = "\uE350PM:zzzz\uE351";
     private static final Map<String, Text> CACHE = new LinkedHashMap<>(MAX_CACHE, 0.75F, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Text> eldest) {
@@ -40,7 +57,10 @@ public final class RichChatBodyWrapFormatter {
 
         int wrapWidth = currentWrapWidth();
         RichChatRowType safeType = rowType == null ? RichChatRowType.UNKNOWN : rowType;
-        String cacheKey = safeType.name() + ":" + wrapWidth + ":" + visible;
+        String cacheKey = safeType.name()
+                + ":" + wrapWidth
+                + ":" + (RichChatPrivateMessageBridge.filterEnabled() ? "filtered" : "unfiltered")
+                + ":" + visible;
         synchronized (CACHE) {
             Text cached = CACHE.get(cacheKey);
             if (cached != null) {
@@ -61,7 +81,10 @@ public final class RichChatBodyWrapFormatter {
     }
 
     public static int currentWrapWidth() {
-        return RichChatLatexTextureCache.currentChatContentWidth() + EXTRA_TEXT_WRAP_RIGHT;
+        // This must remain the real native ChatHud boundary. Artificially
+        // enlarging it makes Minecraft wrap Koil's already-wrapped rows a
+        // second time, which presents as an empty row between every line.
+        return RichChatLatexTextureCache.currentChatContentWidth();
     }
 
     private static String wrapVisibleText(String visible, int wrapWidth, RichChatRowType rowType) {
@@ -94,7 +117,17 @@ public final class RichChatBodyWrapFormatter {
             return line;
         }
         TextRenderer renderer = textRenderer();
-        if (renderer == null || measuredWidth(renderer, visibleLine) <= wrapWidth) {
+        if (renderer == null) {
+            return line;
+        }
+        // Hidden PM markers are still characters to ChatHud's native wrapping
+        // code. Reserve their measured width here so it cannot split our
+        // already body-aligned line a second time into a blank visual row.
+        int privateMarkerReserve = rowType == RichChatRowType.PRIVATE_MESSAGE
+                ? renderer.getWidth(PRIVATE_MARKER_WIDTH_SAMPLE)
+                : 0;
+        int effectiveWrapWidth = Math.max(24, wrapWidth - renderer.getWidth(markerPrefix) - privateMarkerReserve);
+        if (measuredWidth(renderer, visibleLine) <= effectiveWrapWidth) {
             return line;
         }
 
@@ -108,14 +141,23 @@ public final class RichChatBodyWrapFormatter {
         }
 
         String indent = LocalMultilineChatBridge.indentForPrefix(prefix);
-        int safetyMargin = WRAP_SAFETY_MARGIN + (isPrivateOrNamedPrefix(prefix) ? 28 : 0);
-        int firstWidth = Math.max(24, wrapWidth - renderer.getWidth(prefix) - safetyMargin);
-        int continuationWidth = Math.max(24, wrapWidth - renderer.getWidth(indent) - safetyMargin);
+        // ChatHud's later split path can run a few pixels wider than the
+        // renderer for ordinary words. A small named-message buffer prevents
+        // periodic re-wraps that were leaving every fourth/fifth row under the
+        // username without shrinking unrelated command/system output.
+        String body = visibleLine.substring(prefix.length());
+        int safetyMargin = WRAP_SAFETY_MARGIN + (isPrivateOrNamedPrefix(prefix) ? 34 : 0);
+        safetyMargin = Math.max(
+                HARD_TOKEN_WRAP_SAFETY,
+                safetyMargin - unfilteredReclaim(rowType, body)
+        );
+        int firstWidth = Math.max(24, effectiveWrapWidth - renderer.getWidth(prefix) - safetyMargin);
+        int continuationWidth = Math.max(24, effectiveWrapWidth - renderer.getWidth(indent) - safetyMargin);
         if (firstWidth <= 24 || continuationWidth <= 24) {
             return line;
         }
 
-        List<String> parts = wrapBody(visibleLine.substring(prefix.length()), renderer, firstWidth, continuationWidth);
+        List<String> parts = wrapBody(body, renderer, firstWidth, continuationWidth);
         if (parts.size() <= 1) {
             return line;
         }
@@ -142,7 +184,10 @@ public final class RichChatBodyWrapFormatter {
             if (rawSlice.isEmpty()) {
                 rawSlice = remaining.substring(0, 1);
             }
-            parts.add(rawSlice.stripTrailing());
+            String part = rawSlice.stripTrailing();
+            if (!part.isEmpty()) {
+                parts.add(part);
+            }
             remaining = remaining.substring(Math.min(remaining.length(), rawSlice.length())).stripLeading();
             first = false;
         }
@@ -178,7 +223,7 @@ public final class RichChatBodyWrapFormatter {
             if (token.marker()) {
                 return text.substring(0, token.end());
             }
-            String fitted = renderer.trimToWidth(token.text(), Math.max(1, limit));
+            String fitted = renderer.trimToWidth(token.text(), Math.max(1, limit - HARD_TOKEN_WRAP_SAFETY));
             if (fitted.isEmpty()) {
                 fitted = token.text().substring(0, 1);
             }
@@ -330,6 +375,34 @@ public final class RichChatBodyWrapFormatter {
                 || prefix.startsWith("From ")
                 || prefix.startsWith("[To ")
                 || prefix.startsWith("[From ");
+    }
+
+    private static int unfilteredReclaim(RichChatRowType rowType, String body) {
+        if (RichChatPrivateMessageBridge.filterEnabled()) {
+            return 0;
+        }
+        if (rowType == RichChatRowType.PRIVATE_MESSAGE) {
+            return UNFILTERED_PRIVATE_RECLAIM;
+        }
+        if (rowType == RichChatRowType.PLAYER_CHAT && isSingleUnbrokenToken(body)) {
+            return UNFILTERED_LONG_TOKEN_RECLAIM;
+        }
+        if (rowType == RichChatRowType.PLAYER_CHAT) {
+            return UNFILTERED_WORD_MESSAGE_RECLAIM;
+        }
+        return 0;
+    }
+
+    private static boolean isSingleUnbrokenToken(String body) {
+        if (body == null || body.isBlank()) {
+            return false;
+        }
+        for (int i = 0; i < body.length(); i++) {
+            if (Character.isWhitespace(body.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int leadingWhitespaceWidth(String line) {

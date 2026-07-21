@@ -30,12 +30,14 @@ import com.spirit.koil.api.util.file.media.image.ImageTextureService;
 import com.spirit.koil.api.util.file.media.video.VideoMetadata;
 import com.spirit.koil.api.util.file.media.video.VideoPlaybackSession;
 import com.spirit.koil.api.util.file.media.video.VideoService;
+import com.spirit.koil.chat.internal.upload.RichChatUploadDraft;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ConfirmScreen;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
@@ -128,7 +130,7 @@ public class FileExplorerScreen extends Screen {
     private static final String TOP_BAR_NEW_LABEL = "New";
     private static final String TOP_BAR_OPEN_LABEL = "Open";
     private static final String TOP_BAR_HOME_LABEL = "Root";
-    private static final String TOP_BAR_RELOAD_LABEL = "Reset";
+    private static final String TOP_BAR_RELOAD_LABEL = "Share";
     private static final Set<String> CONFIG_EDITOR_EXTENSIONS = new HashSet<>(List.of(
             "json", "json5", "toml", "yaml", "yml", "properties", "cfg", "conf"
     ));
@@ -1071,7 +1073,10 @@ public class FileExplorerScreen extends Screen {
             if (button == 0) {
                 UiSoundHelper.playButtonClick();
             }
-            reloadCurrentPath();
+            if (selectedFileItem != null && selectedFileItem.getFile() != null && selectedFileItem.getFile().isFile()) {
+                RichChatUploadDraft.stage(selectedFileItem.getFile().toPath());
+                MinecraftClient.getInstance().setScreen(new ChatScreen(""));
+            }
             return true;
         }
         if (button == 0 && isWithinBounds(previewOpenBounds, mouseX, mouseY) && previewOpenTarget != null) {

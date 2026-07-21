@@ -18,6 +18,7 @@
     "client.MinecraftClientMixin",
     "client.MixinClientPlayNetworkHandler",
     "client.gui.MixinChatHud",
+    "client.gui.MixinChatOptionsScreen",
     "client.gui.MixinChatInputSuggestor",
     "client.gui.MixinChatInputSuggestorSuggestionWindow",
     "client.gui.MixinChatScreen",

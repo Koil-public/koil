@@ -27,13 +27,11 @@ public final class WorldCommandBridge {
 
     public static void registerClientCommands() {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
-            dispatcher.register(literal("worlds")
+            dispatcher.register(literal("world")
                     .executes(context -> {
                         openWorldScreen();
                         return 1;
-                    }));
-
-            dispatcher.register(literal("world")
+                    })
                     .then(literal("info")
                             .executes(context -> {
                                 sendWorldInfo();

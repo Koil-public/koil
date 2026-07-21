@@ -10,10 +10,12 @@ import com.spirit.client.gui.resourcepack.ResourcePackMenuScreen;
 import com.spirit.client.gui.resourcepack.ResourcepackScreen;
 import com.spirit.client.gui.main.KoilMenuScreen;
 import com.spirit.client.gui.measure.PixelDifferenceOverlay;
+import com.spirit.client.gui.measure.PixelMagnifierOverlay;
 import com.spirit.client.gui.mod.ModMenuScreen;
 import com.spirit.client.gui.update.UpdateScreen;
 import com.spirit.client.gui.video.KoilVideoOptionsScreen;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
+import com.spirit.koil.api.util.file.audio.AudioManager;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.gui.screen.Screen;
@@ -100,10 +102,11 @@ public final class VanillaScreenToolResolver {
         if (hasPath && supportsEditor(screen, path)) {
             actions.add(new PopupMenu.MenuEntry("open_editor", "Open In Editor"));
         }
-        actions.add(new PopupMenu.MenuEntry("pixel_difference", "Pixel Difference"));
-        actions.add(new PopupMenu.MenuEntry("ui_music", toggleLabel("Music", "designMusic")));
-        actions.add(new PopupMenu.MenuEntry("ui_redesign", toggleLabel("Koil UI Design", "uiRedesign")));
-        actions.add(new PopupMenu.MenuEntry("ui_panorama", toggleLabel("Menu Panorama", "menuPanorama")));
+        actions.add(new PopupMenu.MenuEntry("screen_tools", "Screen Tools..."));
+        actions.add(new PopupMenu.MenuEntry("ui_appearance", "Appearance..."));
+        if (AudioManager.hasActiveAudio()) {
+            actions.add(new PopupMenu.MenuEntry("media_controls", "Media controls..."));
+        }
 
         List<String> infoLines = buildInfoLines(screen, displayName, path, actions);
         return new ResolvedScreenTools(displayName, path, actions, infoLines, defaultActionHandler());
@@ -116,7 +119,7 @@ public final class VanillaScreenToolResolver {
                 case "open_editor" -> ScreenActionHelper.openInKoilEditor(tools.path());
                 case "info" -> infoPopup.openAtPointer(mouseX, mouseY, screenWidth, screenHeight, tools.infoLines());
                 case "pixel_difference" -> PixelDifferenceOverlay.arm();
-                case "ui_music" -> DesignMusicController.applyDesignMusicState(toggleConfigBoolean("designMusic", "screen tools"), true);
+                case "magnifier" -> PixelMagnifierOverlay.arm();
                 case "ui_redesign" -> {
                     toggleConfigBoolean("uiRedesign", "screen tools");
                     DesignMusicController.applyConfiguredMusic(true);
@@ -126,6 +129,44 @@ public final class VanillaScreenToolResolver {
                 }
             }
         };
+    }
+
+    /** Shared submenu entries for the universal top-right tools popup. */
+    public static List<PopupMenu.MenuEntry> appearanceActions() {
+        return List.of(
+                new PopupMenu.MenuEntry("ui_redesign", toggleLabel("Koil UI Design", "uiRedesign")),
+                new PopupMenu.MenuEntry("ui_panorama", toggleLabel("Menu Panorama", "menuPanorama"))
+        );
+    }
+
+    public static List<PopupMenu.MenuEntry> screenToolActions() {
+        return List.of(
+                new PopupMenu.MenuEntry("pixel_difference", "Pixel Difference"),
+                new PopupMenu.MenuEntry("magnifier", "Magnifier")
+        );
+    }
+
+    /** Shared control slice backed by Koil's global AudioManager. */
+    public static List<PopupMenu.MenuEntry> mediaControlActions() {
+        if (!AudioManager.hasActiveAudio()) {
+            return List.of();
+        }
+        return List.of(
+                new PopupMenu.MenuEntry("media_pause_resume", AudioManager.isAudioPlaying() ? "Pause" : "Resume"),
+                new PopupMenu.MenuEntry("media_stop", "Stop")
+        );
+    }
+
+    public static boolean handleSharedMediaAction(String actionId) {
+        if ("media_pause_resume".equals(actionId)) {
+            AudioManager.pauseAudio();
+            return true;
+        }
+        if ("media_stop".equals(actionId)) {
+            AudioManager.stopAllAudio();
+            return true;
+        }
+        return false;
     }
 
     private static String toggleLabel(String label, String configKey) {

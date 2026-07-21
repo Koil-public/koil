@@ -85,6 +85,22 @@ public final class PopupMenu {
         hoveredIndex = -1;
     }
 
+    /** Opens a child next to an already-open parent without covering it. */
+    public void openBeside(PopupMenu parent, int screenWidth, int screenHeight, List<MenuEntry> menuItems) {
+        items.clear();
+        items.addAll(menuItems);
+        if (items.isEmpty()) { close(); return; }
+        measureMenu();
+        int parentX = parent == null ? 8 : parent.x;
+        int parentY = parent == null ? 8 : parent.y;
+        int parentWidth = parent == null ? 0 : parent.width;
+        x = clampHorizontal(parentX + parentWidth + GAP, screenWidth);
+        if (x <= parentX + parentWidth && parentX - width - GAP >= 8) x = parentX - width - GAP;
+        y = clampVertical(parentY, screenHeight);
+        open = true;
+        hoveredIndex = -1;
+    }
+
     public void close() {
         open = false;
         hoveredIndex = -1;
@@ -118,6 +134,22 @@ public final class PopupMenu {
         }
         close();
         UiSoundHelper.playButtonClick();
+        return selected;
+    }
+
+    /**
+     * Returns a selected entry without dismissing this menu.  Use this for an
+     * entry which opens a child popup: the parent remains available until the
+     * user explicitly picks an action or clicks away.
+     */
+    public MenuEntry clickKeepingOpen(double mouseX, double mouseY) {
+        if (!open) {
+            return null;
+        }
+        MenuEntry selected = entryAt(mouseX, mouseY);
+        if (selected != null) {
+            UiSoundHelper.playButtonClick();
+        }
         return selected;
     }
 

@@ -4,6 +4,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 import com.spirit.koil.api.automation.AutomationPresenceServerBridge;
 import com.spirit.koil.api.automation.AutomationRemoteRunServerBridge;
+import com.spirit.koil.api.automation.KoilCommandPauseBridge;
+import com.spirit.koil.api.screen.KoilRemoteScreenServerBridge;
 import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.stats.global.KoilGlobalActivityServer;
 import com.spirit.koil.chat.internal.sync.RichChatSyncServerBridge;
@@ -358,6 +360,9 @@ public class Main implements ModInitializer {
         }
 
         AutomationRemoteRunServerBridge.registerCommands();
+        KoilRemoteScreenServerBridge.registerCommands();
+        KoilCommandPauseBridge.register();
+        com.spirit.koil.api.chat.KoilAttentionCommandBridge.register();
         AutomationPresenceServerBridge.register();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

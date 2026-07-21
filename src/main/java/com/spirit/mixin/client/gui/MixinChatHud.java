@@ -1,13 +1,13 @@
 package com.spirit.mixin.client.gui;
 
 import com.spirit.koil.api.automation.AutomationChatTrigger;
-import com.spirit.koil.api.automation.cli.AutomationChatHudRenderer;
-import com.spirit.koil.api.stats.global.client.MarketHudRenderer;
+import com.spirit.koil.chat.internal.ChatHudPanelStack;
 import com.spirit.koil.chat.internal.ChatHudRefreshBridge;
 import com.spirit.koil.chat.internal.LocalOverflowChatBridge;
 import com.spirit.koil.chat.internal.LocalMultilineChatBridge;
 import com.spirit.koil.chat.internal.MultilineChatInputLayout;
 import com.spirit.koil.chat.internal.RichChatCodeBlockBridge;
+import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
 import com.spirit.koil.chat.internal.RichChatPrivateChunkBridge;
 import com.spirit.koil.chat.internal.RichChatPrivateMessageBridge;
 import com.spirit.koil.chat.internal.RichChatBodyWrapFormatter;
@@ -22,6 +22,7 @@ import com.spirit.koil.chat.internal.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.chat.internal.upload.RichChatUploadDraft;
 import com.spirit.koil.chat.internal.upload.RichChatWebImageBridge;
 import com.spirit.koil.chat.internal.sync.RichChatSyncedMessageBridge;
+import com.spirit.koil.chat.api.RichChatSettings;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
@@ -66,6 +67,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
     @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_REPEATING_INDICATOR_BRIGHT = new MessageIndicator(0x8753C7, null, Text.literal("Repeating command block output"), "Repeating CB");
     @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_REPEATING_INDICATOR_DIM = new MessageIndicator(0x68409A, null, Text.literal("Repeating command block output"), "Repeating CB");
     @Unique private static final MessageIndicator KOIL_PUBLIC_FILTER_INDICATOR = new MessageIndicator(0x515A67, null, Text.literal("Public chat"), "Public");
+    @Unique private static final MessageIndicator KOIL_ATTENTION_INDICATOR = new MessageIndicator(0xD84A4A, null, Text.literal("Mention message"), "Mention");
 
     @Shadow @Final private MinecraftClient client;
     @Shadow @Final private List<ChatHudLine> messages;
@@ -91,8 +93,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         RichChatAttachmentRenderer.beginFrame(mouseX, mouseY);
         koil$shiftedForAutomationHud = false;
         koil$automationHudReservedHeight = 0;
-        int reservedHeight = AutomationChatHudRenderer.reservedHeight(client)
-                + MarketHudRenderer.reservedHeight(client)
+        int reservedHeight = ChatHudPanelStack.reservedHeight(client)
                 + MultilineChatInputLayout.reservedHeight(client)
                 + RichChatUploadDraft.reservedHeight();
         if (reservedHeight > 0) {
@@ -114,7 +115,8 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
             koil$shiftedForAutomationHud = false;
         }
         RichChatRenderContext.endChatHudFrame();
-        RichChatPrivateMessageBridge.renderPrivateOnlyOverlay(context, client == null ? null : client.textRenderer);
+        // Private-only mode filters native rows during refresh, retaining
+        // Minecraft's normal per-message fade and background behavior.
     }
 
     @Redirect(
@@ -125,17 +127,25 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
             )
     )
     private int koil$renderLatexTextures(DrawContext context, TextRenderer renderer, OrderedText orderedText, int x, int y, int color) {
+        if (!RichChatSettings.enabled() || (!RichChatSettings.mediaEnabled() && !RichChatSettings.latexEnabled() && !RichChatSettings.effectsEnabled())) {
+            return context.drawTextWithShadow(renderer, orderedText, x, y, color);
+        }
         return RichChatAttachmentRenderer.renderOrDrawText(context, renderer, orderedText, x, y, color);
     }
 
     @Inject(method = "addMessage(Lnet/minecraft/text/Text;)V", at = @At("HEAD"))
     private void koil$automationUsernameTrigger(Text message, CallbackInfo ci) {
         AutomationChatTrigger.maybeOpenPrompt(message);
-        RichChatTimestampBridge.remember(message);
+        if (RichChatSettings.timestampsEnabled()) {
+            RichChatTimestampBridge.remember(message);
+        }
     }
 
     @Inject(method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;Lnet/minecraft/client/gui/hud/MessageIndicator;)V", at = @At("HEAD"), cancellable = true)
     private void koil$rewriteLocalMultilineFallback(Text message, MessageSignatureData signature, MessageIndicator indicator, CallbackInfo ci) {
+        if (!RichChatSettings.enabled()) {
+            return;
+        }
         if (LocalOverflowChatBridge.consume(message)) {
             ci.cancel();
             return;
@@ -159,15 +169,24 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
             return;
         }
         rewritten = synced.message();
-        rewritten = RichChatWebImageBridge.rewrite(rewritten);
-        rewritten = RichChatLatexFormatter.format(rewritten);
+        if (RichChatSettings.mediaEnabled()) {
+            rewritten = RichChatWebImageBridge.rewrite(rewritten);
+        }
+        if (RichChatSettings.latexEnabled()) {
+            rewritten = RichChatLatexFormatter.format(rewritten);
+        }
         rewritten = RichChatPrivateMessageBridge.observeAndRewrite(rewritten);
-        rewritten = RichChatCodeBlockBridge.rewrite(rewritten);
+        if (RichChatSettings.effectsEnabled()) {
+            rewritten = RichChatCodeBlockBridge.rewrite(rewritten);
+        }
+        rewritten = RichChatCommandOutputBridge.enhanceSyntaxFailure(rewritten);
         RichChatRowType rowType = RichChatRowClassifier.classify(rewritten, indicator);
         if (rewritten != null && rowType.usesBodyIndent() && rowType != RichChatRowType.PRIVATE_MESSAGE) {
             rewritten = RichChatBodyWrapFormatter.format(rewritten, rowType);
         }
-        RichChatTimestampBridge.remember(rewritten);
+        if (RichChatSettings.timestampsEnabled()) {
+            RichChatTimestampBridge.remember(rewritten);
+        }
         MessageIndicator replacementIndicator = koil$selectIndicator(rewritten, indicator);
         if (rewritten != message || !Objects.equals(replacementIndicator, indicator)) {
             koil$invokeLogChatMessage(koil$logFriendlyText(rewritten), replacementIndicator);
@@ -198,6 +217,9 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
 
     @Unique
     private MessageIndicator koil$selectIndicator(Text message, MessageIndicator original) {
+        if (!RichChatSettings.indicatorsEnabled() || !RichChatSettings.chatColorsEnabled()) {
+            return original;
+        }
         if (message == null) {
             return original;
         }
@@ -210,6 +232,9 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         }
         if (rowType == RichChatRowType.PLAYER_CHAT) {
             return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_PUBLIC_FILTER_INDICATOR : null;
+        }
+        if (rowType == RichChatRowType.ATTENTION) {
+            return KOIL_ATTENTION_INDICATOR;
         }
         if (rowType == RichChatRowType.PLAYER_ACTIVITY) {
             return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_PLAYER_ACTIVITY_INDICATOR_DIM : KOIL_PLAYER_ACTIVITY_INDICATOR_BRIGHT;
@@ -243,6 +268,9 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         visibleMessages.clear();
         for (int i = messages.size() - 1; i >= 0; i--) {
             ChatHudLine line = messages.get(i);
+            if (!RichChatPrivateMessageBridge.shouldIncludeInNativePrivateView(line.content())) {
+                continue;
+            }
             Text visible = RichChatPrivateMessageBridge.rebuildMessageForRefresh(line.content());
             MessageIndicator refreshedIndicator = koil$selectIndicator(visible, line.indicator());
             koil$invokeAddMessage(visible, line.signature(), line.creationTick(), refreshedIndicator, true);

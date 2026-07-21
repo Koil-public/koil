@@ -431,6 +431,11 @@ public class AudioManager {
         return currentClip != null || currentAudioFilePath != null || externalAudioFilePath != null;
     }
 
+    /** Current shared playback source for compact cross-screen controls. */
+    public static File currentAudioFile() {
+        return currentAudioFilePath == null || currentAudioFilePath.isBlank() ? null : new File(currentAudioFilePath);
+    }
+
     public static boolean isAudioPlaying() {
         return (currentClip != null && currentClip.isRunning()) || isPlaying || externalPlaybackActive;
     }

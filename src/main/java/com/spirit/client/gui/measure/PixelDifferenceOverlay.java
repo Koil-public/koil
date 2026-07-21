@@ -22,7 +22,6 @@ public final class PixelDifferenceOverlay {
 
     public static void arm() {
         armed = true;
-        measuring = false;
     }
 
     public static boolean active() {
@@ -97,7 +96,7 @@ public final class PixelDifferenceOverlay {
         if (client == null || client.textRenderer == null) {
             return;
         }
-        String text = "Pixel Difference: drag to measure, hold Shift to pin";
+        String text = "Pixel Difference: drag to measure • Esc to close";
         int width = client.textRenderer.getWidth(text) + 10;
         int x = Math.max(6, Math.min(mouseX + 10, client.getWindow().getScaledWidth() - width - 6));
         int y = Math.max(6, Math.min(mouseY + 12, client.getWindow().getScaledHeight() - 20));
@@ -124,15 +123,19 @@ public final class PixelDifferenceOverlay {
         int midX = (x1 + x2) / 2;
         int midY = (y1 + y2) / 2;
         int labelWidth = client.textRenderer.getWidth(label) + 10;
-        int labelX = Math.max(6, Math.min(midX - labelWidth / 2, client.getWindow().getScaledWidth() - labelWidth - 6));
-        int labelY = Math.max(6, Math.min(midY - 20, client.getWindow().getScaledHeight() - 20));
+        int perpendicularX = dy == 0 ? 0 : (dy > 0 ? 1 : -1) * 12;
+        int perpendicularY = dx == 0 ? -18 : (dx > 0 ? -18 : 18);
+        int labelX = Math.max(6, Math.min(midX - labelWidth / 2 + perpendicularX, client.getWindow().getScaledWidth() - labelWidth - 6));
+        int labelY = Math.max(6, Math.min(midY + perpendicularY, client.getWindow().getScaledHeight() - 20));
         int lineColor = live ? 0xFFE7F1FF : 0xFF79D0FF;
         context.getMatrices().push();
         context.getMatrices().translate(0.0F, 0.0F, 5000.0F);
-        drawLine(context, x1, y1, x2, y2, 0xD0000000, 3);
+        drawLine(context, x1, y1, x2, y2, 0x98000000, 2);
         drawLine(context, x1, y1, x2, y2, lineColor, 1);
+        drawTapeTicks(context, x1, y1, x2, y2);
         drawEndpoint(context, x1, y1, 0xFFFFD166);
         drawEndpoint(context, x2, y2, live ? 0xFF8BF779 : 0xFF79D0FF);
+        drawMidpoint(context, midX, midY);
         context.fill(labelX + 1, labelY + 1, labelX + labelWidth + 1, labelY + 17, 0x95000000);
         context.fill(labelX, labelY, labelX + labelWidth, labelY + 16, 0xEE10151C);
         context.drawBorder(labelX, labelY, labelWidth, 16, lineColor);
@@ -141,10 +144,31 @@ public final class PixelDifferenceOverlay {
     }
 
     private static void drawEndpoint(DrawContext context, int x, int y, int color) {
-        context.fill(x - 3, y - 3, x + 4, y + 4, 0xC0000000);
-        context.fill(x - 2, y - 2, x + 3, y + 3, color);
-        context.fill(x, y - 5, x + 1, y + 6, color);
-        context.fill(x - 5, y, x + 6, y + 1, color);
+        context.fill(x - 2, y - 2, x + 3, y + 3, 0xC0000000);
+        context.fill(x - 1, y - 1, x + 2, y + 2, color);
+        context.fill(x, y - 3, x + 1, y + 4, color);
+        context.fill(x - 3, y, x + 4, y + 1, color);
+    }
+
+    private static void drawMidpoint(DrawContext context, int x, int y) {
+        context.fill(x - 2, y - 2, x + 3, y + 3, 0xFFEDF6FF);
+        context.fill(x - 1, y - 1, x + 2, y + 2, 0xFF162231);
+    }
+
+    private static void drawTapeTicks(DrawContext context, int x1, int y1, int x2, int y2) {
+        double distance = Math.hypot(x2 - x1, y2 - y1);
+        if (distance < 10.0D) {
+            return;
+        }
+        int tickCount = Math.max(1, (int) distance / 8);
+        for (int tick = 1; tick < tickCount; tick++) {
+            float progress = tick / (float) tickCount;
+            int x = Math.round(x1 + (x2 - x1) * progress);
+            int y = Math.round(y1 + (y2 - y1) * progress);
+            int color = tick % 5 == 0 ? 0xFFE7F1FF : 0x6695BAD7;
+            int radius = tick % 5 == 0 ? 1 : 0;
+            context.fill(x - radius, y - radius, x + radius + 1, y + radius + 1, color);
+        }
     }
 
     private static void drawLine(DrawContext context, int x1, int y1, int x2, int y2, int color, int thickness) {

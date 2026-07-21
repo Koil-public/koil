@@ -14,6 +14,7 @@ import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
 import com.spirit.koil.api.stats.global.GlobalActivityClient;
 import com.spirit.koil.api.world.WorldCommandBridge;
+import com.spirit.koil.api.screen.KoilRemoteScreenClientBridge;
 import com.spirit.koil.chat.internal.RichChatPrivacyNoticeClient;
 import com.spirit.koil.chat.internal.sync.RichChatSyncClientBridge;
 import net.fabricmc.api.ClientModInitializer;
@@ -35,6 +36,7 @@ public class Client implements ClientModInitializer {
         GlobalActivityClient.registerClient();
         RichChatPrivacyNoticeClient.register();
         RichChatSyncClientBridge.registerReceiver();
+        KoilRemoteScreenClientBridge.registerReceiver();
         ClientTickEvents.START_CLIENT_TICK.register(client -> AutomationRouter.tick());
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             PackageDetectionService.tick(client);
@@ -42,6 +44,7 @@ public class Client implements ClientModInitializer {
             PerformanceMonitor.tick(client);
             PerformanceOptimizationTestService.tick(client);
             F3SnapshotService.tick(client);
+            ServerCommandBridge.tickClientConnection(client);
             boolean focused = client.isWindowFocused();
             if (lastWindowFocused != null && focused && !lastWindowFocused) {
                 UiSoundHelper.playButtonClick();

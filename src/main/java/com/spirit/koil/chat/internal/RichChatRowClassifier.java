@@ -25,6 +25,9 @@ public final class RichChatRowClassifier {
         if (rawVisible == null || rawVisible.isBlank()) {
             return RichChatRowType.UNKNOWN;
         }
+        if (RichChatPrivateMessageBridge.isAttentionMessage(rawVisible)) {
+            return RichChatRowType.ATTENTION;
+        }
         if (RichChatPrivateMessageBridge.isPrivateMessageLine(rawVisible)) {
             return RichChatRowType.PRIVATE_MESSAGE;
         }
@@ -40,6 +43,9 @@ public final class RichChatRowClassifier {
         }
         if (PLAYER_CHAT_PREFIX.matcher(firstLine).matches()) {
             return RichChatRowType.PLAYER_CHAT;
+        }
+        if (RichChatPrivateMessageBridge.isAttentionMessage(firstLine)) {
+            return RichChatRowType.ATTENTION;
         }
         if (JOIN_LEAVE_MESSAGE.matcher(firstLine).matches()) {
             return RichChatRowType.PLAYER_ACTIVITY;

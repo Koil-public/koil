@@ -43,6 +43,7 @@ public final class RichChatPrivateMessageBridge {
     private static final Pattern INCOMING_FROM = Pattern.compile("^From (.+?):\\s*(.*)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern BRACKET_FROM = Pattern.compile("^\\[From (.+?)]\\s*(.*)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern BRACKET_TO = Pattern.compile("^\\[To (.+?)]\\s*(.*)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ATTENTION_MESSAGE = Pattern.compile("^\\[Attention]\\s*<([^>]+)>\\s*(.*)$", Pattern.CASE_INSENSITIVE);
 
     private static final Deque<ConversationEntry> CONVERSATION = new ArrayDeque<>();
     private static final Map<String, Long> UNREAD_PARTNERS = new ConcurrentHashMap<>();
@@ -70,6 +71,26 @@ public final class RichChatPrivateMessageBridge {
             return message;
         }
         String sourceVisible = canonicalPrivateSource(visible);
+        ParsedAttentionMessage attention = parseAttention(sourceVisible);
+        if (attention != null) {
+            String normalizedDisplay = normalizedAttentionDisplay(attention);
+            String timestamp = RichChatTimestampBridge.timestampForLine(normalizedDisplay);
+            if (timestamp.isBlank()) {
+                timestamp = LocalTime.now().format(TIME_FORMAT);
+            }
+            rememberConversation(attention.partner(), normalizedDisplay, timestamp, true);
+            RichChatTimestampBridge.rememberVisibleLine(normalizedDisplay, timestamp);
+            if (!isTarget(attention.partner()) || !filterEnabled) {
+                UNREAD_PARTNERS.put(normalizeName(attention.partner()), System.currentTimeMillis());
+            } else {
+                UNREAD_PARTNERS.remove(normalizeName(attention.partner()));
+            }
+            String wrapped = RichChatBodyWrapFormatter.format(
+                    Text.literal(normalizedDisplay),
+                    RichChatRowType.PRIVATE_MESSAGE
+            ).getString();
+            return Text.literal(tagLines(wrapped, sourceVisible, attention.partner(), true));
+        }
         ParsedPrivateMessage parsed = parse(sourceVisible);
         if (parsed == null) {
             return message;
@@ -96,13 +117,16 @@ public final class RichChatPrivateMessageBridge {
         if (overlayRender) {
             return VisualStyle.NORMAL;
         }
+        if (isAttentionMessage(visibleLine)) {
+            return VisualStyle.NORMAL;
+        }
         TaggedLookup tagged = tagged(visibleLine);
         if (tagged != null) {
             if (!filterEnabled) {
                 return VisualStyle.DIM;
             }
             if (!showMainWhenFiltering) {
-                return VisualStyle.HIDE;
+                return isTarget(tagged.taggedLine().partner()) ? VisualStyle.NORMAL : VisualStyle.HIDE;
             }
             return isTarget(tagged.taggedLine().partner()) ? VisualStyle.NORMAL : VisualStyle.DIM;
         }
@@ -112,7 +136,7 @@ public final class RichChatPrivateMessageBridge {
                 return VisualStyle.DIM;
             }
             if (!showMainWhenFiltering) {
-                return VisualStyle.HIDE;
+                return isTarget(parsed.partner()) ? VisualStyle.NORMAL : VisualStyle.HIDE;
             }
             return isTarget(parsed.partner()) ? VisualStyle.NORMAL : VisualStyle.DIM;
         }
@@ -131,6 +155,9 @@ public final class RichChatPrivateMessageBridge {
         }
         TaggedLookup tagged = tagged(visibleLine);
         if (tagged != null) {
+            if (tagged.taggedLine().attention()) {
+                return tagged.strippedLine();
+            }
             ParsedPrivateMessage parsed = parse(tagged.taggedLine().sourceMessage());
             if (filterEnabled && isTarget(tagged.taggedLine().partner())) {
                 UNREAD_PARTNERS.remove(normalizeName(tagged.taggedLine().partner()));
@@ -144,6 +171,10 @@ public final class RichChatPrivateMessageBridge {
                 return rebuiltLineAt(rebuilt, tagged.taggedLine().lineIndex(), tagged.strippedLine());
             }
             return stripMarker(tagged.strippedLine());
+        }
+        ParsedAttentionMessage attention = parseAttention(stripMarker(visibleLine));
+        if (attention != null) {
+            return normalizedAttentionDisplay(attention);
         }
         if (!filterEnabled) {
             return stripMarker(visibleLine);
@@ -162,6 +193,10 @@ public final class RichChatPrivateMessageBridge {
         }
         TaggedLookup tagged = tagged(visible);
         if (tagged != null) {
+            if (tagged.taggedLine().attention()) {
+                ParsedAttentionMessage attention = parseAttention(tagged.taggedLine().sourceMessage());
+                return attention == null ? stripMarker(visible) : normalizedAttentionDisplay(attention);
+            }
             ParsedPrivateMessage parsed = parse(tagged.taggedLine().sourceMessage());
             if (parsed != null) {
                 return rebuildPrivateMessageVisibleText(splitLines(tagged.taggedLine().sourceMessage()), parsed, filterEnabled && isTarget(parsed.partner()));
@@ -197,6 +232,17 @@ public final class RichChatPrivateMessageBridge {
         }
         TaggedLookup tagged = tagged(visible);
         if (tagged != null) {
+            if (tagged.taggedLine().attention()) {
+                ParsedAttentionMessage attention = parseAttention(tagged.taggedLine().sourceMessage());
+                if (attention == null) {
+                    return original;
+                }
+                String wrapped = RichChatBodyWrapFormatter.format(
+                        Text.literal(normalizedAttentionDisplay(attention)),
+                        RichChatRowType.PRIVATE_MESSAGE
+                ).getString();
+                return Text.literal(tagLines(wrapped, tagged.taggedLine().sourceMessage(), attention.partner(), true));
+            }
             ParsedPrivateMessage parsed = parse(tagged.taggedLine().sourceMessage());
             if (parsed != null) {
                 String rebuilt = rebuildPrivateMessageVisibleText(splitLines(tagged.taggedLine().sourceMessage()), parsed, filterEnabled && isTarget(parsed.partner()));
@@ -241,6 +287,37 @@ public final class RichChatPrivateMessageBridge {
         return showMainWhenFiltering;
     }
 
+    public static boolean isAttentionMessage(String visible) {
+        if (visible == null || visible.isBlank()) {
+            return false;
+        }
+        TaggedLookup tagged = tagged(visible);
+        if (tagged != null && tagged.taggedLine().attention()) {
+            return true;
+        }
+        return parseAttention(canonicalPrivateSource(stripMarker(visible))) != null;
+    }
+
+    public static boolean shouldIncludeInNativePrivateView(Text message) {
+        if (!filterEnabled || showMainWhenFiltering || message == null) {
+            return true;
+        }
+        if (!hasTarget()) {
+            return false;
+        }
+        String visible = message.getString();
+        TaggedLookup tagged = tagged(visible);
+        if (tagged != null) {
+            return isTarget(tagged.taggedLine().partner());
+        }
+        ParsedAttentionMessage attention = parseAttention(canonicalPrivateSource(stripMarker(visible)));
+        if (attention != null) {
+            return isTarget(attention.partner());
+        }
+        ParsedPrivateMessage parsed = parse(canonicalPrivateSource(stripMarker(visible)));
+        return parsed != null && isTarget(parsed.partner());
+    }
+
     public static String targetPlayer() {
         return targetPlayer;
     }
@@ -251,10 +328,7 @@ public final class RichChatPrivateMessageBridge {
 
     public static void toggleFilter() {
         if (!filterEnabled && !hasTarget()) {
-            String fallback = availableTargets(MinecraftClient.getInstance()).stream().findFirst().orElse("");
-            if (!fallback.isBlank()) {
-                targetPlayer = fallback;
-            }
+            selectFallbackTarget();
         }
         filterEnabled = !filterEnabled;
         if (filterEnabled && hasTarget()) {
@@ -265,6 +339,15 @@ public final class RichChatPrivateMessageBridge {
 
     public static void toggleShowMainWhenFiltering() {
         showMainWhenFiltering = !showMainWhenFiltering;
+        if (!showMainWhenFiltering) {
+            if (!hasTarget()) {
+                selectFallbackTarget();
+            }
+            filterEnabled = true;
+            if (hasTarget()) {
+                UNREAD_PARTNERS.remove(normalizeName(targetPlayer));
+            }
+        }
         refreshChatHud();
     }
 
@@ -292,7 +375,7 @@ public final class RichChatPrivateMessageBridge {
     public static List<PopupMenu.MenuEntry> menuEntries(MinecraftClient client) {
         List<PopupMenu.MenuEntry> entries = new ArrayList<>();
         entries.add(new PopupMenu.MenuEntry("pm_filter_toggle", "Private filter: " + (filterEnabled ? "On" : "Off")));
-        entries.add(new PopupMenu.MenuEntry("pm_show_main_toggle", "Show main chat: " + (showMainWhenFiltering ? "On" : "Off")));
+        entries.add(new PopupMenu.MenuEntry("pm_show_main_toggle", "Show global chat: " + (showMainWhenFiltering ? "On" : "Off")));
         String currentTarget = hasTarget() ? targetPlayer : "none";
         entries.add(new PopupMenu.MenuEntry("pm_target_header", "with: " + currentTarget));
         return entries;
@@ -340,7 +423,7 @@ public final class RichChatPrivateMessageBridge {
         List<Text> lines = new ArrayList<>();
         lines.add(Text.literal("Private messages"));
         lines.add(Text.literal("Filter: " + (filterEnabled ? "On" : "Off")));
-        lines.add(Text.literal("Show main: " + (showMainWhenFiltering ? "On" : "Off")));
+        lines.add(Text.literal("Show global: " + (showMainWhenFiltering ? "On" : "Off")));
         lines.add(Text.literal("Target: " + (hasTarget() ? targetPlayer : "none")));
         long unreadCount = UNREAD_PARTNERS.keySet().stream().filter(name -> !name.equals(normalizeName(targetPlayer))).count();
         if (unreadCount > 0) {
@@ -360,13 +443,15 @@ public final class RichChatPrivateMessageBridge {
         int y = RichChatLatexTextureCache.currentChatViewportBottom() - lineHeight;
         int top = RichChatLatexTextureCache.currentChatViewportTop();
         int bottom = RichChatLatexTextureCache.currentChatViewportBottom();
-        int width = RichChatLatexTextureCache.currentChatContentWidth() + 12;
-        int background = 0xAA000000;
+        int width = Math.max(1, RichChatLatexTextureCache.currentChatContentWidth());
+        int background = vanillaChatBackgroundColor();
         overlayRender = true;
         try {
             context.getMatrices().push();
             context.getMatrices().translate(0.0F, 0.0F, 9000.0F);
-            context.fill(0, top - 2, width, bottom + 2, background);
+            // ChatHud keeps its own native translucent background. Painting a
+            // second rectangle here made private-only mode visibly darker and
+            // narrower on the right than normal chat.
             if (renderLines.isEmpty()) {
                 RichChatAttachmentRenderer.renderOrDrawText(context, renderer, Text.literal("<PM> Select a player or wait for a message.").asOrderedText(), x, y, HINT_COLOR);
                 return;
@@ -378,6 +463,20 @@ public final class RichChatPrivateMessageBridge {
         } finally {
             context.getMatrices().pop();
             overlayRender = false;
+        }
+    }
+
+    private static int vanillaChatBackgroundColor() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.options == null) {
+            return 0x55000000;
+        }
+        try {
+            double opacity = client.options.getTextBackgroundOpacity().getValue();
+            int alpha = Math.max(0, Math.min(255, (int) Math.round(opacity * 255.0D)));
+            return alpha << 24;
+        } catch (RuntimeException ignored) {
+            return 0x55000000;
         }
     }
 
@@ -424,13 +523,17 @@ public final class RichChatPrivateMessageBridge {
     }
 
     private static String tagLines(String visible, String sourceVisible, String partner) {
+        return tagLines(visible, sourceVisible, partner, false);
+    }
+
+    private static String tagLines(String visible, String sourceVisible, String partner, boolean attention) {
         String[] visibleLines = splitLines(visible);
         StringBuilder builder = new StringBuilder(visible.length() + visibleLines.length * 20);
         for (int i = 0; i < visibleLines.length; i++) {
             if (i > 0) {
                 builder.append('\n');
             }
-            builder.append(marker(storeTaggedLine(sourceVisible, partner, i)));
+            builder.append(marker(storeTaggedLine(sourceVisible, partner, i, attention)));
             builder.append(visibleLines[i]);
         }
         return builder.toString();
@@ -440,7 +543,8 @@ public final class RichChatPrivateMessageBridge {
         if (visibleLine == null || visibleLine.isBlank()) {
             return false;
         }
-        return tagged(visibleLine) != null || parse(visibleLine) != null;
+        TaggedLookup tagged = tagged(visibleLine);
+        return (tagged != null && !tagged.taggedLine().attention()) || parse(visibleLine) != null;
     }
 
     public static boolean isSelectedConversationLine(String visibleLine) {
@@ -513,11 +617,22 @@ public final class RichChatPrivateMessageBridge {
         if (bodyLines == null || bodyLines.length <= 1) {
             return bodyLines == null ? new String[0] : bodyLines;
         }
-        boolean seenContent = false;
+        // Minecraft can hand us an empty continuation row between two pieces
+        // of an already soft-wrapped PM.  Keeping it makes the second layout
+        // pass faithfully render a blank line every other row.  It is not user
+        // authored content: explicit newlines arrive as one parsed body, while
+        // these rows are only produced by ChatHud's visual wrapping.
+        List<String> nonEmptyLines = new ArrayList<>(bodyLines.length);
         for (String line : bodyLines) {
-            if (line == null || line.isEmpty()) {
-                return bodyLines;
+            if (line != null && !line.isEmpty()) {
+                nonEmptyLines.add(line);
             }
+        }
+        if (nonEmptyLines.isEmpty()) {
+            return bodyLines;
+        }
+        boolean seenContent = false;
+        for (String line : nonEmptyLines) {
             for (int i = 0; i < line.length(); i++) {
                 if (Character.isWhitespace(line.charAt(i))) {
                     return bodyLines;
@@ -529,7 +644,7 @@ public final class RichChatPrivateMessageBridge {
             return bodyLines;
         }
         StringBuilder joined = new StringBuilder();
-        for (String line : bodyLines) {
+        for (String line : nonEmptyLines) {
             joined.append(line);
         }
         return new String[]{joined.toString()};
@@ -599,12 +714,40 @@ public final class RichChatPrivateMessageBridge {
                 .toList();
     }
 
+    private static void selectFallbackTarget() {
+        String fallback = availableTargets(MinecraftClient.getInstance()).stream().findFirst().orElse("");
+        if (!fallback.isBlank()) {
+            targetPlayer = fallback;
+        }
+    }
+
     private static ParsedPrivateMessage parse(String visible) {
         if (visible == null || visible.isBlank()) {
             return null;
         }
         String firstLine = firstLine(canonicalPrivateSource(visible));
         return parseFirstLine(firstLine);
+    }
+
+    private static ParsedAttentionMessage parseAttention(String visible) {
+        if (visible == null || visible.isBlank()) {
+            return null;
+        }
+        Matcher matcher = ATTENTION_MESSAGE.matcher(firstLine(visible));
+        if (!matcher.matches()) {
+            return null;
+        }
+        String partner = matcher.group(1) == null ? "" : matcher.group(1).trim();
+        String body = matcher.group(2) == null ? "" : matcher.group(2).trim();
+        return partner.isBlank() ? null : new ParsedAttentionMessage(partner, body);
+    }
+
+    private static String normalizedAttentionDisplay(ParsedAttentionMessage attention) {
+        if (attention == null) {
+            return "";
+        }
+        String prefix = "<" + attention.partner() + ">";
+        return attention.body().isBlank() ? prefix : prefix + " " + attention.body();
     }
 
     private static ParsedPrivateMessage parseFirstLine(String firstLine) {
@@ -764,10 +907,10 @@ public final class RichChatPrivateMessageBridge {
         return MARKER_START + "PM:" + id + MARKER_END;
     }
 
-    private static String storeTaggedLine(String sourceMessage, String partner, int lineIndex) {
+    private static String storeTaggedLine(String sourceMessage, String partner, int lineIndex, boolean attention) {
         String id = Long.toString(TAG_COUNTER.incrementAndGet(), 36);
         synchronized (TAGGED_LINES) {
-            TAGGED_LINES.put(id, new TaggedLine(sourceMessage, partner, Math.max(0, lineIndex)));
+            TAGGED_LINES.put(id, new TaggedLine(sourceMessage, partner, Math.max(0, lineIndex), attention));
         }
         return id;
     }
@@ -820,7 +963,10 @@ public final class RichChatPrivateMessageBridge {
     private record ParsedPrivateMessage(boolean incoming, String partner, String body, String prefix) {
     }
 
-    private record TaggedLine(String sourceMessage, String partner, int lineIndex) {
+    private record ParsedAttentionMessage(String partner, String body) {
+    }
+
+    private record TaggedLine(String sourceMessage, String partner, int lineIndex, boolean attention) {
     }
 
     private record TaggedLookup(TaggedLine taggedLine, String strippedLine) {

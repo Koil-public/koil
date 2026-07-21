@@ -3,8 +3,7 @@ package com.spirit.mixin.client.gui;
 import com.spirit.Client;
 import com.spirit.client.gui.EntityInspectionTooltipBuilder;
 import com.spirit.client.gui.debug.F3OverlayRenderer;
-import com.spirit.koil.api.automation.cli.AutomationChatHudRenderer;
-import com.spirit.koil.api.stats.global.client.MarketHudRenderer;
+import com.spirit.koil.chat.internal.ChatHudPanelStack;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.hud.InGameHud;
@@ -27,8 +26,7 @@ public abstract class MixinInGameHud {
 
     @Inject(method = "render", at = @At("TAIL"))
     private void koil$renderAutomationChatHud(DrawContext context, float tickDelta, CallbackInfo ci) {
-        AutomationChatHudRenderer.render(context, client);
-        MarketHudRenderer.render(context, client);
+        ChatHudPanelStack.render(context, client);
         context.getMatrices().push();
         context.getMatrices().translate(0.0F, 0.0F, 800.0F);
         F3OverlayRenderer.render(context, client);

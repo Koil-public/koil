@@ -14,29 +14,20 @@ import java.util.List;
 import java.util.Locale;
 
 public final class AutomationChatHudRenderer {
-    private static final int VANILLA_CHAT_OFFSET_FROM_BOTTOM = 40;
-
     private AutomationChatHudRenderer() {
     }
 
     public static int reservedHeight(MinecraftClient client) {
-        int panelReservedHeight = panelReservedHeight(client);
-        if (panelReservedHeight <= 0) {
-            return 0;
-        }
-        return Math.max(0, panelReservedHeight - VANILLA_CHAT_OFFSET_FROM_BOTTOM);
+        return panelHeight(client);
     }
 
     public static int occupiedHeight(MinecraftClient client) {
-        return panelReservedHeight(client);
+        return panelHeight(client);
     }
 
-    private static int panelReservedHeight(MinecraftClient client) {
+    public static int panelHeight(MinecraftClient client) {
         AutomationHudBlock block = buildBlock(client);
-        if (block == null || client == null) {
-            return 0;
-        }
-        return block.height + bottomOffset(client);
+        return block == null || client == null ? 0 : block.height;
     }
 
     public static void render(DrawContext context, MinecraftClient client) {
@@ -44,8 +35,16 @@ public final class AutomationChatHudRenderer {
         if (block == null || client == null) {
             return;
         }
-        int x = 0;
         int y = client.getWindow().getScaledHeight() - bottomOffset(client) - block.height;
+        renderAt(context, client, y);
+    }
+
+    public static void renderAt(DrawContext context, MinecraftClient client, int y) {
+        AutomationHudBlock block = buildBlock(client);
+        if (block == null || client == null) {
+            return;
+        }
+        int x = 0;
         int background = chatBackgroundColor(client);
         int stateColor = withAlpha(AutomationStateColors.color(AutomationChatHudState.state()), Math.min(255, alpha(background) + 48));
         context.fill(x, y, x + block.width, y + block.height, background);
@@ -72,8 +71,19 @@ public final class AutomationChatHudRenderer {
         if (block == null) {
             return false;
         }
-        int x = 0;
         int y = client.getWindow().getScaledHeight() - bottomOffset(client) - block.height;
+        return mouseClickedAt(client, mouseX, mouseY, button, y);
+    }
+
+    public static boolean mouseClickedAt(MinecraftClient client, double mouseX, double mouseY, int button, int y) {
+        if (button != 0 || client == null) {
+            return false;
+        }
+        AutomationHudBlock block = buildBlock(client);
+        if (block == null) {
+            return false;
+        }
+        int x = 0;
         for (ActionRect rect : actionRects(client, block, x, y)) {
             if (!rect.contains(mouseX, mouseY)) {
                 continue;

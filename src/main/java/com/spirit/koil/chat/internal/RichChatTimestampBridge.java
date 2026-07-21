@@ -12,7 +12,7 @@ import java.util.Map;
 public final class RichChatTimestampBridge {
     private static final int MAX_CACHE = 512;
     private static final int TIMESTAMP_COLOR = 0xFF5F646C;
-    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
+    private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("h:mm a");
     private static final Map<String, TimestampMeta> FIRST_LINE_TIMESTAMPS = new LinkedHashMap<>(MAX_CACHE, 0.75F, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, TimestampMeta> eldest) {

@@ -1,7 +1,6 @@
 package com.spirit.koil.api.stats.global.client;
 
 import com.spirit.client.gui.console.ConsoleScreen;
-import com.spirit.koil.api.automation.cli.AutomationChatHudRenderer;
 import com.spirit.koil.api.stats.global.KoilMarketHudSnapshot;
 import com.spirit.koil.api.stats.global.KoilMarketSeriesWindow;
 import com.spirit.koil.api.stats.global.KoilMarketValueQuote;
@@ -15,7 +14,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class MarketHudRenderer {
-    private static final int VANILLA_CHAT_OFFSET_FROM_BOTTOM = 40;
     private static MarketHudBlock cachedBlock;
     private static String cachedBlockKey = "";
 
@@ -23,17 +21,7 @@ public final class MarketHudRenderer {
     }
 
     public static int reservedHeight(MinecraftClient client) {
-        int height = panelHeight(client);
-
-        if (height <= 0) {
-            return 0;
-        }
-
-        if (AutomationChatHudRenderer.reservedHeight(client) > 0) {
-            return height;
-        }
-
-        return Math.max(0, height - VANILLA_CHAT_OFFSET_FROM_BOTTOM);
+        return panelHeight(client);
     }
 
     public static void render(DrawContext context, MinecraftClient client) {
@@ -43,9 +31,16 @@ public final class MarketHudRenderer {
             return;
         }
 
-        int automationOffset = AutomationChatHudRenderer.occupiedHeight(client);
+        int y = client.getWindow().getScaledHeight() - bottomOffset(client) - block.height;
+        renderAt(context, client, y);
+    }
+
+    public static void renderAt(DrawContext context, MinecraftClient client, int y) {
+        MarketHudBlock block = buildBlock(client);
+        if (block == null || client == null) {
+            return;
+        }
         int x = 0;
-        int y = client.getWindow().getScaledHeight() - bottomOffset(client) - automationOffset - block.height;
         int background = panelBackgroundColor(client);
         context.fill(x, y, x + block.width, y + block.height, background);
         context.fill(x, y, x + 2, y + block.height, block.accentColor);
@@ -74,9 +69,9 @@ public final class MarketHudRenderer {
         }
     }
 
-    private static int panelHeight(MinecraftClient client) {
+    public static int panelHeight(MinecraftClient client) {
         MarketHudBlock block = buildBlock(client);
-        return block == null ? 0 : block.height + bottomOffset(client);
+        return block == null ? 0 : block.height;
     }
 
     private static MarketHudBlock buildBlock(MinecraftClient client) {
