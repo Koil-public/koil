@@ -77,6 +77,53 @@ public final class VanillaBackedChatInputController {
         return cursor;
     }
 
+    public static int renderStyledRange(DrawContext context, TextRenderer renderer, MinecraftClient client, String fullLine, int from, int to, int activeCursor, int x, int y, int maxWidth) {
+        if (fullLine == null || fullLine.isEmpty()) {
+            return x;
+        }
+        int start = Math.max(0, Math.min(fullLine.length(), from));
+        int end = Math.max(start, Math.min(fullLine.length(), to));
+        List<KoilCommandAnalysisService.StyledChunk> chunks = fullLine.startsWith("/")
+                ? KoilCommandAnalysisService.highlightRange(client, fullLine, start, end, activeCursor)
+                : formattedPreviewChunks(fullLine.substring(start, end));
+        return renderChunks(context, renderer, chunks, x, y, maxWidth);
+    }
+
+    public static int styledRangeWidth(TextRenderer renderer, MinecraftClient client, String fullLine, int from, int to, int activeCursor) {
+        if (renderer == null || fullLine == null || fullLine.isEmpty()) {
+            return 0;
+        }
+        int start = Math.max(0, Math.min(fullLine.length(), from));
+        int end = Math.max(start, Math.min(fullLine.length(), to));
+        List<KoilCommandAnalysisService.StyledChunk> chunks = fullLine.startsWith("/")
+                ? KoilCommandAnalysisService.highlightRange(client, fullLine, start, end, activeCursor)
+                : formattedPreviewChunks(fullLine.substring(start, end));
+        int width = 0;
+        for (KoilCommandAnalysisService.StyledChunk chunk : chunks) {
+            if (chunk != null && chunk.text() != null && !chunk.text().isEmpty()) {
+                width += renderer.getWidth(Text.literal(chunk.text()).setStyle(chunk.style()));
+            }
+        }
+        return width;
+    }
+
+    private static int renderChunks(DrawContext context, TextRenderer renderer, List<KoilCommandAnalysisService.StyledChunk> chunks, int x, int y, int maxWidth) {
+        int cursor = x;
+        int right = x + Math.max(8, maxWidth);
+        for (KoilCommandAnalysisService.StyledChunk chunk : chunks) {
+            if (chunk == null || chunk.text().isEmpty() || cursor >= right) {
+                continue;
+            }
+            String visible = renderer.trimToWidth(chunk.text(), Math.max(1, right - cursor));
+            if (visible.isEmpty()) {
+                continue;
+            }
+            OrderedText ordered = Text.literal(visible).setStyle(chunk.style()).asOrderedText();
+            cursor = RichChatAttachmentRenderer.renderPreviewOrDrawText(context, renderer, ordered, cursor, y, chunk.color());
+        }
+        return cursor;
+    }
+
     /** Measures text with the same styled chunks used by the live draft draw. */
     public static int styledLineWidth(TextRenderer renderer, MinecraftClient client, String line) {
         if (renderer == null || line == null || line.isEmpty()) {

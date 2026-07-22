@@ -124,6 +124,44 @@ public final class KoilCommandAnalysisService {
         }
     }
 
+    /** Returns a visible slice while retaining parse/style context from the
+     * complete command. This keeps highlighting stable when the leading slash
+     * has scrolled out of a one-line text field. */
+    public static List<StyledChunk> highlightRange(MinecraftClient client, String line, int from, int to, int activeCursor) {
+        if (line == null || line.isEmpty()) {
+            return List.of();
+        }
+        int start = Math.max(0, Math.min(line.length(), from));
+        int end = Math.max(start, Math.min(line.length(), to));
+        if (start >= end) {
+            return List.of();
+        }
+        List<StyledChunk> full = highlightLine(client, line, activeCursor);
+        List<StyledChunk> sliced = new ArrayList<>();
+        int offset = 0;
+        for (StyledChunk chunk : full) {
+            if (chunk == null || chunk.text() == null || chunk.text().isEmpty()) {
+                continue;
+            }
+            int chunkStart = offset;
+            int chunkEnd = offset + chunk.text().length();
+            int visibleStart = Math.max(start, chunkStart);
+            int visibleEnd = Math.min(end, chunkEnd);
+            if (visibleStart < visibleEnd) {
+                sliced.add(new StyledChunk(
+                        chunk.text().substring(visibleStart - chunkStart, visibleEnd - chunkStart),
+                        chunk.style(),
+                        chunk.color()
+                ));
+            }
+            offset = chunkEnd;
+            if (offset >= end) {
+                break;
+            }
+        }
+        return List.copyOf(sliced);
+    }
+
     private static Analysis failureAnalysis(String commandText, String commandLine, int lineNumber, ParseResults<CommandSource> parse, boolean allowSuggestions) {
         CommandSyntaxException exception = mostRelevantException(parse);
         int cursor = failureCursor(parse, exception);

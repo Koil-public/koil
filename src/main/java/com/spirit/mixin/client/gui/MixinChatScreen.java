@@ -1692,7 +1692,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
         if (RichChatUploadDraft.hasPending()) {
             int removeX = right - 18;
-            context.drawTextWithShadow(this.textRenderer, Text.literal("x"), removeX + 5, top + 3, 0xFFFF7777);
+            int removeTextY = top + Math.max(1, (height - this.textRenderer.fontHeight) / 2);
+            context.drawTextWithShadow(this.textRenderer, Text.literal("x"), removeX + 5, removeTextY, 0xFFFF7777);
             if (mouseX >= removeX && mouseX <= right && mouseY >= top && mouseY <= bottom) {
                 context.drawTooltip(this.textRenderer, List.of(Text.literal("Remove attachment")), mouseX, mouseY);
             } else if (mouseX >= left && mouseX <= right && mouseY >= top && mouseY <= bottom) {
@@ -2508,11 +2509,16 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         int renderedCursorX = -1;
         if (!visible.isEmpty()) {
             int cursor = Math.max(first, Math.min(field.getCursor(), first + visible.length()));
-            int localCursor = Math.max(0, Math.min(visible.length(), cursor - first));
-            String beforeCursor = visible.substring(0, localCursor);
-            String afterCursor = visible.substring(localCursor);
-            renderedCursorX = VanillaBackedChatInputController.renderStyledLine(context, this.textRenderer, MinecraftClient.getInstance(), beforeCursor, x, y, field.getInnerWidth());
-            VanillaBackedChatInputController.renderStyledLine(context, this.textRenderer, MinecraftClient.getInstance(), afterCursor, renderedCursorX, y, Math.max(1, field.getInnerWidth() - (renderedCursorX - x)));
+            int visibleEnd = first + visible.length();
+            renderedCursorX = VanillaBackedChatInputController.renderStyledRange(
+                    context, this.textRenderer, MinecraftClient.getInstance(), text,
+                    first, cursor, cursor, x, y, field.getInnerWidth()
+            );
+            VanillaBackedChatInputController.renderStyledRange(
+                    context, this.textRenderer, MinecraftClient.getInstance(), text,
+                    cursor, visibleEnd, cursor, renderedCursorX, y,
+                    Math.max(1, field.getInnerWidth() - (renderedCursorX - x))
+            );
         }
         koil$renderSingleLineCursor(context, field, text, first, visible, x, y, renderedCursorX);
         context.disableScissor();
@@ -2554,7 +2560,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
         int cursorX = renderedCursorX >= x
                 ? renderedCursorX
-                : x + VanillaBackedChatInputController.styledLineWidth(this.textRenderer, MinecraftClient.getInstance(), text.substring(first, cursor));
+                : x + VanillaBackedChatInputController.styledRangeWidth(this.textRenderer, MinecraftClient.getInstance(), text, first, cursor, cursor);
         context.fill(cursorX, y - 2, cursorX + 1, y + this.textRenderer.fontHeight, 0xFFFFFFFF);
     }
 

@@ -24,6 +24,7 @@ import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.util.file.media.VisualPlaybackSession;
 import com.spirit.koil.api.util.file.media.VisualPlaybackState;
 import com.spirit.koil.api.util.file.media.VisualTransportControls;
+import com.spirit.koil.api.util.file.media.ActiveVisualPlaybackRegistry;
 import com.spirit.koil.api.util.file.media.image.AnimatedGifPlaybackSession;
 import com.spirit.koil.api.util.file.media.image.ImageTexture;
 import com.spirit.koil.api.util.file.media.image.ImageTextureService;
@@ -600,11 +601,10 @@ public class FileExplorerScreen extends Screen {
                 context.drawBorder(barX, barY, barWidth, barHeight, new Color(uiColorIDEAudioTimestampBarBorder, true).getRGB());
                 String currentTime = formatTime(AudioManager.getPlaybackPositionMicros(selectedFileItem.getFile()));
                 String totalTime = formatTime(AudioManager.getPlaybackLengthMicros(selectedFileItem.getFile()));
-                int currentTimeX = barX + filledWidth - currentTime.length() / 2;
-                context.getMatrices().push();
-                context.getMatrices().scale(0.5f, 0.5f, 1.0F);
-                context.drawText(this.textRenderer, currentTime, (int) (currentTimeX / 0.5) - 2, (int) ((barY + 14) / 0.5), new Color(uiColorIDEAudioTimestampText, true).getRGB(), true);
-                context.getMatrices().pop();
+                VisualTransportControls.renderThumbTimestamp(
+                        context, this.textRenderer, currentTime, barX + filledWidth, barX, barWidth,
+                        barY + barHeight + 3, new Color(uiColorIDEAudioTimestampText, true).getRGB()
+                );
                 context.drawText(this.textRenderer, totalTime, barX + barWidth + 3, barY + 1, new Color(uiColorIDEAudioTimestampText, true).getRGB(), true);
                 context.fill(barX + filledWidth - 1, barY - 1, barX + filledWidth + 1, barY + barHeight + 1, new Color(uiColorIDEAudioTimestampBarLine, true).getRGB());
             }
@@ -1129,7 +1129,7 @@ public class FileExplorerScreen extends Screen {
                         activeVisualSession.pause();
                     } else {
                         stopThemeMusicForMediaPlayback();
-                        activeVisualSession.play();
+                        playActiveVisualSession();
                     }
                     return true;
                 }
@@ -1137,7 +1137,7 @@ public class FileExplorerScreen extends Screen {
                 if (isWithinBounds(visualPlayOverlayBounds, mouseX, mouseY) && activeVisualSession != null) {
                     UiSoundHelper.playButtonClick();
                     stopThemeMusicForMediaPlayback();
-                    activeVisualSession.play();
+                    playActiveVisualSession();
                     return true;
                 }
                 if (isWithinBounds(visualPrimaryControlBounds, mouseX, mouseY) && activeVisualSession != null) {
@@ -1146,13 +1146,14 @@ public class FileExplorerScreen extends Screen {
                         activeVisualSession.pause();
                     } else {
                         stopThemeMusicForMediaPlayback();
-                        activeVisualSession.play();
+                        playActiveVisualSession();
                     }
                     return true;
                 }
                 if (!visualPreviewGif && isWithinBounds(visualSecondaryControlBounds, mouseX, mouseY) && activeVisualSession != null) {
                     UiSoundHelper.playButtonClick();
                     activeVisualSession.stop();
+                    ActiveVisualPlaybackRegistry.clear(activeVisualSession);
                     return true;
                 }
             }
@@ -1454,6 +1455,7 @@ public class FileExplorerScreen extends Screen {
 
     private void closeVisualSession() {
         if (activeVisualSession != null) {
+            ActiveVisualPlaybackRegistry.clear(activeVisualSession);
             activeVisualSession.close();
         }
         activeVisualSession = null;
@@ -1467,6 +1469,19 @@ public class FileExplorerScreen extends Screen {
         visualTimestampBounds = null;
         visualPreviewGif = false;
         visualPreviewVideo = false;
+    }
+
+    private void playActiveVisualSession() {
+        if (activeVisualSession == null) {
+            return;
+        }
+        activeVisualSession.play();
+        if (visualPreviewVideo) {
+            String label = selectedFileItem == null || selectedFileItem.getFile() == null
+                    ? "Video"
+                    : selectedFileItem.getFile().getName();
+            ActiveVisualPlaybackRegistry.activate(activeVisualSession, label);
+        }
     }
 
     private void beginRename(File target) {

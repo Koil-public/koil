@@ -17,10 +17,18 @@ public final class RichChatRenderContext {
     }
 
     public static int currentChatViewportTop() {
-        return RichChatLatexTextureCache.currentChatViewportTop() + chatViewportOffsetY;
+        return RichChatLatexTextureCache.currentChatViewportTop();
     }
 
     public static int currentChatViewportBottom() {
-        return RichChatLatexTextureCache.currentChatViewportBottom() + chatViewportOffsetY;
+        return RichChatLatexTextureCache.currentChatViewportBottom();
+    }
+
+    public static int currentScreenChatViewportTop() {
+        return currentChatViewportTop() + chatViewportOffsetY;
+    }
+
+    public static int currentScreenChatViewportBottom() {
+        return currentChatViewportBottom() + chatViewportOffsetY;
     }
 }

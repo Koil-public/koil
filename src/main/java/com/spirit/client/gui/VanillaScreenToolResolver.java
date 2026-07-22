@@ -16,6 +16,7 @@ import com.spirit.client.gui.update.UpdateScreen;
 import com.spirit.client.gui.video.KoilVideoOptionsScreen;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.util.file.audio.AudioManager;
+import com.spirit.koil.api.util.file.media.ActiveVisualPlaybackRegistry;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.gui.screen.Screen;
@@ -104,7 +105,7 @@ public final class VanillaScreenToolResolver {
         }
         actions.add(new PopupMenu.MenuEntry("screen_tools", "Screen Tools..."));
         actions.add(new PopupMenu.MenuEntry("ui_appearance", "Appearance..."));
-        if (AudioManager.hasActiveAudio()) {
+        if (AudioManager.hasActiveAudio() || ActiveVisualPlaybackRegistry.hasActivePlayback()) {
             actions.add(new PopupMenu.MenuEntry("media_controls", "Media controls..."));
         }
 

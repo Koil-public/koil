@@ -25,7 +25,7 @@ public final class RichChatBodyWrapFormatter {
     // When the PM filter is inactive, the native row does not need the wide
     // filtered-view guard. Reclaim the measured open room without changing
     // the stable filtered-chat budget.
-    private static final int UNFILTERED_PRIVATE_RECLAIM = 64;
+    private static final int UNFILTERED_PRIVATE_RECLAIM = 87;
     private static final int UNFILTERED_LONG_TOKEN_RECLAIM = 62;
     private static final int UNFILTERED_WORD_MESSAGE_RECLAIM = 58;
     // PM tags are injected after this formatter produces logical lines.  They

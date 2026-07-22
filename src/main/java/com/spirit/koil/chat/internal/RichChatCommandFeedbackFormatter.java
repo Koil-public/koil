@@ -4,6 +4,8 @@ import com.spirit.koil.chat.internal.input.KoilCommandAnalysisService;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.text.MutableText;
+import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 
 import java.util.List;
@@ -46,6 +48,42 @@ public final class RichChatCommandFeedbackFormatter {
             cursor = context.drawTextWithShadow(renderer, Text.literal(chunkText).setStyle(chunk.style()), cursor, y, color);
         }
         return cursor;
+    }
+
+    /** Applies command colors before ChatHud performs native line wrapping, so
+     * continuation rows keep the full echoed-command context even without a
+     * repeated slash. */
+    public static Text styleBeforeNativeWrap(Text message) {
+        if (message == null) {
+            return null;
+        }
+        String text = message.getString();
+        int slash = text.indexOf('/');
+        int commandStart = slash >= 0 ? slash : commandEchoStart(text);
+        if (commandStart < 0) {
+            return message;
+        }
+        MutableText styled = Text.literal(text.substring(0, commandStart));
+        String command = text.substring(commandStart);
+        boolean syntheticSlash = !command.startsWith("/");
+        if (syntheticSlash) {
+            command = "/" + command;
+        }
+        for (KoilCommandAnalysisService.StyledChunk chunk : KoilCommandAnalysisService.highlightLine(MinecraftClient.getInstance(), command)) {
+            if (chunk == null || chunk.text() == null || chunk.text().isEmpty()) {
+                continue;
+            }
+            String piece = chunk.text();
+            if (syntheticSlash && piece.startsWith("/")) {
+                piece = piece.substring(1);
+            }
+            if (piece.isEmpty()) {
+                continue;
+            }
+            Style style = (chunk.style() == null ? Style.EMPTY : chunk.style()).withColor(chunk.color() & 0x00FFFFFF);
+            styled.append(Text.literal(piece).setStyle(style));
+        }
+        return styled;
     }
 
     private static int commandEchoStart(String text) {

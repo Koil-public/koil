@@ -44,6 +44,7 @@ public final class RichChatPrivateMessageBridge {
     private static final Pattern BRACKET_FROM = Pattern.compile("^\\[From (.+?)]\\s*(.*)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern BRACKET_TO = Pattern.compile("^\\[To (.+?)]\\s*(.*)$", Pattern.CASE_INSENSITIVE);
     private static final Pattern ATTENTION_MESSAGE = Pattern.compile("^\\[Attention]\\s*<([^>]+)>\\s*(.*)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern PUBLIC_PLAYER_MESSAGE = Pattern.compile("^<([^>]+)>\\s*(.*)$", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     private static final Deque<ConversationEntry> CONVERSATION = new ArrayDeque<>();
     private static final Map<String, Long> UNREAD_PARTNERS = new ConcurrentHashMap<>();
@@ -90,6 +91,22 @@ public final class RichChatPrivateMessageBridge {
                     RichChatRowType.PRIVATE_MESSAGE
             ).getString();
             return Text.literal(tagLines(wrapped, sourceVisible, attention.partner(), true));
+        }
+        ParsedAttentionMessage publicMention = parsePublicMention(sourceVisible);
+        if (publicMention != null) {
+            String timestamp = RichChatTimestampBridge.timestampForLine(sourceVisible);
+            if (timestamp.isBlank()) {
+                timestamp = LocalTime.now().format(TIME_FORMAT);
+            }
+            rememberConversation(publicMention.partner(), sourceVisible, timestamp, true);
+            RichChatTimestampBridge.rememberVisibleLine(sourceVisible, timestamp);
+            if (!isTarget(publicMention.partner()) || !filterEnabled) {
+                UNREAD_PARTNERS.put(normalizeName(publicMention.partner()), System.currentTimeMillis());
+            } else {
+                UNREAD_PARTNERS.remove(normalizeName(publicMention.partner()));
+            }
+            String wrapped = RichChatBodyWrapFormatter.format(Text.literal(sourceVisible), RichChatRowType.PLAYER_CHAT).getString();
+            return Text.literal(tagLines(wrapped, sourceVisible, publicMention.partner(), true));
         }
         ParsedPrivateMessage parsed = parse(sourceVisible);
         if (parsed == null) {
@@ -740,6 +757,45 @@ public final class RichChatPrivateMessageBridge {
         String partner = matcher.group(1) == null ? "" : matcher.group(1).trim();
         String body = matcher.group(2) == null ? "" : matcher.group(2).trim();
         return partner.isBlank() ? null : new ParsedAttentionMessage(partner, body);
+    }
+
+    private static ParsedAttentionMessage parsePublicMention(String visible) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (visible == null || visible.isBlank() || client == null || client.player == null) {
+            return null;
+        }
+        Matcher matcher = PUBLIC_PLAYER_MESSAGE.matcher(visible);
+        if (!matcher.matches()) {
+            return null;
+        }
+        String sender = matcher.group(1) == null ? "" : matcher.group(1).trim();
+        String body = matcher.group(2) == null ? "" : matcher.group(2);
+        String localName = client.player.getGameProfile().getName();
+        if (sender.isBlank() || localName == null || localName.isBlank() || sender.equalsIgnoreCase(localName)
+                || !containsPlayerName(body, localName)) {
+            return null;
+        }
+        return new ParsedAttentionMessage(sender, body);
+    }
+
+    private static boolean containsPlayerName(String body, String playerName) {
+        String haystack = body == null ? "" : body.toLowerCase(Locale.ROOT);
+        String needle = playerName == null ? "" : playerName.toLowerCase(Locale.ROOT);
+        int index = haystack.indexOf(needle);
+        while (index >= 0) {
+            int end = index + needle.length();
+            boolean leftBoundary = index == 0 || !isPlayerNameCharacter(haystack.charAt(index - 1));
+            boolean rightBoundary = end >= haystack.length() || !isPlayerNameCharacter(haystack.charAt(end));
+            if (leftBoundary && rightBoundary) {
+                return true;
+            }
+            index = haystack.indexOf(needle, index + 1);
+        }
+        return false;
+    }
+
+    private static boolean isPlayerNameCharacter(char value) {
+        return (value >= 'a' && value <= 'z') || (value >= '0' && value <= '9') || value == '_';
     }
 
     private static String normalizedAttentionDisplay(ParsedAttentionMessage attention) {

@@ -7,6 +7,7 @@ import com.spirit.koil.chat.internal.LocalOverflowChatBridge;
 import com.spirit.koil.chat.internal.LocalMultilineChatBridge;
 import com.spirit.koil.chat.internal.MultilineChatInputLayout;
 import com.spirit.koil.chat.internal.RichChatCodeBlockBridge;
+import com.spirit.koil.chat.internal.RichChatCommandFeedbackFormatter;
 import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
 import com.spirit.koil.chat.internal.RichChatPrivateChunkBridge;
 import com.spirit.koil.chat.internal.RichChatPrivateMessageBridge;
@@ -105,7 +106,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         RichChatRenderContext.beginChatHudFrame(-koil$automationHudReservedHeight);
     }
 
-    @Inject(method = "render", at = @At("TAIL"))
+    @Inject(method = "render", at = @At("RETURN"))
     private void koil$finishAutomationHudRender(DrawContext context, int currentTick, int mouseX, int mouseY, CallbackInfo ci) {
         if (client != null && client.currentScreen instanceof ChatScreen) {
             koil$renderChatScrollbar(context);
@@ -161,9 +162,10 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         RichChatSyncedMessageBridge.RewriteResult synced = RichChatSyncedMessageBridge.rewrite(rewritten);
         if (synced.cancel()) {
             if (synced.message() != null) {
-                MessageIndicator replacementIndicator = koil$selectIndicator(synced.message(), indicator);
-                koil$invokeLogChatMessage(koil$logFriendlyText(synced.message()), replacementIndicator);
-                koil$invokeAddMessage(synced.message(), signature, koil$currentTicks(), replacementIndicator, false);
+                Text syncedMessage = RichChatPrivateMessageBridge.observeAndRewrite(synced.message());
+                MessageIndicator replacementIndicator = koil$selectIndicator(syncedMessage, indicator);
+                koil$invokeLogChatMessage(koil$logFriendlyText(syncedMessage), replacementIndicator);
+                koil$invokeAddMessage(syncedMessage, signature, koil$currentTicks(), replacementIndicator, false);
             }
             ci.cancel();
             return;
@@ -181,8 +183,15 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         }
         rewritten = RichChatCommandOutputBridge.enhanceSyntaxFailure(rewritten);
         RichChatRowType rowType = RichChatRowClassifier.classify(rewritten, indicator);
-        if (rewritten != null && rowType.usesBodyIndent() && rowType != RichChatRowType.PRIVATE_MESSAGE) {
+        boolean commandFeedback = rowType == RichChatRowType.COMMAND_OUTPUT
+                || rowType == RichChatRowType.COMMAND_BLOCK_IMPULSE
+                || rowType == RichChatRowType.COMMAND_BLOCK_CHAIN
+                || rowType == RichChatRowType.COMMAND_BLOCK_REPEATING;
+        if (rewritten != null && rowType.usesBodyIndent() && rowType != RichChatRowType.PRIVATE_MESSAGE && !commandFeedback) {
             rewritten = RichChatBodyWrapFormatter.format(rewritten, rowType);
+        }
+        if (commandFeedback) {
+            rewritten = RichChatCommandFeedbackFormatter.styleBeforeNativeWrap(rewritten);
         }
         if (RichChatSettings.timestampsEnabled()) {
             RichChatTimestampBridge.remember(rewritten);

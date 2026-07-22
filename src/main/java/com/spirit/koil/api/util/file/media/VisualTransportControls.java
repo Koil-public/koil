@@ -129,6 +129,21 @@ public final class VisualTransportControls {
         return minutes + ":" + (seconds < 10L ? "0" : "") + seconds;
     }
 
+    /** Draws the current timestamp at half scale, centered beneath and clamped
+     * to the progress thumb. Shared by File Explorer and universal controls. */
+    public static void renderThumbTimestamp(DrawContext context, TextRenderer renderer, String value, int thumbX, int barX, int barWidth, int y, int color) {
+        if (context == null || renderer == null || value == null || barWidth <= 0) {
+            return;
+        }
+        float scale = 0.5F;
+        int scaledWidth = Math.max(1, Math.round(renderer.getWidth(value) * scale));
+        int drawX = Math.max(barX, Math.min(thumbX - scaledWidth / 2, barX + barWidth - scaledWidth));
+        context.getMatrices().push();
+        context.getMatrices().scale(scale, scale, 1.0F);
+        context.drawText(renderer, value, Math.round(drawX / scale), Math.round(y / scale), color, true);
+        context.getMatrices().pop();
+    }
+
     public static PreviewFooterSpec koilPreviewFooterSpec(int x, int y, int width, int height, boolean gifOnly, boolean hovered, boolean drawCenterPlayOverlay, Identifier playButton, Identifier pauseButton, Identifier stopButton) {
         return new PreviewFooterSpec(
                 x,

@@ -11,11 +11,11 @@ import com.spirit.client.gui.ide.FileExplorerScreen;
 import com.spirit.client.gui.ide.TextFileViewSupport;
 import com.spirit.koil.api.design.uiColorVal;
 import com.spirit.koil.chat.internal.RichChatCodeBlockBridge;
-import com.spirit.koil.chat.internal.RichChatCommandFeedbackFormatter;
 import com.spirit.koil.api.util.file.audio.AudioManager;
 import com.spirit.koil.api.util.file.media.VisualPlaybackSession;
 import com.spirit.koil.api.util.file.media.VisualPlaybackState;
 import com.spirit.koil.api.util.file.media.VisualTransportControls;
+import com.spirit.koil.api.util.file.media.ActiveVisualPlaybackRegistry;
 import com.spirit.koil.api.util.file.media.image.AnimatedGifPlaybackSession;
 import com.spirit.koil.api.util.file.media.image.ImageTexture;
 import com.spirit.koil.api.util.file.media.image.ImageTextureService;
@@ -155,7 +155,7 @@ public final class RichChatAttachmentRenderer {
             return 42;
         }
         if (attachment.type() == RichChatAttachmentType.FILE) {
-            return 36;
+            return 24;
         }
         return pinnedVisualSize(client, attachment).height();
     }
@@ -166,7 +166,7 @@ public final class RichChatAttachmentRenderer {
         if (context == null || client == null || attachment == null || height <= 0) {
             return;
         }
-        int width = pinnedPanelWidth(client);
+        int width = pinnedPanelWidth(client, attachment);
         int background = pinnedPanelBackground(client);
         context.fill(0, y, width, y + height, background);
         context.fill(0, y, 2, y + height, 0xFF6F8FBD);
@@ -233,7 +233,7 @@ public final class RichChatAttachmentRenderer {
         float scale = Math.min(availableWidth / (float) sourceWidth, panelHeight / (float) sourceHeight);
         int drawWidth = Math.max(1, Math.min(availableWidth, Math.round(sourceWidth * scale)));
         int drawHeight = Math.max(1, Math.min(panelHeight, Math.round(sourceHeight * scale)));
-        int drawX = 2;
+        int drawX = Math.max(2, (panelWidth - drawWidth) / 2);
         int drawY = y + Math.max(0, (panelHeight - drawHeight) / 2);
         context.drawTexture(textureId, drawX, drawY, drawWidth, drawHeight, 0, 0, sourceWidth, sourceHeight, sourceWidth, sourceHeight);
         BOUNDS.put("pinned:" + attachment.attachmentId(), screenBounds(context, attachment.attachmentId(), attachment, drawX, drawY, drawWidth, drawHeight));
@@ -262,7 +262,7 @@ public final class RichChatAttachmentRenderer {
     }
 
     private static PreviewSize pinnedVisualSize(MinecraftClient client, RichChatAttachment attachment) {
-        int width = pinnedPanelWidth(client);
+        int width = pinnedPanelWidth(client, attachment);
         int sourceWidth = attachment == null ? width : Math.max(1, attachment.width());
         int sourceHeight = attachment == null ? 90 : Math.max(1, attachment.height());
         if (sourceWidth <= 1 || sourceHeight <= 1) {
@@ -273,10 +273,20 @@ public final class RichChatAttachmentRenderer {
         return new PreviewSize(width, Math.max(MIN_THUMB_HEIGHT, Math.min(148, Math.round(sourceHeight * scale))));
     }
 
-    private static int pinnedPanelWidth(MinecraftClient client) {
+    private static int pinnedPanelWidth(MinecraftClient client, RichChatAttachment attachment) {
         int chatWidth = client == null || client.inGameHud == null ? 0 : client.inGameHud.getChatHud().getWidth();
         int screenWidth = client == null || client.getWindow() == null ? 320 : client.getWindow().getScaledWidth();
-        return Math.min(screenWidth, Math.max(190, chatWidth + 12));
+        int fullWidth = Math.min(screenWidth, Math.max(190, chatWidth + 12));
+        if (attachment == null || client == null || client.textRenderer == null
+                || (attachment.type() != RichChatAttachmentType.FILE && attachment.type() != RichChatAttachmentType.AUDIO)) {
+            return fullWidth;
+        }
+        int labelWidth = Math.max(
+                client.textRenderer.getWidth(attachment.fileName()),
+                client.textRenderer.getWidth(fileDescription(attachment))
+        );
+        int minimum = attachment.type() == RichChatAttachmentType.AUDIO ? 168 : 96;
+        return Math.min(fullWidth, Math.max(minimum, labelWidth + 50));
     }
 
     private static int pinnedPanelBackground(MinecraftClient client) {
@@ -350,13 +360,6 @@ public final class RichChatAttachmentRenderer {
         }
         if (!LocalRichAttachmentBridge.containsMarker(displayText) && containsRichFormatting(displayText)) {
             int right = renderFormattedText(context, renderer, displayText, x, y, effectiveColor, style);
-            RichChatTimestampBridge.render(context, renderer, text, x, y);
-            return right;
-        }
-        if (!LocalRichAttachmentBridge.containsMarker(displayText)
-                && !italicizeDimmed
-                && RichChatCommandFeedbackFormatter.hasHighlightableCommand(displayText)) {
-            int right = RichChatCommandFeedbackFormatter.render(context, renderer, displayText, x, y, effectiveColor);
             RichChatTimestampBridge.render(context, renderer, text, x, y);
             return right;
         }
@@ -1734,6 +1737,7 @@ public final class RichChatAttachmentRenderer {
                 VisualPlaybackSession session = videoActionSession(bounds.attachment());
                 if (session != null) {
                     session.stop();
+                    ActiveVisualPlaybackRegistry.clear(session);
                 }
                 return;
             }
@@ -2572,6 +2576,7 @@ public final class RichChatAttachmentRenderer {
         }
         VisualPlaybackSession session = VIDEO_SESSIONS.remove(attachmentId);
         if (session != null) {
+            ActiveVisualPlaybackRegistry.clear(session);
             try {
                 session.close();
             } catch (Exception ignored) {
@@ -2619,6 +2624,7 @@ public final class RichChatAttachmentRenderer {
         }
         stopOtherVideoSessions(attachment == null ? null : attachment.attachmentId());
         session.play();
+        ActiveVisualPlaybackRegistry.activate(session, attachment == null ? "Video" : attachment.fileName());
     }
 
     private static void stopOtherVideoSessions(UUID keepAttachmentId) {
@@ -2673,8 +2679,8 @@ public final class RichChatAttachmentRenderer {
         int screenY = Math.round(Math.min(topLeft.y(), bottomRight.y()));
         int screenRight = Math.round(Math.max(topLeft.x(), bottomRight.x()));
         int screenBottom = Math.round(Math.max(topLeft.y(), bottomRight.y()));
-        int viewportTop = RichChatRenderContext.currentChatViewportTop();
-        int viewportBottom = RichChatRenderContext.currentChatViewportBottom() + EXTRA_RENDER_BOTTOM;
+        int viewportTop = RichChatRenderContext.currentScreenChatViewportTop();
+        int viewportBottom = RichChatRenderContext.currentScreenChatViewportBottom() + EXTRA_RENDER_BOTTOM;
         int clippedTop = Math.max(screenY, viewportTop);
         int clippedBottom = Math.min(screenBottom, viewportBottom);
         if (clippedBottom <= clippedTop) {
