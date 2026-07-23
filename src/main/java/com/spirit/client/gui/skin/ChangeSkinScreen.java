@@ -753,7 +753,7 @@ public class ChangeSkinScreen extends Screen {
         setStatus("Applied " + entry.safeName() + ".");
         PlayerEntity player = MinecraftClient.getInstance().player;
         if (player != null) {
-            player.sendMessage(Text.literal("Koil skin applied: " + entry.safeName()), true);
+            player.sendMessage(Text.literal("Skin applied: " + entry.safeName()), true);
         }
         MinecraftClient.getInstance().worldRenderer.reload();
     }

@@ -1,13 +1,14 @@
 package com.spirit.koil.api.multiplayer;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.spirit.koil.api.navigation.ClientSessionTransitionCoordinator;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.ConnectScreen;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.network.ServerAddress;
@@ -26,7 +27,6 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.lit
 
 @Environment(EnvType.CLIENT)
 public final class ServerCommandBridge {
-    private static PendingConnection pendingConnection;
     private ServerCommandBridge() {
     }
 
@@ -44,40 +44,6 @@ public final class ServerCommandBridge {
                             sendServerInfo();
                             return 1;
                         }))));
-    }
-
-    /**
-     * Advances a requested direct-server switch only after the active client
-     * session has been fully disconnected. This is deliberately tick-driven:
-     * calling ConnectScreen while an integrated or remote world is still being
-     * torn down leaves Minecraft on a black transition screen.
-     */
-    public static void tickClientConnection(MinecraftClient client) {
-        PendingConnection pending = pendingConnection;
-        if (client == null || pending == null) {
-            return;
-        }
-        if (pending.startedDisconnect()) {
-            // The handler object can outlive a disconnected world for several
-            // frames. Waiting on it deadlocks the switch on a black transition
-            // screen; a null world is Minecraft's reliable teardown boundary.
-            // Integrated worlds retain their server object briefly after the
-            // client world disappears. Connecting during that shutdown creates
-            // the multiplayer-screen freeze the old path exposed.
-            if (client.world != null || client.getServer() != null) {
-                if (pending.waitTicks() < 100) {
-                    pendingConnection = pending.withWaitTicks(pending.waitTicks() + 1);
-                }
-                return;
-            }
-            if (pending.waitTicks() < 2) {
-                pendingConnection = pending.withWaitTicks(pending.waitTicks() + 1);
-                return;
-            }
-        }
-        pendingConnection = null;
-        client.setScreen(new MultiplayerScreen(null));
-        ConnectScreen.connect(new MultiplayerScreen(null), client, pending.address(), pending.info(), false);
     }
 
     private static int connectToServer(String rawAddress) {
@@ -104,13 +70,9 @@ public final class ServerCommandBridge {
                 .append(Text.literal(address).formatted(Formatting.WHITE)));
         ServerInfo info = new ServerInfo(address, address, false);
         client.send(() -> {
-            boolean activeSession = client.world != null || client.getNetworkHandler() != null;
-            pendingConnection = new PendingConnection(parsed, info, activeSession, 0);
-            if (activeSession) {
-                // Use Minecraft's screen-aware disconnect path. The plain
-                // overload can leave an active-world transition black.
-                client.disconnect(new MultiplayerScreen(null));
-            }
+            Screen parent = new MultiplayerScreen(new TitleScreen());
+            ClientSessionTransitionCoordinator.run(client,
+                    activeClient -> ConnectScreen.connect(parent, activeClient, parsed, info, false));
         });
         return 1;
     }
@@ -120,7 +82,10 @@ public final class ServerCommandBridge {
         if (client == null) {
             return;
         }
-        client.send(() -> client.setScreen(new MultiplayerScreen(commandParent(client))));
+        client.send(() -> ClientSessionTransitionCoordinator.openScreen(
+                client,
+                () -> new MultiplayerScreen(new TitleScreen())
+        ));
     }
 
     private static void sendServerInfo() {
@@ -160,13 +125,6 @@ public final class ServerCommandBridge {
         for (Text line : lines) {
             sendLine(line);
         }
-    }
-
-    private static Screen commandParent(MinecraftClient client) {
-        if (client == null || client.currentScreen instanceof ChatScreen) {
-            return null;
-        }
-        return client.currentScreen;
     }
 
     private static String normalizeAddress(String rawAddress) {
@@ -273,9 +231,4 @@ public final class ServerCommandBridge {
         }
     }
 
-    private record PendingConnection(ServerAddress address, ServerInfo info, boolean startedDisconnect, int waitTicks) {
-        private PendingConnection withWaitTicks(int nextWaitTicks) {
-            return new PendingConnection(address, info, startedDisconnect, nextWaitTicks);
-        }
-    }
 }

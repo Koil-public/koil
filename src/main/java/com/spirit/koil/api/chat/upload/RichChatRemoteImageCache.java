@@ -1,6 +1,7 @@
 package com.spirit.koil.api.chat.upload;
 
 import com.spirit.koil.api.chat.RichChatAttachment;
+import com.spirit.koil.api.chat.RichChatAttachmentType;
 
 import java.io.File;
 import java.net.URI;
@@ -74,9 +75,7 @@ public final class RichChatRemoteImageCache {
             String path = uri.getPath() == null ? "" : uri.getPath().toLowerCase(Locale.ROOT);
             String query = uri.getQuery() == null ? "" : uri.getQuery().toLowerCase(Locale.ROOT);
             String combined = host + " " + path + " " + query;
-            String ext = extension(url, "");
-            return !ext.equals("png") || path.endsWith(".png") || query.contains("format=png")
-                    || path.matches(".*\\.(png|jpe?g|gif|webp|bmp|avif|apng)$")
+            return path.matches(".*\\.(png|jpe?g|gif|webp|bmp|avif|apng)$")
                     || query.matches(".*(?:^|[&?])(format|fm|ext)=?(png|jpe?g|gif|webp|bmp|avif|apng).*")
                     || combined.contains("cdn.")
                     || combined.contains("cdn/")
@@ -167,24 +166,29 @@ public final class RichChatRemoteImageCache {
             FAILED.remove(key);
             return cached;
         }
-        String extension = extension(attachment.metadata().getOrDefault("resolved_url", url), attachment.metadata().getOrDefault("resolved_content_type", ""));
+        boolean imagePayload = attachment.type() == RichChatAttachmentType.IMAGE || attachment.type() == RichChatAttachmentType.GIF;
+        String extension = imagePayload
+                ? extension(attachment.metadata().getOrDefault("resolved_url", url), attachment.metadata().getOrDefault("resolved_content_type", ""))
+                : attachmentExtension(attachment.fileName());
         Path target = CACHE_ROOT.resolve(key + "." + extension);
         if (Files.isRegularFile(target)) {
             return Optional.of(target.toFile());
         }
         long failedAt = FAILED.getOrDefault(key, 0L);
         if ((failedAt <= 0L || System.currentTimeMillis() - failedAt >= RETRY_FAILED_AFTER_MS) && DOWNLOADING.add(key)) {
-            download(url, target, key);
+            download(url, target, key, imagePayload);
         }
         return Optional.empty();
     }
 
-    private static void download(String url, Path target, String key) {
+    private static void download(String url, Path target, String key, boolean imagePayload) {
         try {
             Files.createDirectories(CACHE_ROOT);
             CompletableFuture.runAsync(() -> {
                 try {
-                    DownloadPayload payload = downloadPayload(url, 0, null);
+                    DownloadPayload payload = imagePayload
+                            ? downloadPayload(url, 0, null)
+                            : downloadFilePayload(url);
                     if (payload == null || payload.bytes() == null || payload.bytes().length == 0) {
                         FAILED.put(key, System.currentTimeMillis());
                         return;
@@ -201,6 +205,34 @@ public final class RichChatRemoteImageCache {
             DOWNLOADING.remove(key);
             FAILED.put(key, System.currentTimeMillis());
         }
+    }
+
+    private static DownloadPayload downloadFilePayload(String url) {
+        try {
+            DownloadResponse response = requestWithFallbacks(url, null);
+            if (response == null || response.statusCode() < 200 || response.statusCode() >= 300) {
+                return null;
+            }
+            byte[] body = response.body();
+            if (body == null || body.length == 0 || body.length > MAX_BYTES) {
+                return null;
+            }
+            return new DownloadPayload(body, response.finalUrl(), response.contentType());
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String attachmentExtension(String fileName) {
+        String name = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
+        int dot = name.lastIndexOf('.');
+        if (dot >= 0 && dot + 1 < name.length()) {
+            String candidate = name.substring(dot + 1);
+            if (candidate.matches("[a-z0-9]{1,12}")) {
+                return candidate;
+            }
+        }
+        return "bin";
     }
 
     private static Optional<File> existingCachedFile(String key) {

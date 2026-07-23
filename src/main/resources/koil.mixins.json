@@ -33,6 +33,7 @@
     "client.gui.revamp.MixinConfirmLinkScreen",
     "client.gui.revamp.MixinConfirmScreen",
     "client.gui.revamp.MixinConnectScreen",
+    "client.gui.revamp.MixinCreditsScreen",
     "client.gui.revamp.MixinDialogScreen",
     "client.gui.revamp.MixinDisconnectedScreen",
     "client.gui.revamp.MixinDownloadingTerrainScreen",

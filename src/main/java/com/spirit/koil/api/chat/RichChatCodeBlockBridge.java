@@ -17,7 +17,6 @@ public final class RichChatCodeBlockBridge {
     public static final char MARKER_END = '\uE361';
     /** Invisible one-chat-row reserve after a code card's taller final line. */
     public static final char SPACER_MARKER = '\uE362';
-    private static final int CODE_BLOCK_WIDTH_REDUCTION = 43;
     private static final int CODE_BLOCK_HORIZONTAL_PADDING = 4;
     private static final int CODE_BLOCK_MENU_WIDTH = 18;
     /** Keep chat cards compact; the menu opens untouched source in the editor. */
@@ -187,7 +186,7 @@ public final class RichChatCodeBlockBridge {
             int strip = Math.min(commonIndent, leadingWhitespace(line));
             normalized.add(line.substring(Math.min(strip, line.length())));
         }
-        List<String> allDisplayLines = wrappedDisplayLines(normalized, commonIndent);
+        List<String> allDisplayLines = wrappedDisplayLines(normalized, commonIndent, safeWidthPrefix(firstPrefix, continuationPrefix));
         boolean truncated = allDisplayLines.size() > MAX_VISIBLE_DISPLAY_LINES;
         List<String> displayLines = truncated
                 ? List.copyOf(allDisplayLines.subList(0, MAX_VISIBLE_DISPLAY_LINES))
@@ -221,13 +220,14 @@ public final class RichChatCodeBlockBridge {
         output.add((markerPrefix == null ? "" : markerPrefix) + safeContinuationPrefix + SPACER_MARKER);
     }
 
-    private static List<String> wrappedDisplayLines(List<String> lines, int commonIndent) {
+    private static List<String> wrappedDisplayLines(List<String> lines, int commonIndent, String widestPrefix) {
         TextRenderer renderer = MinecraftClient.getInstance() == null ? null : MinecraftClient.getInstance().textRenderer;
         if (renderer == null) {
             return lines == null || lines.isEmpty() ? List.of("") : List.copyOf(lines);
         }
-        int chatWidth = Math.max(1, RichChatLatexTextureCache.currentChatContentWidth() + 54);
-        int width = Math.min(273, Math.max(120, chatWidth - renderer.getWidth(repeat(' ', Math.max(0, commonIndent))) - 14 - CODE_BLOCK_WIDTH_REDUCTION));
+        int prefixWidth = renderer.getWidth(widestPrefix == null ? "" : widestPrefix);
+        int indentWidth = renderer.getWidth(repeat(' ', Math.max(0, commonIndent)));
+        int width = Math.min(273, Math.max(24, RichChatLatexTextureCache.currentChatContentWidth() - prefixWidth - indentWidth - 3));
         int contentWidth = Math.max(24, width - CODE_BLOCK_HORIZONTAL_PADDING - CODE_BLOCK_MENU_WIDTH);
         List<String> out = new ArrayList<>();
         if (lines == null || lines.isEmpty()) {
@@ -250,6 +250,16 @@ public final class RichChatCodeBlockBridge {
             }
         }
         return out.isEmpty() ? List.of("") : List.copyOf(out);
+    }
+
+    private static String safeWidthPrefix(String firstPrefix, String continuationPrefix) {
+        TextRenderer renderer = MinecraftClient.getInstance() == null ? null : MinecraftClient.getInstance().textRenderer;
+        String first = firstPrefix == null ? "" : firstPrefix;
+        String continuation = continuationPrefix == null ? "" : continuationPrefix;
+        if (renderer == null) {
+            return first.length() >= continuation.length() ? first : continuation;
+        }
+        return renderer.getWidth(first) >= renderer.getWidth(continuation) ? first : continuation;
     }
 
     private static PrefixParts stripVisiblePrefix(String line, String fallbackContinuationPrefix) {

@@ -1,29 +1,4 @@
-<div align="center">
-<img src="https://img.shields.io/badge/A%20Connection%20of%20Koil-222222"/>  <img src="https://img.shields.io/badge/Alpha%200.70.16-888888"/>  <img src="https://img.shields.io/github/license/SpiritXIV/the-shit-of-crypt"/>  <img src="https://wakatime.com/badge/github/SpiritXIV/minceraft.svg" alt="spirits wakatime">
-  <hr>
-</div>
-<img align="center" src="https://github.com/SpiritXIV/the-shit-of-crypt/blob/main/src/main/resources/assets/minecraft/textures/gui/title/minecraft.png?raw=true" alt="minecraft.png"/>
-<p>
-  Branches: (5)<br>
-  | TDBTD - 0.70.16 - ALPHA Release<br>
-  | ShitPost - 0.0.0 - indev<br>
-  | My Beloved - 0.0.0 - coming soon<br>
-  | Ignite - 0.0.0 - coming soon<br>
-  | Gamblic - 0.0.0 - coming soon<br>
-</p>
-<p>
-  Modteam:<br>
-  | SpiritXIV<br>
-  | Ethan_4D<br>
-  | Kip Kebab<br>
-  | alphaxenopete82<br>
-  | Computer User<br>
-  | KrimsonKolbolt<br>
-  | UNLUCKY<br>
-  | Absolutelyaya<br>
-  | KingZhara<br>
-  | McFella<br>
-  | Milkyfur<br>
-</p>
-<br>
-# koil
+was crackin gang, im holding koils code rn, the scary cool system that allows you to do infinitly more inside the game.
+
+made for developers and content creators
+note: content in this case is not a streamer or a youtuber, this is for people who make datapacks, resourcepacks, and ect.

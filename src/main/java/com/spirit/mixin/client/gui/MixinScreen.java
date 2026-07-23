@@ -62,8 +62,6 @@ import static com.spirit.koil.api.util.file.image.ExternalImageLoader.loadExtern
 @Environment(EnvType.CLIENT)
 @Mixin(Screen.class)
 public abstract class MixinScreen extends AbstractParentElement implements Drawable, ScreenChromeHost {
-    @Unique private static final int KOIL_LANGUAGE_HEADER_BOTTOM = 56;
-    @Unique private static final int KOIL_LANGUAGE_FOOTER_RAISE_TOTAL = 64;
     @Unique private static final int KOIL_TOP_BAR_BUTTON_SIZE = 14;
     @Unique private static final int KOIL_TOP_BAR_BUTTON_GAP = 4;
     @Unique private static final int KOIL_TOP_BAR_RIGHT_MARGIN = 10;
@@ -347,18 +345,6 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
         if (client == null || client.currentScreen == null) {
             return;
         }
-        if (client.currentScreen instanceof CreditsScreen && koil$isUiRedesignEnabled()) {
-            int screenWidth = koil$screenWidth();
-            int screenHeight = koil$screenHeight();
-            koil$setOptionsBackgroundBlank(true);
-            KoilScreenBackgrounds.render(context, client, screenWidth, screenHeight);
-            if (KoilScreenBackgrounds.canRender(client)) {
-                context.fill(0, 0, screenWidth, screenHeight, KoilScreenBackgrounds.overlayColor(client));
-            }
-            KoilVanillaScreenChrome.renderCreditsTextPanel(context, screenWidth, screenHeight);
-            ci.cancel();
-            return;
-        }
         if (client.currentScreen instanceof GameMenuScreen && koil$isUiRedesignEnabled()) {
             int screenWidth = koil$screenWidth();
             int screenHeight = koil$screenHeight();
@@ -376,7 +362,9 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
             return;
         }
         if (client.currentScreen instanceof LanguageOptionsScreen && koil$isUiRedesignEnabled()) {
-            koil$renderLanguageScreenBackground(context);
+            // LanguageOptionsScreen owns its complete shell. Child list widgets
+            // still request a background, so cancel those requests without
+            // drawing a second translucent header/footer over the first one.
             ci.cancel();
             return;
         }
@@ -465,23 +453,12 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
             return;
         }
         if (client.currentScreen instanceof LanguageOptionsScreen && koil$isUiRedesignEnabled()) {
-            koil$renderLanguageScreenBackground(context);
+            // See renderBackgroundTexture: the language-screen render overwrite
+            // is the sole owner of this shell.
             ci.cancel();
             return;
         }
         if (client.world != null && koil$isUiRedesignEnabled() && koil$shouldSuppressInWorldVanillaBackground(client.currentScreen)) {
-            ci.cancel();
-            return;
-        }
-        if (client.currentScreen instanceof CreditsScreen && koil$isUiRedesignEnabled()) {
-            int screenWidth = koil$screenWidth();
-            int screenHeight = koil$screenHeight();
-            koil$setOptionsBackgroundBlank(true);
-            KoilScreenBackgrounds.render(context, client, screenWidth, screenHeight);
-            if (KoilScreenBackgrounds.canRender(client)) {
-                context.fill(0, 0, screenWidth, screenHeight, KoilScreenBackgrounds.overlayColor(client));
-            }
-            KoilVanillaScreenChrome.renderCreditsTextPanel(context, screenWidth, screenHeight);
             ci.cancel();
             return;
         }
@@ -509,21 +486,6 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
         koil$setOptionsBackgroundBlank(true);
         KoilVanillaScreenChrome.renderOptionsShell(context, client, screenWidth, screenHeight);
         ci.cancel();
-    }
-
-    @Unique
-    private void koil$renderLanguageScreenBackground(DrawContext context) {
-        int screenWidth = koil$screenWidth();
-        int screenHeight = koil$screenHeight();
-        koil$setOptionsBackgroundBlank(true);
-        KoilVanillaScreenChrome.renderListShell(
-                context,
-                client,
-                screenWidth,
-                screenHeight,
-                Math.min(screenHeight, KOIL_LANGUAGE_HEADER_BOTTOM),
-                Math.max(KOIL_LANGUAGE_HEADER_BOTTOM, screenHeight - KOIL_LANGUAGE_FOOTER_RAISE_TOTAL)
-        );
     }
 
     @Override

@@ -9,6 +9,7 @@ import com.spirit.koil.api.console.ConsoleRequestBridge;
 import com.spirit.koil.api.f3.F3CommandBridge;
 import com.spirit.koil.api.f3.F3SnapshotService;
 import com.spirit.koil.api.multiplayer.ServerCommandBridge;
+import com.spirit.koil.api.navigation.ClientSessionTransitionCoordinator;
 import com.spirit.koil.api.performance.PerformanceCommandBridge;
 import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
@@ -44,7 +45,7 @@ public class Client implements ClientModInitializer {
             PerformanceMonitor.tick(client);
             PerformanceOptimizationTestService.tick(client);
             F3SnapshotService.tick(client);
-            ServerCommandBridge.tickClientConnection(client);
+            ClientSessionTransitionCoordinator.tick(client);
             boolean focused = client.isWindowFocused();
             if (lastWindowFocused != null && focused && !lastWindowFocused) {
                 UiSoundHelper.playButtonClick();

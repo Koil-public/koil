@@ -102,8 +102,8 @@ public final class RichChatLatexTextureCache {
             if (client != null && client.inGameHud != null && client.inGameHud.getChatHud() != null) {
                 double scale = Math.max(0.1D, client.inGameHud.getChatHud().getChatScale());
                 int width = (int) Math.ceil(client.inGameHud.getChatHud().getWidth() / scale) - CHAT_SAFE_PADDING;
-                if (width > 48) {
-                    return width;
+                if (width > 0) {
+                    return Math.max(24, width);
                 }
             }
         } catch (Throwable ignored) {

@@ -1116,6 +1116,7 @@ public final class RichChatAttachmentRenderer {
 
         int controlY = drawY + 20;
         int playY = controlY - 1;
+        int stopY = controlY - 1;
         int playX = textX;
         int stopX = playX + 18;
         int barX = stopX + 20;
@@ -1124,7 +1125,7 @@ public final class RichChatAttachmentRenderer {
         int barHeight = TIMELINE_HEIGHT;
         int filled = Math.max(0, Math.min(barWidth, Math.round(barWidth * progress)));
         drawIconButton(context, playX, playY, playing ? FileExplorerScreen.PAUSE_BUTTON : FileExplorerScreen.PLAY_BUTTON, chatAlpha);
-        drawIconButton(context, stopX, controlY, FileExplorerScreen.STOP_BUTTON, chatAlpha);
+        drawIconButton(context, stopX, stopY, FileExplorerScreen.STOP_BUTTON, chatAlpha);
         context.fill(barX, barY, barX + filled, barY + barHeight, fillColor);
         context.drawBorder(barX, barY, barWidth, barHeight, borderColor);
         if (filled > 0) {
@@ -1138,7 +1139,7 @@ public final class RichChatAttachmentRenderer {
 
         if (interactive) {
             putInlineButton(context, new ButtonKey(marker.occurrenceId(), ButtonAction.PLAY_PAUSE), attachment, playX, playY, 16, 16);
-            putInlineButton(context, new ButtonKey(marker.occurrenceId(), ButtonAction.STOP), attachment, stopX, controlY, 16, 16);
+            putInlineButton(context, new ButtonKey(marker.occurrenceId(), ButtonAction.STOP), attachment, stopX, stopY, 16, 16);
             putInlineButton(context, new ButtonKey(marker.occurrenceId(), ButtonAction.SEEK), attachment, barX, barY, barWidth, barHeight);
         }
         putInlineButton(context, new ButtonKey(marker.occurrenceId(), ButtonAction.MENU), attachment, menuX - 1, audioMenuY, MENU_BUTTON_SIZE, MENU_BUTTON_SIZE);
@@ -1282,10 +1283,9 @@ public final class RichChatAttachmentRenderer {
         if (context == null || renderer == null || marker == null || block == null || marker.row() < 0 || marker.row() >= block.displayLines().size()) {
             return lineX;
         }
-        int chatWidth = Math.max(1, RichChatLatexTextureCache.currentChatContentWidth() + 54);
         int drawX = lineX + 1 + renderer.getWidth(block.chatIndent());
-        int width = Math.min(273, Math.max(120, chatWidth - Math.max(0, drawX - lineX) - 14 - 43));
-        int rowHeight = renderer.fontHeight + 3;
+        int width = Math.min(273, Math.max(24, RichChatLatexTextureCache.currentChatContentWidth() - Math.max(0, drawX) - 2));
+        int rowHeight = Math.max(renderer.fontHeight, RichChatLatexTextureCache.currentChatLineHeight());
         int drawY = y + 2;
         int viewportTop = RichChatRenderContext.currentChatViewportTop();
         int viewportBottom = RichChatRenderContext.currentChatViewportBottom();
@@ -1293,8 +1293,9 @@ public final class RichChatAttachmentRenderer {
         // The first code row carries a 14px menu while a text row is shorter.
         // Include its full paint/hit area so the scissor cannot cut its edge.
         int cardHeight = marker.row() == 0 ? Math.max(rowHeight, MENU_BUTTON_SIZE + 2) : rowHeight;
-        int clippedBottom = Math.min(drawY + cardHeight, viewportBottom + EXTRA_RENDER_BOTTOM);
-        if (clippedBottom <= clippedTop || width <= 0) {
+        int scissorBottom = Math.min(drawY + cardHeight, viewportBottom + EXTRA_RENDER_BOTTOM);
+        int paintBottom = Math.min(drawY + rowHeight, viewportBottom + EXTRA_RENDER_BOTTOM);
+        if (paintBottom <= clippedTop || width <= 0) {
             return lineX;
         }
 
@@ -1304,16 +1305,16 @@ public final class RichChatAttachmentRenderer {
         int borderBase = 0xB81E242D;
         int fill = withMultipliedAlpha(style == RichChatPrivateMessageBridge.VisualStyle.DIM ? RichChatPrivateMessageBridge.dimColor(fillBase) : fillBase, chatAlpha);
         int border = withMultipliedAlpha(style == RichChatPrivateMessageBridge.VisualStyle.DIM ? RichChatPrivateMessageBridge.dimColor(borderBase) : borderBase, chatAlpha);
-        enableTransformedScissor(context, drawX, clippedTop, drawX + width + 1, clippedBottom);
-        context.fill(drawX, clippedTop, drawX + width, clippedBottom, fill);
+        enableTransformedScissor(context, drawX, clippedTop, drawX + width + 1, scissorBottom);
+        context.fill(drawX, clippedTop, drawX + width, paintBottom, fill);
         if (marker.row() == 0) {
             context.fill(drawX, drawY, drawX + width, drawY + 1, border);
         }
         if (marker.row() == block.displayLines().size() - 1) {
             context.fill(drawX, drawY + rowHeight - 1, drawX + width, drawY + rowHeight, border);
         }
-        context.fill(drawX, clippedTop, drawX + 1, clippedBottom, border);
-        context.fill(drawX + width - 1, clippedTop, drawX + width, clippedBottom, border);
+        context.fill(drawX, clippedTop, drawX + 1, paintBottom, border);
+        context.fill(drawX + width - 1, clippedTop, drawX + width, paintBottom, border);
 
         int menuX = drawX + width - MENU_BUTTON_SIZE - 4;
         int contentX = drawX + CODE_BLOCK_PADDING;
@@ -1323,7 +1324,7 @@ public final class RichChatAttachmentRenderer {
             drawMoreButton(context, renderer, menuX, drawY + 1, actionMenuCodeBlockId != null && actionMenuCodeBlockId.equals(block.id()), chatAlpha);
         }
         if (style == RichChatPrivateMessageBridge.VisualStyle.DIM) {
-            context.fill(drawX, clippedTop, drawX + width, clippedBottom, withMultipliedAlpha(RichChatPrivateMessageBridge.dimOverlayColor(), chatAlpha));
+            context.fill(drawX, clippedTop, drawX + width, paintBottom, withMultipliedAlpha(RichChatPrivateMessageBridge.dimOverlayColor(), chatAlpha));
         }
         context.disableScissor();
         if (marker.row() == 0) {

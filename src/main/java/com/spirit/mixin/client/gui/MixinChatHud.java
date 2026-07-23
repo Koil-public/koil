@@ -21,7 +21,7 @@ import com.spirit.koil.api.chat.latex.RichChatLatexTextureCache;
 import com.spirit.koil.api.chat.upload.LocalRichAttachmentBridge;
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.api.chat.upload.RichChatUploadDraft;
-import com.spirit.koil.api.chat.upload.RichChatWebImageBridge;
+import com.spirit.koil.api.chat.upload.RichChatWebAttachmentBridge;
 import com.spirit.koil.api.chat.sync.RichChatSyncedMessageBridge;
 import com.spirit.koil.api.chat.RichChatSettings;
 import net.minecraft.client.MinecraftClient;
@@ -195,7 +195,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         }
         rewritten = synced.message();
         if (RichChatSettings.mediaEnabled()) {
-            rewritten = RichChatWebImageBridge.rewrite(rewritten);
+            rewritten = RichChatWebAttachmentBridge.rewrite(rewritten);
         }
         if (RichChatSettings.latexEnabled()) {
             rewritten = RichChatLatexFormatter.format(rewritten);

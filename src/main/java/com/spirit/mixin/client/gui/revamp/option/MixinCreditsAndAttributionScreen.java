@@ -6,21 +6,36 @@ import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.Element;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.option.CreditsAndAttributionScreen;
+import net.minecraft.client.gui.widget.TextWidget;
 import net.minecraft.text.Text;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.awt.*;
-
-import static com.spirit.koil.api.design.uiColorVal.*;
+import java.util.List;
 
 @Environment(EnvType.CLIENT)
 @Mixin(CreditsAndAttributionScreen.class)
 public class MixinCreditsAndAttributionScreen extends Screen {
     protected MixinCreditsAndAttributionScreen(Text title) {
         super(title);
+    }
+
+    @Inject(method = "init", at = @At("RETURN"))
+    private void koil$removeVanillaCreditsTitle(CallbackInfo ci) {
+        if (!JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
+            return;
+        }
+        for (Element child : List.copyOf(this.children())) {
+            if (child instanceof TextWidget widget && widget.getMessage().equals(this.title)) {
+                this.remove(widget);
+            }
+        }
     }
 
     /**
@@ -34,11 +49,7 @@ public class MixinCreditsAndAttributionScreen extends Screen {
             MinecraftClient client = MinecraftClient.getInstance();
             KoilVanillaScreenChrome.renderOptionsShell(context, client, this.width, this.height);
 
-            context.getMatrices().push();
-            context.getMatrices().scale(1.5F, 1.5F, 1.0F);
-            context.drawText(this.textRenderer, Text.literal("Options"), 25, 3, new Color(uiColorHeaderTitleText, true).getRGB(), true);
-            context.getMatrices().pop();
-            context.drawText(this.textRenderer, this.title, 37, 18, new Color(uiColorHeaderSubTitleText, true).getRGB(), true);
+            KoilVanillaScreenChrome.renderTitle(context, this.textRenderer, Text.literal("Options"), this.title);
             super.render(context, mouseX, mouseY, delta);
         } else {
             this.renderBackground(context);

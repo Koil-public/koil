@@ -1,11 +1,11 @@
 package com.spirit.koil.api.world;
 
+import com.spirit.koil.api.navigation.ClientSessionTransitionCoordinator;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.ChatScreen;
-import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.TitleScreen;
 import net.minecraft.client.gui.screen.world.SelectWorldScreen;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.text.MutableText;
@@ -45,7 +45,10 @@ public final class WorldCommandBridge {
         if (client == null) {
             return;
         }
-        client.send(() -> client.setScreen(new SelectWorldScreen(commandParent(client))));
+        client.send(() -> ClientSessionTransitionCoordinator.openScreen(
+                client,
+                () -> new SelectWorldScreen(new TitleScreen())
+        ));
     }
 
     private static void sendWorldInfo() {
@@ -86,13 +89,6 @@ public final class WorldCommandBridge {
         for (Text line : lines) {
             sendLine(line);
         }
-    }
-
-    private static Screen commandParent(MinecraftClient client) {
-        if (client == null || client.currentScreen instanceof ChatScreen) {
-            return null;
-        }
-        return client.currentScreen;
     }
 
     private static MutableText header(String text) {

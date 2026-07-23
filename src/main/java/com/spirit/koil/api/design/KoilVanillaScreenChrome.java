@@ -81,6 +81,12 @@ public final class KoilVanillaScreenChrome {
         context.fill(right - 8, 18, right - 7, height - 18, dash);
     }
 
+    public static void renderCreditsShell(DrawContext context, MinecraftClient client, int width, int height) {
+        KoilScreenBackgrounds.renderForced(context, client, width, height);
+        context.fill(0, 0, width, height, KoilScreenBackgrounds.overlayColor(client));
+        renderCreditsTextPanel(context, width, height);
+    }
+
     public static void renderTitle(DrawContext context, TextRenderer textRenderer, Text mainTitle, Text subTitle) {
         context.getMatrices().push();
         context.getMatrices().scale(1.5F, 1.5F, 1.0F);
