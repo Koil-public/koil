@@ -7,6 +7,9 @@ import com.spirit.koil.api.automation.AutomationRemoteRunServerBridge;
 import com.spirit.koil.api.automation.KoilCommandPauseBridge;
 import com.spirit.koil.api.chat.AttentionCommandBridge;
 import com.spirit.koil.api.console.ConsoleChannel;
+import com.spirit.koil.api.registry.ContentCommandBridge;
+import com.spirit.koil.api.registry.DynamicContentHolderRegistry;
+import com.spirit.koil.api.registry.DynamicRegistryManager;
 import com.spirit.koil.api.screen.KoilRemoteScreenServerBridge;
 import com.spirit.koil.api.stats.global.KoilGlobalActivityServer;
 import com.spirit.koil.api.util.application.WindowManager;
@@ -14,11 +17,10 @@ import com.spirit.koil.api.util.console.log.SubFileLogger;
 import com.spirit.koil.api.util.file.FileSanitizer;
 import com.spirit.koil.api.util.file.KoilPackageManager;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
-import com.spirit.koil.api.util.file.json.JsonBlockMaker;
-import com.spirit.koil.api.util.file.json.JsonItemMaker;
 import com.spirit.koil.api.util.web.WebFileDownloader;
 import com.spirit.koil.api.chat.sync.RichChatSyncServerBridge;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
@@ -47,6 +49,8 @@ public class Main implements ModInitializer {
   "firstLaunch": true,
   "debug": true,
   "openKoilLogOnStartUp": false,
+  "enableStartupDestination": false,
+  "startupDestination": "",
   "isBetaTesting": true,
   "betaBranch": "beta",
   "uiRedesign": true,
@@ -77,9 +81,6 @@ public class Main implements ModInitializer {
         SUBLOGGER.logI("Start-up thread", "Starting...");
         ensureDefaultConfigFile();
         preciseStat = getConfigBoolean("preciseStat", false);
-        if (getConfigBoolean("openKoilLogOnStartUp", false)) {
-            WindowManager.openConsoleWindow(ConsoleChannel.KOIL);
-        }
         initializeWebFilesAndDesign();
 
         KoilGlobalActivityServer.register();
@@ -370,10 +371,14 @@ public class Main implements ModInitializer {
         FileSanitizer.sanitizeDirectory(romsgbDirectory);
         File romsgbcDirectory = new File("./koil/emu/roms/gbc");
         FileSanitizer.sanitizeDirectory(romsgbcDirectory);
-        JsonItemMaker.makeTheJsonItem();
-        JsonItemMaker.registerItemsFromJson();
-        JsonBlockMaker.makeTheJsonBlocks();
-        JsonBlockMaker.registerBlocksFromJson();
+        DynamicRegistryManager.initialize();
+        DynamicContentHolderRegistry.initialize(DynamicRegistryManager.instance().worldIndex());
+        ContentCommandBridge.register();
+        if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT
+                && !Boolean.getBoolean(com.spirit.koil.api.util.application.ExternalWindowConsole.PROCESS_MARKER_PROPERTY)
+                && getConfigBoolean("openKoilLogOnStartUp", false)) {
+            WindowManager.openConsoleWindow(ConsoleChannel.KOIL);
+        }
     }
 
     public static String version() {

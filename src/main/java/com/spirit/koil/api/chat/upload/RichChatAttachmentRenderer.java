@@ -872,6 +872,13 @@ public final class RichChatAttachmentRenderer {
             context.drawTextWithShadow(renderer, fallback, x, y, color);
             return renderer.getWidth(fallback);
         }
+        if (isRemoteAttachment(attachment)) {
+            // Start resolution regardless of the URL-inferred placeholder
+            // type, then promote MIME/signature/HTML-resolved media on the
+            // next render frame once its bounded cache payload is ready.
+            RichChatRemoteImageCache.localPath(attachment);
+            attachment = RichChatRemoteImageCache.resolvedAttachment(attachment);
+        }
         if (!attachmentTypeEnabled(attachment.type())) {
             if (marker.row() > 0) {
                 return 0;
@@ -2332,11 +2339,15 @@ public final class RichChatAttachmentRenderer {
 
     private static int visualReservedRows(RichChatAttachment attachment, boolean video, int leadingWidth) {
         int lineHeight = Math.max(1, RichChatLatexTextureCache.currentChatLineHeight());
+        int filteredReserve = RichChatPrivateMessageBridge.filterEnabled() ? FILTERED_VISUAL_RESERVE_ROWS : 0;
         int fallbackRows = video
                 ? Math.max(14, (VIDEO_MAX_THUMB_HEIGHT + VIDEO_FOOTER_HEIGHT + lineHeight - 1) / lineHeight)
-                : 15;
+                : Math.max(2, (MAX_THUMB_HEIGHT + EXTRA_RENDER_BOTTOM + 2 + lineHeight - 1) / lineHeight);
         if (attachment == null || attachment.width() <= 0 || attachment.height() <= 0) {
-            return fallbackRows;
+            // Remote media is inserted before its asynchronous payload probe.
+            // Reserve the renderer's real maximum height on that first
+            // occurrence so it can never overlap a later chat message.
+            return fallbackRows + filteredReserve;
         }
         int chatWidth = inlineMediaWidth(Math.max(0, leadingWidth) + MEDIA_START_NUDGE);
         PreviewSize size = video
@@ -2351,7 +2362,6 @@ public final class RichChatAttachmentRenderer {
         int reservedHeight = Math.max(1, size.height() + EXTRA_RENDER_BOTTOM + bottomSlack);
         int rows = Math.max(2, (reservedHeight + lineHeight - 1) / lineHeight);
         int maxRows = video ? 80 : 20;
-        int filteredReserve = RichChatPrivateMessageBridge.filterEnabled() ? FILTERED_VISUAL_RESERVE_ROWS : 0;
         return Math.min(maxRows, rows) + filteredReserve;
     }
 

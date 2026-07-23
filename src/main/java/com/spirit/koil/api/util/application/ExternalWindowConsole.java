@@ -6,6 +6,8 @@ import com.spirit.koil.api.console.ConsoleRequestBridge;
 import javax.swing.*;
 
 public final class ExternalWindowConsole {
+    public static final String PROCESS_MARKER_PROPERTY = "koil.externalConsoleProcess";
+
     private ExternalWindowConsole() {
     }
 

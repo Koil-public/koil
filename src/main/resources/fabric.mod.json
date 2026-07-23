@@ -35,6 +35,12 @@
     "client": [
       "com.spirit.Client"
     ],
+    "emi": [
+      "com.spirit.koil.api.registry.integration.ContentEmiVisibilityPlugin"
+    ],
+    "rei_client": [
+      "com.spirit.koil.api.registry.integration.ContentReiVisibilityPlugin"
+    ],
     "preLaunch": [
     ]
   },

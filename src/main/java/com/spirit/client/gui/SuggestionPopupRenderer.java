@@ -40,7 +40,7 @@ public final class SuggestionPopupRenderer {
             int rowY = y + 4 + (i * ROW_HEIGHT);
             boolean hovered = mouseX >= x + 1 && mouseX <= x + width - 1 && mouseY >= rowY && mouseY <= rowY + ROW_HEIGHT - 1;
             if (i == selectedIndex) {
-                context.fill(x + 1, rowY, x + width - 1, rowY + ROW_HEIGHT - 1, withAlpha(uiColorHeader, 144));
+                context.fill(x + 1, rowY, x + width - 1, rowY + ROW_HEIGHT - 1, selectedRowColor());
             } else if (hovered) {
                 context.fill(x + 1, rowY, x + width - 1, rowY + ROW_HEIGHT - 1, withAlpha(uiColorHeader, 96));
             }
@@ -122,6 +122,15 @@ public final class SuggestionPopupRenderer {
         Color color = new Color(argbColor, true);
         int clampedAlpha = Math.max(0, Math.min(255, alpha));
         return new Color(color.getRed(), color.getGreen(), color.getBlue(), clampedAlpha).getRGB();
+    }
+
+    private static int selectedRowColor() {
+        Color background = new Color(uiColorContentBase, true);
+        Color accent = new Color(uiColorHeader, true);
+        int red = Math.max(Math.min(255, background.getRed() + 34), accent.getRed());
+        int green = Math.max(Math.min(255, background.getGreen() + 34), accent.getGreen());
+        int blue = Math.max(Math.min(255, background.getBlue() + 34), accent.getBlue());
+        return new Color(red, green, blue, 224).getRGB();
     }
 
     public record Entry(String kind, int kindColor, String value, String detail) {

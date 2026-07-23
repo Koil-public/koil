@@ -122,6 +122,11 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     // Keep the last prefix list visible in that case so a completed word still
     // has useful choices (and keyboard navigation) instead of a flicker.
     @Unique private boolean koil$customSuggestionsAreSticky;
+    // A Tab completion must retain its sibling list until the player edits the
+    // completed token. Otherwise Brigadier replaces `/da`'s root suggestions
+    // with `/damage`'s argument suggestions before the next Tab can cycle.
+    @Unique private boolean koil$customSuggestionTabCycleActive;
+    @Unique private String koil$customSuggestionTabCycleValue = "";
     @Unique private Rect2i koil$customSuggestionArea;
     @Unique private int koil$customSuggestionSelection;
     @Unique private int koil$customSuggestionScroll;
@@ -2194,6 +2199,16 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             koil$clearCustomSuggestions();
             return;
         }
+        if (koil$customSuggestionTabCycleActive) {
+            String activeToken = koil$activeSuggestionToken(context);
+            if (activeToken.equalsIgnoreCase(koil$customSuggestionTabCycleValue)) {
+                koil$customSuggestionContext = context;
+                koil$customSuggestionsAreSticky = true;
+                return;
+            }
+            koil$customSuggestionTabCycleActive = false;
+            koil$customSuggestionTabCycleValue = "";
+        }
         String requestKey = context.requestKey();
         if (!requestKey.equals(koil$customSuggestionRequestKey)) {
             koil$customSuggestionRequestKey = requestKey;
@@ -2306,13 +2321,21 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (suggestion == null) {
             return false;
         }
-        String command = koil$customSuggestionContext.commandText();
-        int cursor = Math.max(0, Math.min(koil$customSuggestionContext.commandCursor(), command.length()));
+        return koil$activeSuggestionToken(koil$customSuggestionContext).equalsIgnoreCase(suggestion.getText());
+    }
+
+    @Unique
+    private String koil$activeSuggestionToken(KoilDraftSuggestionContext context) {
+        if (context == null) {
+            return "";
+        }
+        String command = context.commandText();
+        int cursor = Math.max(0, Math.min(context.commandCursor(), command.length()));
         int wordStart = cursor;
         while (wordStart > 0 && !Character.isWhitespace(command.charAt(wordStart - 1))) {
             wordStart--;
         }
-        return command.substring(wordStart, cursor).equalsIgnoreCase(suggestion.getText());
+        return command.substring(wordStart, cursor);
     }
 
     @Unique
@@ -2335,13 +2358,11 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (direction == 0 || koil$customSuggestionEntries.isEmpty()) {
             return false;
         }
-        koil$customSuggestionSelection = Math.max(0, Math.min(koil$customSuggestionEntries.size() - 1, koil$customSuggestionSelection + direction));
-        int visibleRows = Math.min(SuggestionPopupRenderer.MAX_VISIBLE_ROWS, koil$customSuggestionEntries.size());
-        if (koil$customSuggestionSelection < koil$customSuggestionScroll) {
-            koil$customSuggestionScroll = koil$customSuggestionSelection;
-        } else if (koil$customSuggestionSelection >= koil$customSuggestionScroll + visibleRows) {
-            koil$customSuggestionScroll = koil$customSuggestionSelection - visibleRows + 1;
-        }
+        koil$customSuggestionSelection = Math.floorMod(
+                koil$customSuggestionSelection + direction,
+                koil$customSuggestionEntries.size()
+        );
+        koil$keepCustomSuggestionSelectionVisible();
         return true;
     }
 
@@ -2432,7 +2453,9 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         koil$multilineSelectionAnchor = cursor;
         koil$customSuggestionRequestKey = "";
         koil$customSuggestionArea = null;
-        koil$customSuggestionsAreSticky = false;
+        koil$customSuggestionsAreSticky = koil$customSuggestions.size() > 1;
+        koil$customSuggestionTabCycleActive = koil$customSuggestionsAreSticky;
+        koil$customSuggestionTabCycleValue = koil$customSuggestionTabCycleActive ? suggestion.getText() : "";
         return true;
     }
 
@@ -2495,6 +2518,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         koil$customSuggestions = List.of();
         koil$customSuggestionEntries = List.of();
         koil$customSuggestionsAreSticky = false;
+        koil$customSuggestionTabCycleActive = false;
+        koil$customSuggestionTabCycleValue = "";
         koil$customSuggestionArea = null;
         koil$customSuggestionSelection = 0;
         koil$customSuggestionScroll = 0;

@@ -1154,7 +1154,15 @@ public final class ExternalConsoleWindow extends JFrame implements ConsoleReposi
             refreshSuggestionPanel();
             return;
         }
-        this.inputSuggestions.addAll(ConsoleInputSuggestionService.suggestions(this.inputField.getText(), this.channel, this.channel == ConsoleChannel.CLI));
+        try {
+            this.inputSuggestions.addAll(ConsoleInputSuggestionService.suggestions(this.inputField.getText(), this.channel, this.channel == ConsoleChannel.CLI));
+        } catch (LinkageError error) {
+            // A mismatched external-console classpath should disable ghost
+            // suggestions, not close the standalone console window.
+            this.selectedInputSuggestionIndex = 0;
+            refreshSuggestionPanel();
+            return;
+        }
         this.selectedInputSuggestionIndex = Math.max(0, Math.min(this.selectedInputSuggestionIndex, this.inputSuggestions.size() - 1));
         refreshSuggestionPanel();
     }

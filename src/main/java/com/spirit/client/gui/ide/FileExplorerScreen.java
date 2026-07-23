@@ -84,17 +84,6 @@ public class FileExplorerScreen extends Screen {
         }
     }
 
-    private static final class ZipTreeNode {
-        private final String name;
-        private final boolean directory;
-        private final Map<String, ZipTreeNode> children = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-
-        private ZipTreeNode(String name, boolean directory) {
-            this.name = name;
-            this.directory = directory;
-        }
-    }
-
     private static final class FolderPreviewClickTarget {
         private final File file;
         private final int x;
@@ -2617,7 +2606,8 @@ public class FileExplorerScreen extends Screen {
     }
 
     private List<FolderPreviewEntry> buildZipPreviewEntries(File archive) {
-        ZipTreeNode root = new ZipTreeNode("", true);
+        Set<String> directories = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        Set<String> files = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         int count = 0;
         try (ZipFile zipFile = new ZipFile(archive)) {
             Enumeration<? extends ZipEntry> entries = zipFile.entries();
@@ -2627,7 +2617,7 @@ public class FileExplorerScreen extends Screen {
                 if (normalizedName.isBlank()) {
                     continue;
                 }
-                addZipEntryNode(root, normalizedName, entry.isDirectory());
+                addZipEntryPaths(directories, files, normalizedName, entry.isDirectory());
                 count++;
             }
         } catch (IOException ignored) {
@@ -2635,39 +2625,76 @@ public class FileExplorerScreen extends Screen {
         }
 
         List<FolderPreviewEntry> previewEntries = new ArrayList<>();
-        appendZipPreviewEntries(root, 0, new ArrayList<>(), previewEntries);
+        appendZipPreviewEntries("", 0, new ArrayList<>(), directories, files, previewEntries);
         return previewEntries;
     }
 
-    private void addZipEntryNode(ZipTreeNode root, String entryName, boolean directory) {
+    private void addZipEntryPaths(Set<String> directories, Set<String> files, String entryName, boolean directory) {
         String[] parts = entryName.split("/");
-        ZipTreeNode current = root;
+        StringBuilder path = new StringBuilder();
         for (int i = 0; i < parts.length; i++) {
             String part = parts[i];
             if (part.isBlank()) {
                 continue;
             }
+            if (path.length() > 0) {
+                path.append('/');
+            }
+            path.append(part);
             boolean last = i == parts.length - 1;
-            boolean nodeDirectory = !last || directory;
-            current = current.children.computeIfAbsent(part, name -> new ZipTreeNode(name, nodeDirectory));
+            if (!last || directory) {
+                directories.add(path.toString());
+            } else {
+                files.add(path.toString());
+            }
         }
     }
 
-    private void appendZipPreviewEntries(ZipTreeNode node, int depth, List<Boolean> ancestorContinuations, List<FolderPreviewEntry> entries) {
-        List<ZipTreeNode> children = new ArrayList<>(node.children.values());
+    private void appendZipPreviewEntries(
+            String parentPath,
+            int depth,
+            List<Boolean> ancestorContinuations,
+            Set<String> directories,
+            Set<String> files,
+            List<FolderPreviewEntry> entries
+    ) {
+        Map<String, Boolean> immediateChildren = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        collectImmediateZipChildren(parentPath, directories, true, immediateChildren);
+        collectImmediateZipChildren(parentPath, files, false, immediateChildren);
+        List<Map.Entry<String, Boolean>> children = new ArrayList<>(immediateChildren.entrySet());
         children.sort(Comparator
-                .comparing((ZipTreeNode child) -> !child.directory)
-                .thenComparing(child -> child.name, String.CASE_INSENSITIVE_ORDER));
+                .comparing((Map.Entry<String, Boolean> child) -> !child.getValue())
+                .thenComparing(child -> child.getKey(), String.CASE_INSENSITIVE_ORDER));
         for (int i = 0; i < children.size(); i++) {
-            ZipTreeNode child = children.get(i);
+            Map.Entry<String, Boolean> child = children.get(i);
             boolean isLast = i == children.size() - 1;
-            FileType type = child.directory ? FileType.FOLDER : classifyArchiveEntryType(child.name);
-            entries.add(new FolderPreviewEntry(null, child.name, type, depth, isLast, new ArrayList<>(ancestorContinuations)));
-            if (child.directory && depth < 8) {
+            String childName = child.getKey();
+            boolean childDirectory = child.getValue();
+            FileType type = childDirectory ? FileType.FOLDER : classifyArchiveEntryType(childName);
+            entries.add(new FolderPreviewEntry(null, childName, type, depth, isLast, new ArrayList<>(ancestorContinuations)));
+            if (childDirectory && depth < 8) {
                 List<Boolean> nextAncestors = new ArrayList<>(ancestorContinuations);
                 nextAncestors.add(!isLast);
-                appendZipPreviewEntries(child, depth + 1, nextAncestors, entries);
+                String childPath = parentPath.isEmpty() ? childName : parentPath + "/" + childName;
+                appendZipPreviewEntries(childPath, depth + 1, nextAncestors, directories, files, entries);
             }
+        }
+    }
+
+    private void collectImmediateZipChildren(String parentPath, Set<String> paths, boolean directory, Map<String, Boolean> children) {
+        String prefix = parentPath.isEmpty() ? "" : parentPath + "/";
+        for (String path : paths) {
+            if (!path.regionMatches(true, 0, prefix, 0, prefix.length()) || path.length() <= prefix.length()) {
+                continue;
+            }
+            String remainder = path.substring(prefix.length());
+            int separator = remainder.indexOf('/');
+            String childName = separator >= 0 ? remainder.substring(0, separator) : remainder;
+            if (childName.isBlank()) {
+                continue;
+            }
+            boolean childDirectory = separator >= 0 || directory;
+            children.merge(childName, childDirectory, Boolean::logicalOr);
         }
     }
 

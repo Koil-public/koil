@@ -1074,7 +1074,15 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
             }
             return;
         }
-        this.inputSuggestions.addAll(ConsoleInputSuggestionService.suggestions(this.inputField.getText(), this.activeChannel, this.automationMode));
+        try {
+            this.inputSuggestions.addAll(ConsoleInputSuggestionService.suggestions(this.inputField.getText(), this.activeChannel, this.automationMode));
+        } catch (LinkageError error) {
+            // Keep the automation input usable if a stale development runtime
+            // was launched without the suggestion service class.
+            this.selectedSuggestionIndex = 0;
+            this.inputField.setSuggestion("");
+            return;
+        }
         this.selectedSuggestionIndex = clamp(this.selectedSuggestionIndex, 0, Math.max(0, this.inputSuggestions.size() - 1));
         this.inputField.setSuggestion(selectedSuggestionSuffix());
     }

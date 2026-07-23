@@ -20,7 +20,9 @@ import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.EntryListWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.resource.ResourcePackManager;
 import net.minecraft.screen.ScreenTexts;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.Util;
@@ -224,6 +226,7 @@ public class ResourcePackMenuScreen extends Screen {
     private ResourcePackOrganizer.Pack popupActionPack;
     private boolean organizerCallbackPatched = false;
     private boolean reloadRequired = false;
+    private boolean datapackReloading = false;
     private boolean suppressOrganizerReloadCallback = false;
     private Set<String> initialEnabledPackNames = Set.of();
     private String lastClickedPackName = "";
@@ -339,7 +342,7 @@ public class ResourcePackMenuScreen extends Screen {
         this.enableDisableButton.active = canToggle;
         this.deleteButton.active = canDelete;
         this.websiteButton.active = hasSelection;
-        this.reloadButton.active = this.reloadRequired;
+        this.reloadButton.active = this.reloadRequired && !this.datapackReloading;
         this.openFolderButton.active = true;
         if (this.selectedPack != null) {
             this.enableDisableButton.setMessage(Text.of(this.selectedPack.isEnabled() ? "Disable" : "Enable"));
@@ -508,7 +511,7 @@ public class ResourcePackMenuScreen extends Screen {
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         updateReloadRequiredFromOrganizerState();
         if (this.reloadButton != null) {
-            this.reloadButton.active = this.reloadRequired;
+            this.reloadButton.active = this.reloadRequired && !this.datapackReloading;
         }
         this.lastMouseX = mouseX;
         this.lastMouseY = mouseY;
@@ -1287,7 +1290,9 @@ public class ResourcePackMenuScreen extends Screen {
             this.packSelected(this.selectedPack != null);
             return;
         }
-        this.organizer.apply();
+        if (!this.datapackMode) {
+            this.organizer.apply();
+        }
         refreshOrganizerWithoutReloadMark();
         rebuildInstalledPackList();
         markReloadRequired();
@@ -1417,6 +1422,10 @@ public class ResourcePackMenuScreen extends Screen {
         if (!this.reloadRequired || this.client == null) {
             return;
         }
+        if (this.datapackMode) {
+            reloadDatapacks();
+            return;
+        }
         this.organizer.apply();
         refreshOrganizerWithoutReloadMark();
         this.remotePreviewCache.clear();
@@ -1427,6 +1436,78 @@ public class ResourcePackMenuScreen extends Screen {
         this.initialEnabledPackNames = currentEnabledPackNames();
         rebuildInstalledPackList();
         packSelected(this.selectedPack != null);
+    }
+
+    private void reloadDatapacks() {
+        ResourcePackManager manager = organizerResourcePackManager();
+        if (manager == null) {
+            this.reloadRequired = true;
+            packSelected(this.selectedPack != null);
+            return;
+        }
+        List<String> enabledNames = this.organizer.getEnabledPacks()
+                .map(ResourcePackOrganizer.Pack::getName)
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        Collections.reverse(enabledNames);
+        manager.setEnabledProfiles(enabledNames);
+
+        MinecraftServer server = this.client == null ? null : this.client.getServer();
+        if (server == null) {
+            finishDatapackReload();
+            return;
+        }
+        this.datapackReloading = true;
+        this.reloadButton.setMessage(Text.literal("Reloading..."));
+        packSelected(this.selectedPack != null);
+        server.reloadResources(manager.getEnabledNames()).whenComplete((ignored, failure) -> {
+            MinecraftClient minecraft = this.client;
+            if (minecraft == null) {
+                return;
+            }
+            minecraft.execute(() -> {
+                this.datapackReloading = false;
+                this.reloadButton.setMessage(Text.literal("Reload"));
+                if (failure == null) {
+                    finishDatapackReload();
+                } else {
+                    this.reloadRequired = true;
+                    packSelected(this.selectedPack != null);
+                }
+            });
+        });
+    }
+
+    private void finishDatapackReload() {
+        refreshOrganizerWithoutReloadMark();
+        this.remotePreviewCache.clear();
+        this.remotePreviewLoading.clear();
+        this.previewScrollOffset = 0;
+        this.previewScrollMax = 0;
+        this.reloadRequired = false;
+        this.initialEnabledPackNames = currentEnabledPackNames();
+        rebuildInstalledPackList();
+        packSelected(this.selectedPack != null);
+    }
+
+    private ResourcePackManager organizerResourcePackManager() {
+        Class<?> type = this.organizer.getClass();
+        while (type != null) {
+            for (Field field : type.getDeclaredFields()) {
+                if (!ResourcePackManager.class.isAssignableFrom(field.getType())) {
+                    continue;
+                }
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(this.organizer);
+                    if (value instanceof ResourcePackManager manager) {
+                        return manager;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            type = type.getSuperclass();
+        }
+        return null;
     }
 
     private void markReloadRequired() {

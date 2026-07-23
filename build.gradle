@@ -23,11 +23,14 @@ if (devLaunchPropertiesFile.isFile()) {
 
 def devUsername = devLaunchProperties.getProperty("username", "Dev").trim()
 def devUuid = devLaunchProperties.getProperty("uuid", "").trim()
+def devJavaExecutable = devLaunchProperties.getProperty("javaExecutable", "").trim()
 
 repositories {
 	maven { url 'https://maven.fabricmc.net/' }
 	maven { url 'https://repo.spongepowered.org/maven/' }
 	maven { url "https://maven.terraformersmc.com/releases/" }
+	maven { url "https://maven.blamejared.com/" }
+	maven { url "https://maven.shedaniel.me/" }
 	maven { url 'https://jitpack.io' }
 
 	maven { url 'https://maven.google.com/' }
@@ -72,6 +75,9 @@ dependencies {
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 	modImplementation("net.fabricmc:fabric-language-kotlin:1.12.3+kotlin.2.0.21")
+	modCompileOnly "dev.emi:emi-fabric:1.1.18+1.20.1"
+	modCompileOnly "mezz.jei:jei-1.20.1-fabric-api:15.20.0.135"
+	modCompileOnly "me.shedaniel:RoughlyEnoughItems-api-fabric:12.1.785"
 
 	// OkHttp and Gson dependencies
 	implementation 'com.squareup.okhttp3:okhttp:4.9.2'
@@ -107,9 +113,59 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 tasks.withType(JavaExec).configureEach {
-	javaLauncher = javaToolchains.launcherFor {
-		languageVersion = JavaLanguageVersion.of(17)
+	if (name == "runClient" && !devJavaExecutable.isEmpty()) {
+		executable = devJavaExecutable
+	} else {
+		javaLauncher = javaToolchains.launcherFor {
+			languageVersion = JavaLanguageVersion.of(17)
+		}
 	}
+}
+
+def runClientRequiredClassFiles = [
+		file("$buildDir/classes/java/main/com/spirit/client/gui/browser/ContentBrowserListRowRenderer.class"),
+		file("$buildDir/classes/java/main/com/spirit/mixin/client/gui/revamp/world/MixinWorldEntry.class")
+]
+
+tasks.named("compileJava", JavaCompile).configure {
+	outputs.upToDateWhen {
+		runClientRequiredClassFiles.every { it.isFile() }
+	}
+}
+
+tasks.register("verifyRunClientClasses") {
+	dependsOn tasks.named("compileJava")
+	doLast {
+		def missing = runClientRequiredClassFiles.findAll { !it.isFile() }
+		if (!missing.isEmpty()) {
+			throw new GradleException(
+					"runClient is missing required compiled classes: " +
+							missing.collect { it.absolutePath }.join(", ") +
+							". Stop any running client and rerun ./gradlew compileJava."
+			)
+		}
+	}
+}
+
+tasks.register('runContentRegistryProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.registry.dev.ContentRegistryProof'
+	args layout.buildDirectory.dir('content-registry-proof').get().asFile.absolutePath
+}
+
+tasks.register('generateContentRegistryTestDatapack', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.registry.dev.ContentTestDatapackGenerator'
+	args file('docs/test-datapacks').absolutePath, file('src/main/generated').absolutePath
+}
+
+tasks.register('installContentRegistryTestDatapackGeorgia', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.registry.dev.ContentTestWorldInstaller'
+	args file('run/saves/georgia').absolutePath
 }
 
 loom {
@@ -129,6 +185,10 @@ loom {
 			}
 		}
 	}
+}
+
+tasks.named("runClient").configure {
+	dependsOn tasks.named("verifyRunClientClasses")
 }
 
 java {

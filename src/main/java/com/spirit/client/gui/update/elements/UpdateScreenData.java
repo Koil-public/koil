@@ -815,7 +815,7 @@ public final class UpdateScreenData {
         Map<String, UpdateType> types = new LinkedHashMap<>();
         types.put("ui", new UpdateType("UI Integration and UI Development", "#a7003a", "koil_update_toasts.png:red"));
         types.put("debug", new UpdateType("In-Game Debugging", "#2da700", "koil_update_toasts.png:green"));
-        types.put("api", new UpdateType("J-API and Datapack Modding", "#0085a4", "koil_update_toasts.png:blue"));
+        types.put("api", new UpdateType("Content and Datapack Registry", "#0085a4", "koil_update_toasts.png:blue"));
         types.put("console", new UpdateType("Console Gameplay", "#7400a4", "koil_update_toasts.png:purple"));
         types.put("combined", new UpdateType("All Balanced", "#8c88b5", "koil_update_toasts.png:combined"));
         return types;
@@ -931,7 +931,7 @@ public final class UpdateScreenData {
                 "  \"updateTypes\": {\n" +
                 "    \"ui\": { \"label\": \"UI Integration and UI Development\", \"color\": \"#a7003a\", \"toast\": \"koil_update_toasts.png:red\" },\n" +
                 "    \"debug\": { \"label\": \"In-Game Debugging\", \"color\": \"#2da700\", \"toast\": \"koil_update_toasts.png:green\" },\n" +
-                "    \"api\": { \"label\": \"J-API and Datapack Modding\", \"color\": \"#0085a4\", \"toast\": \"koil_update_toasts.png:blue\" },\n" +
+                "    \"api\": { \"label\": \"Content and Datapack Registry\", \"color\": \"#0085a4\", \"toast\": \"koil_update_toasts.png:blue\" },\n" +
                 "    \"console\": { \"label\": \"Console Gameplay\", \"color\": \"#7400a4\", \"toast\": \"koil_update_toasts.png:purple\" },\n" +
                 "    \"other\": { \"label\": \"Other\", \"color\": \"#8c88b5\", \"toast\": \"koil_update_toasts.png:other\" }\n" +
                 "  },\n" +

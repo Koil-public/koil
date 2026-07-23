@@ -111,7 +111,7 @@ public final class KoilVanillaScreenChrome {
     }
 
     public static int keybindListBottom(int screenHeight, boolean hasControllingLayout) {
-        return Math.max(42, screenHeight - (hasControllingLayout ? 57 : 42));
+        return Math.max(42, screenHeight - (hasControllingLayout ? 72 : 88));
     }
 
     private static void renderFrame(DrawContext context, int width, int height) {

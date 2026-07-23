@@ -86,13 +86,13 @@ public class KoilMenuScreen extends Screen {
         this.scrollOffset = 0;
 
         books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "start_book.png"), "Manager Guide", "SpiritXIV", "Overview of the manager menu, navigation, and core Koil tools.", "SpiritXIV", "./koil/wiki/help_book.json"));
-        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "J-API Quickstart", "SpiritXIV", "Starting guide for working with Koil's Java-facing systems.", "SpiritXIV", "./koil/wiki/japi_begin.json"));
-        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Blocks and Items Guide", "SpiritXIV", "Guide for custom block and item workflows in the J-API.", "SpiritXIV", "./koil/wiki/japi_blocksitems.json"));
-        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Entities Guide", "SpiritXIV", "Guide for custom entity workflows in the J-API.", "SpiritXIV", "./koil/wiki/japi_entities.json"));
-        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Effects Guide", "SpiritXIV", "Guide for custom effect workflows in the J-API.", "SpiritXIV", "./koil/wiki/japi_effects.json"));
-        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Enchantments Guide", "SpiritXIV", "Guide for custom enchantment workflows in the J-API.", "SpiritXIV", "./koil/wiki/japi_enchantments.json"));
-        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Commands Guide", "SpiritXIV", "Guide for command creation through the J-API.", "SpiritXIV", "./koil/wiki/japi_commands.json"));
-        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Particles Guide", "SpiritXIV", "Guide for particle workflows in the J-API.", "SpiritXIV", "./koil/wiki/japi_particles.json"));
+        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Content Quickstart", "SpiritXIV", "Starting guide for Koil's world-scoped Content registry.", "SpiritXIV", "./koil/wiki/registry_begin.json"));
+        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Blocks and Items Guide", "SpiritXIV", "Guide for Content block and item definitions.", "SpiritXIV", "./koil/wiki/registry_blocksitems.json"));
+        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Entities Guide", "SpiritXIV", "Guide for Content entity definitions.", "SpiritXIV", "./koil/wiki/registry_entities.json"));
+        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Effects Guide", "SpiritXIV", "Guide for Content effect definitions.", "SpiritXIV", "./koil/wiki/registry_effects.json"));
+        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Enchantments Guide", "SpiritXIV", "Guide for Content enchantment definitions.", "SpiritXIV", "./koil/wiki/registry_enchantments.json"));
+        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Commands Guide", "SpiritXIV", "Guide for Content commands and reload tools.", "SpiritXIV", "./koil/wiki/registry_commands.json"));
+        books.add(new MenuBookEntry(loadExternalPngTexture(uiImageDirectory, "code_book.png"), "Particles Guide", "SpiritXIV", "Guide for Content particle definitions.", "SpiritXIV", "./koil/wiki/registry_particles.json"));
     }
 
     @Override
@@ -759,7 +759,7 @@ public class KoilMenuScreen extends Screen {
             ButtonWidget debugVisButton3 = this.addDrawableChild(ButtonWidget.builder(Text.literal("Test Update Toasts"), button -> {
                 KoilUpdateToast.add(client.getToastManager(), KoilUpdateToast.Type.UPDATE_UI, Text.of("UPDATE_UI"), Text.of("toast"));
                 KoilUpdateToast.add(client.getToastManager(), KoilUpdateToast.Type.UPDATE_DEBUG, Text.of("UPDATE_DEBUG"), Text.of("toast"));
-                KoilUpdateToast.add(client.getToastManager(), KoilUpdateToast.Type.UPDATE_API, Text.of("UPDATE_JAPI"), Text.of("toast"));
+                KoilUpdateToast.add(client.getToastManager(), KoilUpdateToast.Type.UPDATE_API, Text.of("UPDATE_CONTENT"), Text.of("toast"));
                 KoilUpdateToast.add(client.getToastManager(), KoilUpdateToast.Type.UPDATE_CONSOLE, Text.of("UPDATE_CONSOLE"), Text.of("toast"));
                 KoilUpdateToast.add(client.getToastManager(), KoilUpdateToast.Type.UPDATE_OTHER, Text.of("UPDATE_ALL"), Text.of("toast"));
             }).dimensions(140, 166, 150, 20).build());

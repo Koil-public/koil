@@ -3,6 +3,7 @@ package com.spirit.mixin.client.gui.revamp.option;
 import com.spirit.client.gui.options.ContentOptionsScreen;
 import com.spirit.client.gui.options.WorldDatapackScreenHelper;
 import com.spirit.client.gui.mod.ModMenuScreen;
+import com.spirit.client.gui.macro.MacroScreen;
 import com.spirit.client.gui.skin.ChangeSkinScreen;
 import com.spirit.client.gui.skin.EditSkinScreen;
 import com.spirit.client.gui.shader.ShaderPackMenuScreen;
@@ -15,15 +16,23 @@ import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.Element;
+import net.minecraft.client.gui.screen.ConfirmLinkScreen;
+import net.minecraft.client.gui.screen.CreditsScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.option.OptionsScreen;
+import net.minecraft.client.gui.screen.option.KeybindsScreen;
+import net.minecraft.client.gui.screen.option.MouseOptionsScreen;
 import net.minecraft.client.gui.screen.pack.PackScreen;
+import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
 import net.minecraft.text.TextContent;
 import net.minecraft.text.TranslatableTextContent;
+import net.minecraft.client.option.GameOptions;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Overwrite;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -41,6 +50,12 @@ public class MixinOptionsScreen extends Screen {
     private static final String RESOURCE_PACK_TRANSLATION_KEY = "options.resourcepack";
     private static final String SKIN_CUSTOMIZATION_TRANSLATION_KEY = "options.skinCustomisation";
     private static final String VIDEO_OPTIONS_TRANSLATION_KEY = "options.video";
+    private static final String CONTROLS_TRANSLATION_KEY = "options.controls";
+    private static final String CREDITS_AND_ATTRIBUTION_TRANSLATION_KEY = "options.credits_and_attribution";
+    private static final String ATTRIBUTION_URL = "https://aka.ms/MinecraftJavaAttribution";
+    private static final String LICENSES_URL = "https://aka.ms/MinecraftJavaLicenses";
+
+    @Shadow @Final private GameOptions settings;
 
     protected MixinOptionsScreen(Text title) {
         super(title);
@@ -92,6 +107,86 @@ public class MixinOptionsScreen extends Screen {
             return;
         }
         koil$replaceVideoOptionsButton(new ArrayList<>(this.children()));
+    }
+
+    @Inject(method = "init", at = @At("TAIL"))
+    private void koil$replaceControlsButton(CallbackInfo ci) {
+        if (!JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
+            return;
+        }
+        for (Element child : new ArrayList<>(this.children())) {
+            if (!(child instanceof ButtonWidget button) || !koil$isControlsButton(button)) {
+                continue;
+            }
+            int x = button.getX();
+            int y = button.getY();
+            int width = button.getWidth();
+            int height = button.getHeight();
+            this.remove(button);
+            int gap = 2;
+            int available = Math.max(3, width - gap * 2);
+            int mouseWidth = Math.max(1, Math.round(available * 0.29F));
+            int keybindWidth = Math.max(1, Math.round(available * 0.39F));
+            int macroWidth = Math.max(1, width - mouseWidth - keybindWidth - gap * 2);
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("Mouse"), pressed -> {
+                if (this.client != null) {
+                    this.client.setScreen(new MouseOptionsScreen(this, this.settings));
+                }
+            }).dimensions(x, y, mouseWidth, height).build());
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("Keybinds"), pressed -> {
+                if (this.client != null) {
+                    this.client.setScreen(new KeybindsScreen(this, this.settings));
+                }
+            }).dimensions(x + mouseWidth + gap, y, keybindWidth, height).build());
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("Macros"), pressed -> {
+                if (this.client != null) {
+                    this.client.setScreen(new MacroScreen(this));
+                }
+            }).dimensions(x + mouseWidth + gap + keybindWidth + gap, y, macroWidth, height).build());
+            return;
+        }
+    }
+
+    @Inject(method = "init", at = @At("TAIL"))
+    private void koil$replaceCreditsAndAttributionButton(CallbackInfo ci) {
+        if (!JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
+            return;
+        }
+        for (Element child : new ArrayList<>(this.children())) {
+            if (!(child instanceof ButtonWidget button) || !koil$isCreditsAndAttributionButton(button)) {
+                continue;
+            }
+            int x = button.getX();
+            int y = button.getY();
+            int width = button.getWidth();
+            int height = button.getHeight();
+            this.remove(button);
+
+            int gap = 2;
+            int available = Math.max(3, width - gap * 2);
+            int creditsWidth = Math.max(1, Math.round(available * 0.34F));
+            int attributionWidth = Math.max(1, Math.round(available * 0.49F));
+            int licensesWidth = Math.max(1, width - creditsWidth - attributionWidth - gap * 2);
+
+            this.addDrawableChild(ButtonWidget.builder(Text.literal("Credits"), pressed -> koil$openCredits())
+                    .dimensions(x, y, creditsWidth, height)
+                    .build());
+            this.addDrawableChild(ButtonWidget.builder(
+                            Text.literal("Attribution"),
+                            ConfirmLinkScreen.opening(ATTRIBUTION_URL, this, true)
+                    )
+                    .dimensions(x + creditsWidth + gap, y, attributionWidth, height)
+                    .build());
+            ButtonWidget licenses = ButtonWidget.builder(
+                            Text.literal("©"),
+                            ConfirmLinkScreen.opening(LICENSES_URL, this, true)
+                    )
+                    .dimensions(x + creditsWidth + gap + attributionWidth + gap, y, licensesWidth, height)
+                    .tooltip(Tooltip.of(Text.literal("Licenses")))
+                    .build();
+            this.addDrawableChild(licenses);
+            return;
+        }
     }
 
     private void koil$replaceSkinCustomizationButton(List<Element> snapshot) {
@@ -200,6 +295,37 @@ public class MixinOptionsScreen extends Screen {
                 || normalized.contains("video settings");
     }
 
+    private boolean koil$isControlsButton(ButtonWidget button) {
+        String key = koil$translationKey(button.getMessage());
+        if (CONTROLS_TRANSLATION_KEY.equals(key)) {
+            return true;
+        }
+        String label = button.getMessage().getString();
+        if (label == null) {
+            return false;
+        }
+        String normalized = label.toLowerCase().replace(".", "").replace("…", "").trim();
+        return normalized.equals("controls")
+                || normalized.equals("controls settings")
+                || normalized.contains("controls");
+    }
+
+    private boolean koil$isCreditsAndAttributionButton(ButtonWidget button) {
+        String key = koil$translationKey(button.getMessage());
+        if (CREDITS_AND_ATTRIBUTION_TRANSLATION_KEY.equals(key)) {
+            return true;
+        }
+        String label = button.getMessage().getString();
+        if (label == null) {
+            return false;
+        }
+        String normalized = label.toLowerCase().replace(".", "").replace("…", "").trim();
+        return normalized.equals("credits & attribution")
+                || normalized.equals("credits and attribution")
+                || normalized.contains("credits & attribution")
+                || normalized.contains("credits and attribution");
+    }
+
     private String koil$translationKey(Text text) {
         if (text == null) {
             return "";
@@ -228,6 +354,14 @@ public class MixinOptionsScreen extends Screen {
             return;
         }
         this.client.setScreen(new KoilVideoOptionsScreen(this));
+    }
+
+    private void koil$openCredits() {
+        if (this.client == null) {
+            return;
+        }
+        MinecraftClient minecraft = this.client;
+        minecraft.setScreen(new CreditsScreen(false, () -> minecraft.setScreen(this)));
     }
 
     /**

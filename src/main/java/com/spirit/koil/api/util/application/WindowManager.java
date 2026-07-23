@@ -38,7 +38,12 @@ public class WindowManager {
     private WindowManager() {
     }
 
-    public static void openConsoleWindow(ConsoleChannel channel) {
+    public static synchronized void openConsoleWindow(ConsoleChannel channel) {
+        Process existing = CONSOLE_PROCESSES.get(channel);
+        if (existing != null && existing.isAlive()) {
+            return;
+        }
+        CONSOLE_PROCESSES.remove(channel);
         try {
             launchExternalConsoleProcess(channel);
             REMEMBERED_OPEN_WINDOWS.add(channel);
@@ -53,7 +58,7 @@ public class WindowManager {
         }
     }
 
-    public static void closeAllWindows() {
+    public static synchronized void closeAllWindows() {
         for (Process process : CONSOLE_PROCESSES.values()) {
             process.destroy();
         }
@@ -92,11 +97,6 @@ public class WindowManager {
         if (!ConsoleRequestBridge.hostReady()) {
             throw new IOException("Console socket bridge is not ready.");
         }
-        Process existing = CONSOLE_PROCESSES.get(channel);
-        if (existing != null && existing.isAlive()) {
-            existing.destroy();
-            CONSOLE_PROCESSES.remove(channel);
-        }
         String javaBinary = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         String classPath = buildExternalClassPath();
         Path launchLog = Path.of("koil/logs/external-console-launch.log");
@@ -107,6 +107,7 @@ public class WindowManager {
         Process process = new ProcessBuilder(
                 javaBinary,
                 "-Djava.awt.headless=false",
+                "-D" + ExternalWindowConsole.PROCESS_MARKER_PROPERTY + "=true",
                 "-cp",
                 classPath,
                 "com.spirit.koil.api.util.application.ExternalWindowConsole",

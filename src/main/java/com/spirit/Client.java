@@ -9,12 +9,15 @@ import com.spirit.koil.api.console.ConsoleRequestBridge;
 import com.spirit.koil.api.f3.F3CommandBridge;
 import com.spirit.koil.api.f3.F3SnapshotService;
 import com.spirit.koil.api.multiplayer.ServerCommandBridge;
+import com.spirit.koil.api.macro.MacroRuntime;
 import com.spirit.koil.api.navigation.ClientSessionTransitionCoordinator;
+import com.spirit.koil.api.navigation.StartupDestinationService;
 import com.spirit.koil.api.performance.PerformanceCommandBridge;
 import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
 import com.spirit.koil.api.stats.global.GlobalActivityClient;
 import com.spirit.koil.api.world.WorldCommandBridge;
+import com.spirit.koil.api.world.WorldInstanceResourceProfileService;
 import com.spirit.koil.api.screen.KoilRemoteScreenClientBridge;
 import com.spirit.koil.api.chat.RichChatPrivacyNoticeClient;
 import com.spirit.koil.api.chat.sync.RichChatSyncClientBridge;
@@ -33,6 +36,8 @@ public class Client implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        StartupDestinationService.initialize();
+        WorldInstanceResourceProfileService.initialize();
         ConsoleRequestBridge.initializeHost();
         GlobalActivityClient.registerClient();
         RichChatPrivacyNoticeClient.register();
@@ -46,6 +51,9 @@ public class Client implements ClientModInitializer {
             PerformanceOptimizationTestService.tick(client);
             F3SnapshotService.tick(client);
             ClientSessionTransitionCoordinator.tick(client);
+            MacroRuntime.tick(client);
+            StartupDestinationService.tick(client);
+            WorldInstanceResourceProfileService.tick(client);
             boolean focused = client.isWindowFocused();
             if (lastWindowFocused != null && focused && !lastWindowFocused) {
                 UiSoundHelper.playButtonClick();
