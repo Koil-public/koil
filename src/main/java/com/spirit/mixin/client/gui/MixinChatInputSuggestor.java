@@ -1,6 +1,6 @@
 package com.spirit.mixin.client.gui;
 
-import com.spirit.koil.chat.internal.ChatSuggestionAnchor;
+import com.spirit.koil.api.chat.ChatSuggestionAnchor;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ChatInputSuggestor;

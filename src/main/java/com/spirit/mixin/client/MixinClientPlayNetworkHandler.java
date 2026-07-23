@@ -1,6 +1,6 @@
 package com.spirit.mixin.client;
 
-import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
+import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.c2s.play.UpdateCommandBlockC2SPacket;

@@ -1,6 +1,6 @@
 package com.spirit.client.gui.options;
 
-import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
+import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;

@@ -2,7 +2,7 @@ package com.spirit.mixin.client.gui;
 
 import com.mojang.brigadier.suggestion.Suggestion;
 import com.spirit.client.gui.SuggestionPopupRenderer;
-import com.spirit.koil.chat.internal.ChatSuggestionAnchor;
+import com.spirit.koil.api.chat.ChatSuggestionAnchor;
 import com.spirit.mixin.client.gui.accessor.ChatScreenAccessor;
 import com.spirit.mixin.client.gui.accessor.ChatInputSuggestorSuggestionWindowAccessor;
 import net.minecraft.client.MinecraftClient;

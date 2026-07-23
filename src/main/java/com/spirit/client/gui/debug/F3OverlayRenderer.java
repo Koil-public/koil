@@ -52,7 +52,7 @@ public final class F3OverlayRenderer {
     }
 
     public static void render(DrawContext context, MinecraftClient client) {
-        if (!uiRedesignEnabled() || Main.vanillaF3Design() || !F3LayoutState.overlayVisible() || client == null || client.options.hudHidden) {
+        if (!uiRedesignEnabled() || Main.vanillaF3Design() || !F3LayoutState.overlayVisible() || !F3Controller.isPlayableDebugContext(client) || client.options.hudHidden) {
             return;
         }
         client.options.debugEnabled = false;
@@ -86,7 +86,11 @@ public final class F3OverlayRenderer {
     }
 
     public static boolean shouldHideVanillaCrosshair(MinecraftClient client) {
-        return client != null && uiRedesignEnabled() && !Main.vanillaF3Design() && F3LayoutState.overlayVisible() && !client.options.hudHidden;
+        return F3Controller.isPlayableDebugContext(client)
+                && uiRedesignEnabled()
+                && !Main.vanillaF3Design()
+                && F3LayoutState.overlayVisible()
+                && !client.options.hudHidden;
     }
 
     private static boolean crosshairMotionWidgetsVisible(F3Mode mode) {

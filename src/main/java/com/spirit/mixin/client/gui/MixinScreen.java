@@ -25,7 +25,7 @@ import com.spirit.client.gui.update.UpdateScreen;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
-import com.spirit.koil.chat.internal.upload.RichChatAttachmentRenderer;
+import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
@@ -167,10 +167,14 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (koil$consumeScreenChromeClick(mouseX, mouseY, button)) {
+        if (koil$activeAudioPopup.mouseClicked(mouseX, mouseY, button)) {
+            if (!ActiveAudioControlPopup.hasActiveMedia()) {
+                koil$screenToolsMenu.close();
+                koil$screenToolsSubmenu.close();
+            }
             return true;
         }
-        if (koil$activeAudioPopup.mouseClicked(mouseX, mouseY, button)) {
+        if (koil$consumeScreenChromeClick(mouseX, mouseY, button)) {
             return true;
         }
         if (PixelDifferenceOverlay.mouseClicked(mouseX, mouseY, button)) {
@@ -182,6 +186,9 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        if (koil$activeAudioPopup.mouseDragged(mouseX, mouseY, button)) {
+            return true;
+        }
         if (PixelDifferenceOverlay.mouseDragged(mouseX, mouseY, button, deltaX, deltaY)) {
             return true;
         }
@@ -190,6 +197,9 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (koil$activeAudioPopup.mouseReleased(mouseX, mouseY, button)) {
+            return true;
+        }
         if (PixelDifferenceOverlay.mouseReleased(mouseX, mouseY, button)) {
             return true;
         }
@@ -279,12 +289,12 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
             if (selected != null && tools != null) {
                 if ("ui_appearance".equals(selected.id())) {
                     koil$screenToolsSubmenu.close();
-                    koil$screenToolsSubmenu.openBeside(koil$screenToolsMenu, screenWidth, screenHeight, VanillaScreenToolResolver.appearanceActions());
+                    koil$screenToolsSubmenu.openBeside(koil$screenToolsMenu, mouseY, screenWidth, screenHeight, VanillaScreenToolResolver.appearanceActions());
                     return true;
                 }
                 if ("screen_tools".equals(selected.id())) {
                     koil$screenToolsSubmenu.close();
-                    koil$screenToolsSubmenu.openBeside(koil$screenToolsMenu, screenWidth, screenHeight, VanillaScreenToolResolver.screenToolActions());
+                    koil$screenToolsSubmenu.openBeside(koil$screenToolsMenu, mouseY, screenWidth, screenHeight, VanillaScreenToolResolver.screenToolActions());
                     return true;
                 }
                 if ("media_controls".equals(selected.id())) {

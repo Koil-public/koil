@@ -115,7 +115,7 @@ public abstract class MixinConfirmScreen extends Screen {
      * @reason no dup buttons
      */
     @Overwrite
-    protected void addButtons(int y) {
+    public void addButtons(int y) {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
 
         } else {

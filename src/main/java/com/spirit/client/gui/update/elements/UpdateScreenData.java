@@ -435,10 +435,6 @@ public final class UpdateScreenData {
         return "koil-" + version() + ".jar";
     }
 
-    public static int renderReleaseTimeline(DrawContext context, TextRenderer textRenderer, UpdateData data, List<Release> releases, int x, int y, int width, int scroll, int topClip, int bottomClip, boolean showBranch) {
-        return renderReleaseTimelineInteractive(context, textRenderer, data, releases, x, y, width, scroll, topClip, bottomClip, showBranch, -1, -1).contentHeight;
-    }
-
     public static TimelineRenderResult renderReleaseTimelineInteractive(DrawContext context, TextRenderer textRenderer, UpdateData data, List<Release> releases, int x, int y, int width, int scroll, int topClip, int bottomClip, boolean showBranch, int mouseX, int mouseY) {
         int timelineX = x + 10;
         int contentX = x + 30;
@@ -937,7 +933,7 @@ public final class UpdateScreenData {
                 "    \"debug\": { \"label\": \"In-Game Debugging\", \"color\": \"#2da700\", \"toast\": \"koil_update_toasts.png:green\" },\n" +
                 "    \"api\": { \"label\": \"J-API and Datapack Modding\", \"color\": \"#0085a4\", \"toast\": \"koil_update_toasts.png:blue\" },\n" +
                 "    \"console\": { \"label\": \"Console Gameplay\", \"color\": \"#7400a4\", \"toast\": \"koil_update_toasts.png:purple\" },\n" +
-                "    \"combined\": { \"label\": \"All Balanced\", \"color\": \"#8c88b5\", \"toast\": \"koil_update_toasts.png:combined\" }\n" +
+                "    \"other\": { \"label\": \"Other\", \"color\": \"#8c88b5\", \"toast\": \"koil_update_toasts.png:other\" }\n" +
                 "  },\n" +
                 "  \"branches\": [\n" +
                 "    { \"key\": \"public\", \"label\": \"Public\", \"githubPath\": \"public\", \"betaOnly\": false, \"description\": \"Downloads the newest public Koil jar from Modrinth.\" },\n" +

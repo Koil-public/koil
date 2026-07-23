@@ -377,28 +377,29 @@ public class MixinTelemetryInfoScreen extends Screen {
     private List<TelemetryRow> vanillaTelemetryEventRows() {
         List<TelemetryRow> rows = new ArrayList<>();
 
-        try {
-            for (Field field : TelemetryEventType.class.getDeclaredFields()) {
-                if (!Modifier.isStatic(field.getModifiers()) || field.getType() != TelemetryEventType.class) {
-                    continue;
-                }
-
-                field.setAccessible(true);
-                TelemetryEventType event = (TelemetryEventType) field.get(null);
-
-                if (event == null) {
-                    continue;
-                }
-
+        List<TelemetryEventType> events = new ArrayList<>(TelemetryEventType.getTypes());
+        events.sort(Comparator.comparing(TelemetryEventType::isOptional)
+                .thenComparing(TelemetryEventType::getId, String.CASE_INSENSITIVE_ORDER));
+        for (TelemetryEventType event : events) {
+            try {
                 String title = event.getTitle().getString();
                 String description = event.getDescription().getString();
                 String value = event.isOptional() ? "optional" : "required";
-                String eventName = nonBlank(title, formatTelemetryFieldName(field.getName()));
+                String eventName = nonBlank(title, formatTelemetryFieldName(event.getId()));
 
                 rows.add(new TelemetryRow(eventName, value, event.isOptional() ? 0xFFE3B735 : 0xFF7FC8C2, eventReason(event, description)));
+            } catch (RuntimeException exception) {
+                rows.add(new TelemetryRow(
+                        formatTelemetryFieldName(event.getId()),
+                        event.isOptional() ? "optional" : "required",
+                        0xFFE06A21,
+                        "This vanilla telemetry event is registered, but part of its localized detail could not be read."
+                ));
             }
-        } catch (Exception ignored) {
-            rows.add(new TelemetryRow("Telemetry events", "unavailable", 0xFFE06A21, "Minecraft's telemetry event registry could not be read from this runtime, so The system is showing the live account, version, system, and opt-in values only."));
+        }
+
+        if (rows.isEmpty()) {
+            rows.add(new TelemetryRow("Telemetry events", "unavailable", 0xFFE06A21, "Minecraft did not expose any registered telemetry events in this runtime."));
         }
 
         return rows;

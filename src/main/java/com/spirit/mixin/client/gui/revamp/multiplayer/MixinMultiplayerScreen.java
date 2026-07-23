@@ -127,7 +127,7 @@ public abstract class MixinMultiplayerScreen extends Screen implements KoilServe
 
     @Override
     @SuppressWarnings("unused")
-    protected void init() {
+    public void init() {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
             int x = 37;
 
@@ -809,7 +809,7 @@ public abstract class MixinMultiplayerScreen extends Screen implements KoilServe
      * @reason
      */
     @Overwrite
-    protected void updateButtonActivationStates() {
+    public void updateButtonActivationStates() {
         if (this.buttonJoin == null || this.buttonEdit == null || this.buttonDelete == null) {
             return;
         }

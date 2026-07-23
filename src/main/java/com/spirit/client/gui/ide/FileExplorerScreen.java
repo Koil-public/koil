@@ -31,7 +31,7 @@ import com.spirit.koil.api.util.file.media.image.ImageTextureService;
 import com.spirit.koil.api.util.file.media.video.VideoMetadata;
 import com.spirit.koil.api.util.file.media.video.VideoPlaybackSession;
 import com.spirit.koil.api.util.file.media.video.VideoService;
-import com.spirit.koil.chat.internal.upload.RichChatUploadDraft;
+import com.spirit.koil.api.chat.upload.RichChatUploadDraft;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
@@ -925,10 +925,12 @@ public class FileExplorerScreen extends Screen {
         if (mouseX < LEFT_PANEL_WIDTH && mouseY > 80) {
             scrollOffset = Math.max(0, Math.min(scrollOffset - (int) amount, getMaxFileListScroll()));
         } else if (mouseX > LEFT_PANEL_WIDTH && mouseY > 80 && selectedFileItem != null && selectedFileItem.getType() == FileType.FILE) {
-            String[] lines = fileContent != null ? fileContent.split("\n") : new String[0];
+            String[] lines = textPreviewDisplayLines(selectedFileItem.getFile());
             if (hasShiftDown()) {
-                int maxHorizontalPreviewScroll = getMaxHorizontalPreviewScroll(lines);
-                horizontalScrollOffsetViewer = Math.max(0, Math.min(horizontalScrollOffsetViewer - (int) amount, maxHorizontalPreviewScroll));
+                if (!wrapsTextPreview(selectedFileItem.getFile())) {
+                    int maxHorizontalPreviewScroll = getMaxHorizontalPreviewScroll(lines);
+                    horizontalScrollOffsetViewer = Math.max(0, Math.min(horizontalScrollOffsetViewer - (int) amount, maxHorizontalPreviewScroll));
+                }
             } else {
                 int maxViewerScroll = Math.max(0, lines.length - getVisibleTextPreviewLines(getTextPreviewStartY()));
                 scrollOffsetViewer = Math.max(0, Math.min(scrollOffsetViewer - (int) amount, maxViewerScroll));
@@ -2131,7 +2133,8 @@ public class FileExplorerScreen extends Screen {
                     cachedPreviewTextPath = file.getAbsolutePath();
                     cachedPreviewTextLastModified = file.lastModified();
                 }
-                String[] lines = fileContent.split("\n");
+                String[] lines = textPreviewDisplayLines(file);
+                boolean wrappedPreview = wrapsTextPreview(file);
                 int visibleLines = getVisibleTextPreviewLines(startY);
                 int scrollRange = Math.max(0, lines.length - visibleLines);
 
@@ -2144,7 +2147,7 @@ public class FileExplorerScreen extends Screen {
                 int endIndex = Math.min(startIndex + visibleLines, lines.length);
 
                 for (int i = startIndex; i < endIndex; i++) {
-                    renderPreviewLineWithSyntaxHighlighting(context, applyHorizontalPreviewOffset(lines[i]), startX + 50, startY, file);
+                    renderPreviewLineWithSyntaxHighlighting(context, wrappedPreview ? lines[i] : applyHorizontalPreviewOffset(lines[i]), startX + 50, startY, file);
                     startY += TEXT_PREVIEW_LINE_HEIGHT;
                 }
 
@@ -2831,6 +2834,49 @@ public class FileExplorerScreen extends Screen {
 
         int approxVisibleCharacters = Math.max(1, (this.width - 260) / 6);
         return Math.max(0, longestLineLength - approxVisibleCharacters);
+    }
+
+    private boolean wrapsTextPreview(File file) {
+        EditorSyntaxHighlighter.SyntaxLanguage language = EditorSyntaxHighlighter.SyntaxLanguage.fromFileName(file == null ? "" : file.getName());
+        return language == EditorSyntaxHighlighter.SyntaxLanguage.TEXT
+                || language == EditorSyntaxHighlighter.SyntaxLanguage.MARKDOWN;
+    }
+
+    private String[] textPreviewDisplayLines(File file) {
+        String source = fileContent == null ? "" : fileContent;
+        String[] logicalLines = source.split("\\R", -1);
+        if (!wrapsTextPreview(file)) {
+            return logicalLines;
+        }
+        int maxWidth = Math.max(24, this.width - 260);
+        List<String> wrapped = new ArrayList<>();
+        for (String line : logicalLines) {
+            if (line.isEmpty()) {
+                wrapped.add("");
+                continue;
+            }
+            String remaining = line;
+            while (!remaining.isEmpty()) {
+                String fitted = this.textRenderer.trimToWidth(remaining, maxWidth);
+                int length = Math.max(1, fitted.length());
+                if (length < remaining.length()) {
+                    int whitespace = -1;
+                    for (int index = length - 1; index > 0; index--) {
+                        if (Character.isWhitespace(remaining.charAt(index))) {
+                            whitespace = index + 1;
+                            break;
+                        }
+                    }
+                    if (whitespace > 0) {
+                        length = whitespace;
+                    }
+                }
+                length = Math.min(length, remaining.length());
+                wrapped.add(remaining.substring(0, length));
+                remaining = remaining.substring(length);
+            }
+        }
+        return wrapped.toArray(String[]::new);
     }
 
     private void renderPreviewLineWithSyntaxHighlighting(DrawContext context, String line, int x, int y, File file) {

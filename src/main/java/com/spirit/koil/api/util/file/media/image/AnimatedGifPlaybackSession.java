@@ -243,7 +243,7 @@ public final class AnimatedGifPlaybackSession implements VisualPlaybackSession {
         BufferedImage canvas = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = canvas.createGraphics();
         graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        int x = 0;
+        int x = (targetWidth - scaled.getWidth()) / 2;
         int y = (targetHeight - scaled.getHeight()) / 2;
         graphics.drawImage(scaled, x, y, null);
         graphics.dispose();

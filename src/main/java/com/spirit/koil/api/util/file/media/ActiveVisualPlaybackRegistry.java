@@ -3,7 +3,6 @@ package com.spirit.koil.api.util.file.media;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 
-/** Shared pointer to the video session controlled by Koil's universal media popup. */
 @Environment(EnvType.CLIENT)
 public final class ActiveVisualPlaybackRegistry {
     private static volatile VisualPlaybackSession activeSession;

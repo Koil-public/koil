@@ -87,16 +87,21 @@ public final class PopupMenu {
 
     /** Opens a child next to an already-open parent without covering it. */
     public void openBeside(PopupMenu parent, int screenWidth, int screenHeight, List<MenuEntry> menuItems) {
+        openBeside(parent, parent == null ? 8 : parent.y, screenWidth, screenHeight, menuItems);
+    }
+
+    /** Opens beside the parent while keeping the child vertically anchored to
+     * the pointer that selected the parent row. */
+    public void openBeside(PopupMenu parent, double mouseY, int screenWidth, int screenHeight, List<MenuEntry> menuItems) {
         items.clear();
         items.addAll(menuItems);
         if (items.isEmpty()) { close(); return; }
         measureMenu();
         int parentX = parent == null ? 8 : parent.x;
-        int parentY = parent == null ? 8 : parent.y;
         int parentWidth = parent == null ? 0 : parent.width;
         x = clampHorizontal(parentX + parentWidth + GAP, screenWidth);
         if (x <= parentX + parentWidth && parentX - width - GAP >= 8) x = parentX - width - GAP;
-        y = clampVertical(parentY, screenHeight);
+        y = clampVertical((int) Math.round(mouseY) - 2, screenHeight);
         open = true;
         hoveredIndex = -1;
     }

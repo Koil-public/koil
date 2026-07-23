@@ -11,7 +11,7 @@ import com.spirit.koil.api.automation.feedback.AutomationFailureRegistry;
 import com.spirit.koil.api.automation.feedback.AutomationFailureType;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackNode;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
-import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
+import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
 import com.spirit.koil.api.console.*;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.util.application.WindowManager;

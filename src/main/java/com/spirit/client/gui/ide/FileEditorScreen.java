@@ -8,7 +8,7 @@ import com.spirit.client.gui.UiSoundHelper;
 import com.spirit.client.gui.mod.ModConfigScreen;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.util.file.media.video.VideoService;
-import com.spirit.koil.chat.internal.upload.RichChatUploadDraft;
+import com.spirit.koil.api.chat.upload.RichChatUploadDraft;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -139,6 +139,14 @@ public class FileEditorScreen extends Screen {
     private String lastErrorDetail = "";
     private final List<EditorDiagnostic> lineDiagnostics = new ArrayList<>();
     private final List<int[]> sidebarDiagnosticMarkerBounds = new ArrayList<>();
+    private boolean showErrorDiagnostics = true;
+    private boolean showWarningDiagnostics = true;
+    private int[] errorVisibilityToggleBounds = null;
+    private int[] warningVisibilityToggleBounds = null;
+    private int[] sidebarFileNameBounds = null;
+    private int[] sidebarFilePathBounds = null;
+    private String sidebarFileNameTooltip = "";
+    private String sidebarFilePathTooltip = "";
     private int cachedErrorCount = 0;
     private int cachedWarningCount = 0;
     private final PopupMenu topBarOpenMenu = new PopupMenu();
@@ -185,6 +193,7 @@ public class FileEditorScreen extends Screen {
         drawSearchDropdown(context, mouseX, mouseY);
         topBarOpenMenu.render(context, mouseX, mouseY);
         super.render(context, mouseX, mouseY, delta);
+        renderSidebarMetadataTooltip(context, mouseX, mouseY);
     }
 
     @Override
@@ -561,6 +570,11 @@ public class FileEditorScreen extends Screen {
             }
         }
 
+        if (button == 0 && handleDiagnosticVisibilityToggle(mouseX, mouseY)) {
+            UiSoundHelper.playButtonClick();
+            return true;
+        }
+
         if (searchInput != null && searchInput.isMouseOver(mouseX, mouseY)) {
             if (replaceInput != null) {
                 replaceInput.setFocused(false);
@@ -754,6 +768,18 @@ public class FileEditorScreen extends Screen {
         lastClickTime = now;
         lastClickLine = point.line();
         return true;
+    }
+
+    private boolean handleDiagnosticVisibilityToggle(double mouseX, double mouseY) {
+        if (isWithinBounds(errorVisibilityToggleBounds, mouseX, mouseY)) {
+            showErrorDiagnostics = !showErrorDiagnostics;
+            return true;
+        }
+        if (isWithinBounds(warningVisibilityToggleBounds, mouseX, mouseY)) {
+            showWarningDiagnostics = !showWarningDiagnostics;
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -1095,17 +1121,38 @@ public class FileEditorScreen extends Screen {
         int headerIconSize = Math.max(24, (int) Math.ceil(combinedTextHeight * 1.33F));
         int headerIconY = startY + Math.max(0, (combinedTextHeight - headerIconSize) / 2);
         int headerTextX = startX + headerIconSize + 10;
+        int headerTextRight = SIDEBAR_WIDTH - 10;
+        int headerTextWidth = Math.max(24, headerTextRight - headerTextX);
+        int scaledNameWidth = Math.max(18, (int) Math.floor(headerTextWidth / 1.3F));
+        String renderedFileName = fitText(fileName, scaledNameWidth);
+        String renderedFilePath = fitText(filePath, headerTextWidth);
+        sidebarFileNameTooltip = renderedFileName.equals(fileName) ? "" : fileName;
+        sidebarFilePathTooltip = renderedFilePath.equals(filePath) ? "" : filePath;
+        sidebarFileNameBounds = new int[]{headerTextX, startY, headerTextWidth, Math.max(10, (int) Math.ceil(this.textRenderer.fontHeight * 1.3F))};
+        sidebarFilePathBounds = new int[]{headerTextX, startY + 15, headerTextWidth, this.textRenderer.fontHeight + 2};
 
         context.drawTexture(icon, startX, headerIconY, 0, 0, headerIconSize, headerIconSize, headerIconSize, headerIconSize);
+        context.enableScissor(headerTextX, startY - 1, headerTextRight, startY + 27);
         context.getMatrices().push();
         context.getMatrices().translate(headerTextX, startY, 0.0F);
         context.getMatrices().scale(1.3F, 1.3F, 1.0F);
-        context.drawText(this.textRenderer, fitText(fileName, Math.max(48, railWidth - 28)), 0, 0, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
+        context.drawText(this.textRenderer, renderedFileName, 0, 0, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
         context.getMatrices().pop();
-        context.drawText(this.textRenderer, fitText(filePath, Math.max(48, railWidth - 28)), headerTextX, startY + 16, new Color(uiColorHeaderSubTitleText, true).getRGB(), false);
+        context.drawText(this.textRenderer, renderedFilePath, headerTextX, startY + 16, new Color(uiColorHeaderSubTitleText, true).getRGB(), false);
+        context.disableScissor();
         context.drawText(this.textRenderer, isDirty() ? "Unsaved edits" : "Synced", headerTextX, startY + 30, isDirty() ? new Color(uiColorWarningPromptText, true).getRGB() : new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
 
-        int rowY = startY + 64;
+        int toggleY = startY + 45;
+        errorVisibilityToggleBounds = renderDiagnosticVisibilityToggle(
+                context, railX, toggleY, "Errors", showErrorDiagnostics,
+                new Color(uiColorFileEditorLineErrorColor, true).getRGB()
+        );
+        warningVisibilityToggleBounds = renderDiagnosticVisibilityToggle(
+                context, railX, toggleY + 13, "Warnings", showWarningDiagnostics,
+                new Color(uiColorFileEditorLineWarnColor, true).getRGB()
+        );
+
+        int rowY = startY + 76;
         context.fill(railX, rowY, railX + railWidth, rowY + 1, withAlpha(uiColorBackgroundBorder, 170));
         rowY += 6;
         rowY = renderSidebarMetricRow(context, railX, railWidth, rowY, "type", language.toLowerCase(Locale.ROOT));
@@ -1123,8 +1170,35 @@ public class FileEditorScreen extends Screen {
             rowY = renderSidebarMetricRow(context, railX, railWidth, rowY + 2, "editor", lastErrorMessage);
         }
         int notesTop = Math.max(rowY + 6, 178);
-        drawSidebarDiagnosticMap(context, railX + railWidth - 8, startY + 54, 4, Math.max(42, notesTop - (startY + 60)));
+        int diagnosticMapTop = startY + 83;
+        drawSidebarDiagnosticMap(context, railX + railWidth - 8, diagnosticMapTop, 4, Math.max(0, notesTop - diagnosticMapTop - 4));
         drawSidebarNotes(context, railX, railWidth, notesTop, this.height - 12);
+    }
+
+    private int[] renderDiagnosticVisibilityToggle(DrawContext context, int x, int y, String label, boolean enabled, int accentColor) {
+        int boxSize = 8;
+        int borderColor = enabled ? accentColor : withAlpha(uiColorBackgroundBorder, 210);
+        context.fill(x, y, x + boxSize, y + boxSize, withAlpha(uiColorContentBase, 150));
+        context.drawBorder(x, y, boxSize, boxSize, borderColor);
+        if (enabled) {
+            context.fill(x + 2, y + 2, x + boxSize - 2, y + boxSize - 2, accentColor);
+        }
+        context.drawText(this.textRenderer, label, x + boxSize + 5, y, enabled
+                ? new Color(uiColorContentBaseTitleText, true).getRGB()
+                : new Color(uiColorHeaderSubTitleText, true).getRGB(), false);
+        return new int[]{x, y, boxSize + 7 + this.textRenderer.getWidth(label), Math.max(boxSize, this.textRenderer.fontHeight)};
+    }
+
+    private void renderSidebarMetadataTooltip(DrawContext context, int mouseX, int mouseY) {
+        String tooltip = "";
+        if (!sidebarFileNameTooltip.isEmpty() && isWithinBounds(sidebarFileNameBounds, mouseX, mouseY)) {
+            tooltip = sidebarFileNameTooltip;
+        } else if (!sidebarFilePathTooltip.isEmpty() && isWithinBounds(sidebarFilePathBounds, mouseX, mouseY)) {
+            tooltip = sidebarFilePathTooltip;
+        }
+        if (!tooltip.isEmpty()) {
+            context.drawTooltip(this.textRenderer, List.of(Text.literal(tooltip)), Optional.empty(), mouseX, mouseY);
+        }
     }
 
     private int renderSidebarMetricRow(DrawContext context, int x, int width, int y, String label, String value) {
@@ -1176,46 +1250,53 @@ public class FileEditorScreen extends Screen {
         int textY = y + 6;
         int lineHeight = this.textRenderer.fontHeight + 2;
         int visibleLines = Math.max(1, (height - 12) / lineHeight);
-        int endLine = Math.min(sidebarNotesDocument.getLineCount(), sidebarNotesVerticalScrollOffset + visibleLines);
+        List<SidebarNoteVisualLine> wrappedLines = sidebarNoteVisualLines();
+        sidebarNotesVerticalScrollOffset = clamp(sidebarNotesVerticalScrollOffset, 0, Math.max(0, wrappedLines.size() - visibleLines));
+        int endLine = Math.min(wrappedLines.size(), sidebarNotesVerticalScrollOffset + visibleLines);
 
         context.enableScissor(x + 1, y + 1, x + width - 1, y + height - 1);
         EditorDocument.SelectionRange selectionRange = sidebarNotesDocument.getSelectionRange();
         if (selectionRange != null) {
-            for (int lineIndex = Math.max(selectionRange.start().line(), sidebarNotesVerticalScrollOffset); lineIndex < Math.min(selectionRange.end().line() + 1, endLine); lineIndex++) {
-                String line = sidebarNotesDocument.getLine(lineIndex);
-                int startColumn = lineIndex == selectionRange.start().line() ? selectionRange.start().column() : 0;
-                int endColumn = lineIndex == selectionRange.end().line() ? selectionRange.end().column() : line.length();
-                int x1 = textX + this.textRenderer.getWidth(line.substring(0, Math.min(startColumn, line.length())));
-                int x2 = textX + this.textRenderer.getWidth(line.substring(0, Math.min(endColumn, line.length())));
-                int drawY = textY + ((lineIndex - sidebarNotesVerticalScrollOffset) * lineHeight) - 1;
+            for (int visualIndex = sidebarNotesVerticalScrollOffset; visualIndex < endLine; visualIndex++) {
+                SidebarNoteVisualLine visualLine = wrappedLines.get(visualIndex);
+                if (visualLine.logicalLine() < selectionRange.start().line() || visualLine.logicalLine() > selectionRange.end().line()) {
+                    continue;
+                }
+                int selectedStart = visualLine.logicalLine() == selectionRange.start().line() ? selectionRange.start().column() : visualLine.startColumn();
+                int selectedEnd = visualLine.logicalLine() == selectionRange.end().line() ? selectionRange.end().column() : visualLine.endColumn();
+                int startColumn = clamp(selectedStart, visualLine.startColumn(), visualLine.endColumn());
+                int endColumn = clamp(selectedEnd, visualLine.startColumn(), visualLine.endColumn());
+                int x1 = textX + this.textRenderer.getWidth(visualLine.text().substring(0, startColumn - visualLine.startColumn()));
+                int x2 = textX + this.textRenderer.getWidth(visualLine.text().substring(0, endColumn - visualLine.startColumn()));
+                int drawY = textY + ((visualIndex - sidebarNotesVerticalScrollOffset) * lineHeight) - 1;
                 if (x2 > x1) {
                     context.fill(x1, drawY, x2, drawY + this.textRenderer.fontHeight + 2, withAlpha(uiColorIDECursorSelection, 120));
                 }
             }
         }
 
-        for (int lineIndex = sidebarNotesVerticalScrollOffset; lineIndex < endLine; lineIndex++) {
-            int drawY = textY + ((lineIndex - sidebarNotesVerticalScrollOffset) * lineHeight);
-            context.drawText(this.textRenderer, sidebarNotesDocument.getLine(lineIndex), textX, drawY, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
+        for (int visualIndex = sidebarNotesVerticalScrollOffset; visualIndex < endLine; visualIndex++) {
+            int drawY = textY + ((visualIndex - sidebarNotesVerticalScrollOffset) * lineHeight);
+            context.drawText(this.textRenderer, wrappedLines.get(visualIndex).text(), textX, drawY, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
         }
         if (sidebarNotesDocument.getText().isBlank()) {
             context.drawText(this.textRenderer, "Write notes for this file...", textX, textY, new Color(uiColorHeaderSubTitleText, true).getRGB(), false);
         }
         if (sidebarNotesFocused) {
-            renderSidebarNotesCaret(context, textX, textY, lineHeight);
+            renderSidebarNotesCaret(context, textX, textY, lineHeight, wrappedLines);
         }
         context.disableScissor();
     }
 
     private void drawSidebarDiagnosticMap(DrawContext context, int x, int y, int width, int height) {
-        if (document == null || lineDiagnostics.isEmpty()) {
+        if (document == null || lineDiagnostics.isEmpty() || height < 4) {
             return;
         }
         context.fill(x, y, x + width, y + height, withAlpha(uiColorHeader, 64));
         context.drawBorder(x, y, width, height, withAlpha(uiColorBackgroundBorder, 180));
         for (int lineIndex = 0; lineIndex < lineDiagnostics.size(); lineIndex++) {
             EditorDiagnostic diagnostic = lineDiagnostics.get(lineIndex);
-            if (diagnostic == null) {
+            if (!isDiagnosticVisible(diagnostic)) {
                 continue;
             }
             double normalized = lineDiagnostics.size() <= 1 ? 0.0 : (double) lineIndex / (double) (lineDiagnostics.size() - 1);
@@ -1227,18 +1308,19 @@ public class FileEditorScreen extends Screen {
         }
     }
 
-    private void renderSidebarNotesCaret(DrawContext context, int textX, int textY, int lineHeight) {
-        int cursorLine = sidebarNotesDocument.getCursorLine();
-        if (cursorLine < sidebarNotesVerticalScrollOffset) {
+    private void renderSidebarNotesCaret(DrawContext context, int textX, int textY, int lineHeight, List<SidebarNoteVisualLine> wrappedLines) {
+        int visualIndex = sidebarNoteVisualIndexForCursor(wrappedLines);
+        if (visualIndex < sidebarNotesVerticalScrollOffset) {
             return;
         }
-        int visibleIndex = cursorLine - sidebarNotesVerticalScrollOffset;
+        int visibleIndex = visualIndex - sidebarNotesVerticalScrollOffset;
         int maxVisible = Math.max(1, (sidebarNotesBounds[3] - 12) / lineHeight);
         if (visibleIndex >= maxVisible) {
             return;
         }
-        String line = sidebarNotesDocument.getLine(cursorLine);
-        int caretX = textX + this.textRenderer.getWidth(line.substring(0, Math.min(sidebarNotesDocument.getCursorColumn(), line.length())));
+        SidebarNoteVisualLine visualLine = wrappedLines.get(visualIndex);
+        int localColumn = clamp(sidebarNotesDocument.getCursorColumn() - visualLine.startColumn(), 0, visualLine.text().length());
+        int caretX = textX + this.textRenderer.getWidth(visualLine.text().substring(0, localColumn));
         int caretY = textY + (visibleIndex * lineHeight) - 1;
         context.fill(caretX, caretY, caretX + 1, caretY + this.textRenderer.fontHeight + 2, new Color(uiColorIDECursor, true).getRGB());
     }
@@ -1321,7 +1403,7 @@ public class FileEditorScreen extends Screen {
         }
         int lineHeight = this.textRenderer.fontHeight + 2;
         int visibleLines = Math.max(1, (sidebarNotesBounds[3] - 12) / lineHeight);
-        return Math.max(0, sidebarNotesDocument.getLineCount() - visibleLines);
+        return Math.max(0, sidebarNoteVisualLines().size() - visibleLines);
     }
 
     private void ensureSidebarNotesCursorVisible() {
@@ -1330,10 +1412,12 @@ public class FileEditorScreen extends Screen {
         }
         int lineHeight = this.textRenderer.fontHeight + 2;
         int visibleLines = Math.max(1, (sidebarNotesBounds[3] - 12) / lineHeight);
-        if (sidebarNotesDocument.getCursorLine() < sidebarNotesVerticalScrollOffset) {
-            sidebarNotesVerticalScrollOffset = sidebarNotesDocument.getCursorLine();
-        } else if (sidebarNotesDocument.getCursorLine() >= sidebarNotesVerticalScrollOffset + visibleLines) {
-            sidebarNotesVerticalScrollOffset = sidebarNotesDocument.getCursorLine() - visibleLines + 1;
+        List<SidebarNoteVisualLine> wrappedLines = sidebarNoteVisualLines();
+        int cursorVisualLine = sidebarNoteVisualIndexForCursor(wrappedLines);
+        if (cursorVisualLine < sidebarNotesVerticalScrollOffset) {
+            sidebarNotesVerticalScrollOffset = cursorVisualLine;
+        } else if (cursorVisualLine >= sidebarNotesVerticalScrollOffset + visibleLines) {
+            sidebarNotesVerticalScrollOffset = cursorVisualLine - visibleLines + 1;
         }
         sidebarNotesVerticalScrollOffset = clamp(sidebarNotesVerticalScrollOffset, 0, getSidebarNotesMaxScroll());
     }
@@ -1344,18 +1428,81 @@ public class FileEditorScreen extends Screen {
         }
         int lineHeight = this.textRenderer.fontHeight + 2;
         int relativeLine = Math.max(0, (int) ((mouseY - (sidebarNotesBounds[1] + 6)) / lineHeight));
-        int lineIndex = clamp(sidebarNotesVerticalScrollOffset + relativeLine, 0, sidebarNotesDocument.getLineCount() - 1);
-        String line = sidebarNotesDocument.getLine(lineIndex);
+        List<SidebarNoteVisualLine> wrappedLines = sidebarNoteVisualLines();
+        int visualIndex = clamp(sidebarNotesVerticalScrollOffset + relativeLine, 0, wrappedLines.size() - 1);
+        SidebarNoteVisualLine visualLine = wrappedLines.get(visualIndex);
+        String line = visualLine.text();
         int localX = (int) mouseX - (sidebarNotesBounds[0] + 6);
-        int column = 0;
+        int column = visualLine.startColumn();
         for (int i = 1; i <= line.length(); i++) {
             int width = this.textRenderer.getWidth(line.substring(0, i));
             if (localX < width) {
                 break;
             }
-            column = i;
+            column = visualLine.startColumn() + i;
         }
-        return new SidebarNotePoint(lineIndex, column);
+        return new SidebarNotePoint(visualLine.logicalLine(), column);
+    }
+
+    private List<SidebarNoteVisualLine> sidebarNoteVisualLines() {
+        List<SidebarNoteVisualLine> visualLines = new ArrayList<>();
+        if (sidebarNotesDocument == null) {
+            return visualLines;
+        }
+        int maxWidth = sidebarNotesBounds == null ? SIDEBAR_WIDTH - 32 : Math.max(8, sidebarNotesBounds[2] - 12);
+        for (int logicalLine = 0; logicalLine < sidebarNotesDocument.getLineCount(); logicalLine++) {
+            String line = sidebarNotesDocument.getLine(logicalLine);
+            if (line.isEmpty()) {
+                visualLines.add(new SidebarNoteVisualLine(logicalLine, 0, 0, ""));
+                continue;
+            }
+            int start = 0;
+            while (start < line.length()) {
+                String remaining = line.substring(start);
+                String fitted = this.textRenderer.trimToWidth(remaining, maxWidth);
+                int length = Math.max(1, fitted.length());
+                if (length < remaining.length()) {
+                    int whitespace = -1;
+                    for (int index = length - 1; index > 0; index--) {
+                        if (Character.isWhitespace(remaining.charAt(index))) {
+                            whitespace = index + 1;
+                            break;
+                        }
+                    }
+                    if (whitespace > 0) {
+                        length = whitespace;
+                    }
+                }
+                int end = Math.min(line.length(), start + length);
+                visualLines.add(new SidebarNoteVisualLine(logicalLine, start, end, line.substring(start, end)));
+                start = end;
+            }
+        }
+        if (visualLines.isEmpty()) {
+            visualLines.add(new SidebarNoteVisualLine(0, 0, 0, ""));
+        }
+        return visualLines;
+    }
+
+    private int sidebarNoteVisualIndexForCursor(List<SidebarNoteVisualLine> wrappedLines) {
+        if (wrappedLines.isEmpty() || sidebarNotesDocument == null) {
+            return 0;
+        }
+        int cursorLine = sidebarNotesDocument.getCursorLine();
+        int cursorColumn = sidebarNotesDocument.getCursorColumn();
+        int lastMatch = 0;
+        for (int index = 0; index < wrappedLines.size(); index++) {
+            SidebarNoteVisualLine visualLine = wrappedLines.get(index);
+            if (visualLine.logicalLine() != cursorLine) {
+                continue;
+            }
+            lastMatch = index;
+            boolean lastForLogicalLine = index + 1 >= wrappedLines.size() || wrappedLines.get(index + 1).logicalLine() != cursorLine;
+            if (cursorColumn >= visualLine.startColumn() && (cursorColumn < visualLine.endColumn() || lastForLogicalLine)) {
+                return index;
+            }
+        }
+        return lastMatch;
     }
 
     private void selectSidebarNotesWord(int lineIndex, int column) {
@@ -1517,7 +1664,7 @@ public class FileEditorScreen extends Screen {
         for (int lineIndex = verticalScrollOffset; lineIndex < endLine; lineIndex++) {
             int visibleIndex = lineIndex - verticalScrollOffset;
             int drawY = viewportY + 6 + (visibleIndex * lineHeight);
-            EditorDiagnostic diagnostic = getLineDiagnostic(lineIndex);
+            EditorDiagnostic diagnostic = getVisibleLineDiagnostic(lineIndex);
             int lineNumberX = viewportX + gutterWidth - 8 - this.textRenderer.getWidth(String.valueOf(lineIndex + 1));
             context.drawText(this.textRenderer, String.valueOf(lineIndex + 1), lineNumberX, drawY, lineIndex == document.getCursorLine() ? activeGutterTextColor : gutterTextColor, false);
             if (diagnostic != null) {
@@ -1546,7 +1693,7 @@ public class FileEditorScreen extends Screen {
         for (int lineIndex = verticalScrollOffset; lineIndex < endLine; lineIndex++) {
             int visibleIndex = lineIndex - verticalScrollOffset;
             int drawY = viewportY + 6 + (visibleIndex * lineHeight);
-            EditorDiagnostic diagnostic = getLineDiagnostic(lineIndex);
+            EditorDiagnostic diagnostic = getVisibleLineDiagnostic(lineIndex);
             if (diagnostic != null) {
                 int fillColor = diagnostic.severity() == DiagnosticSeverity.ERROR
                         ? errorLineFill
@@ -1576,7 +1723,7 @@ public class FileEditorScreen extends Screen {
         renderEditorScrollbar(context, viewportX, viewportY, viewportWidth, viewportHeight);
 
         if (hoveredMalformedLine >= 0) {
-            EditorDiagnostic diagnostic = getLineDiagnostic(hoveredMalformedLine);
+            EditorDiagnostic diagnostic = getVisibleLineDiagnostic(hoveredMalformedLine);
             if (diagnostic != null) {
                 context.drawTooltip(this.textRenderer, buildDiagnosticTooltip(hoveredMalformedLine, diagnostic), Optional.empty(), mouseX, mouseY);
             }
@@ -2710,7 +2857,7 @@ public class FileEditorScreen extends Screen {
         if (lineIndex < 0 || lineIndex >= document.getLineCount()) {
             return -1;
         }
-        return getLineDiagnostic(lineIndex) != null ? lineIndex : -1;
+        return getVisibleLineDiagnostic(lineIndex) != null ? lineIndex : -1;
     }
 
     private void rememberSearch(String rawQuery) {
@@ -2726,7 +2873,7 @@ public class FileEditorScreen extends Screen {
     }
 
     private boolean applyDiagnosticQuickClick(int lineIndex) {
-        EditorDiagnostic diagnostic = getLineDiagnostic(lineIndex);
+        EditorDiagnostic diagnostic = getVisibleLineDiagnostic(lineIndex);
         if (diagnostic == null || diagnostic.quickClick() == null || !canMutateDocument("Quick Click is unavailable")) {
             return false;
         }
@@ -3816,6 +3963,17 @@ public class FileEditorScreen extends Screen {
         return lineDiagnostics.get(lineIndex);
     }
 
+    private EditorDiagnostic getVisibleLineDiagnostic(int lineIndex) {
+        EditorDiagnostic diagnostic = getLineDiagnostic(lineIndex);
+        return isDiagnosticVisible(diagnostic) ? diagnostic : null;
+    }
+
+    private boolean isDiagnosticVisible(EditorDiagnostic diagnostic) {
+        return diagnostic != null && (diagnostic.severity() == DiagnosticSeverity.ERROR
+                ? showErrorDiagnostics
+                : showWarningDiagnostics);
+    }
+
     private EditorDiagnostic computeLineDiagnostic(int lineIndex) {
         String line = document.getLine(lineIndex);
         if (line.isBlank()) {
@@ -4847,6 +5005,7 @@ public class FileEditorScreen extends Screen {
 
     private record EditorPoint(int line, int column) {}
     private record SidebarNotePoint(int line, int column) {}
+    private record SidebarNoteVisualLine(int logicalLine, int startColumn, int endColumn, String text) {}
     private record SidebarMetric(String label, String value) {}
     private record OpenSymbol(char symbol, int line) {}
     private record EditorQuickClick(String label, QuickClickKind kind, String payload) {}

@@ -47,7 +47,20 @@ public abstract class KeyboardMixin {
 	@Inject(at = @At("HEAD"), method = "Lnet/minecraft/client/Keyboard;onKey(JIIII)V", cancellable = true)
 	public void onKey(long window, int key, int scancode, int action, int modifiers, CallbackInfo ci) {
 		if (window == this.client.getWindow().getHandle()) {
-			boolean koilF3Enabled = KoilScreenBackgrounds.uiRedesignEnabled() && !Main.vanillaF3Design() && !F3Controller.vanillaFallback();
+			boolean koilOwnsF3 = KoilScreenBackgrounds.uiRedesignEnabled() && !Main.vanillaF3Design() && !F3Controller.vanillaFallback();
+			boolean koilF3Enabled = koilOwnsF3 && F3Controller.isPlayableDebugContext(this.client);
+			if (key == GLFW.GLFW_KEY_F3 && koilOwnsF3 && !koilF3Enabled) {
+				this.client.options.debugEnabled = false;
+				F3LayoutState.overlayVisible(false);
+				ci.cancel();
+				return;
+			}
+			if (koilOwnsF3 && !koilF3Enabled
+					&& InputUtil.isKeyPressed(this.client.getWindow().getHandle(), GLFW.GLFW_KEY_F3)) {
+				this.client.options.debugEnabled = false;
+				ci.cancel();
+				return;
+			}
 			if (key == GLFW.GLFW_KEY_F3 && koilF3Enabled) {
 				this.client.options.debugEnabled = false;
 				if (action == GLFW.GLFW_RELEASE) {

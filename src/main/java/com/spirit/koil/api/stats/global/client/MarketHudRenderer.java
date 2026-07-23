@@ -25,7 +25,7 @@ public final class MarketHudRenderer {
     }
 
     public static void render(DrawContext context, MinecraftClient client) {
-        MarketHudBlock block = buildBlock(client);
+        MarketHudBlock block = buildBlock(client, 0);
 
         if (block == null || client == null) {
             return;
@@ -36,7 +36,11 @@ public final class MarketHudRenderer {
     }
 
     public static void renderAt(DrawContext context, MinecraftClient client, int y) {
-        MarketHudBlock block = buildBlock(client);
+        renderAt(context, client, y, 0);
+    }
+
+    public static void renderAt(DrawContext context, MinecraftClient client, int y, int requestedWidth) {
+        MarketHudBlock block = buildBlock(client, requestedWidth);
         if (block == null || client == null) {
             return;
         }
@@ -70,11 +74,15 @@ public final class MarketHudRenderer {
     }
 
     public static int panelHeight(MinecraftClient client) {
-        MarketHudBlock block = buildBlock(client);
+        return panelHeight(client, 0);
+    }
+
+    public static int panelHeight(MinecraftClient client, int requestedWidth) {
+        MarketHudBlock block = buildBlock(client, requestedWidth);
         return block == null ? 0 : block.height;
     }
 
-    private static MarketHudBlock buildBlock(MinecraftClient client) {
+    private static MarketHudBlock buildBlock(MinecraftClient client, int requestedWidth) {
         if (client == null || client.player == null || client.textRenderer == null || client.currentScreen instanceof ConsoleScreen) {
             return null;
         }
@@ -92,12 +100,15 @@ public final class MarketHudRenderer {
         }
 
         int chatWidth = client.inGameHud == null ? 0 : client.inGameHud.getChatHud().getWidth();
-        String key = blockCacheKey(client, snapshot, chatWidth);
+        int defaultWidth = Math.min(client.getWindow().getScaledWidth(), Math.max(snapshot.entries().size() >= 2 ? 330 : 246, chatWidth + 12));
+        int width = requestedWidth > 0
+                ? Math.min(client.getWindow().getScaledWidth(), Math.max(1, requestedWidth))
+                : defaultWidth;
+        String key = blockCacheKey(client, snapshot, width);
 
         if (cachedBlock != null && key.equals(cachedBlockKey)) {
             return cachedBlock;
         }
-        int width = Math.min(client.getWindow().getScaledWidth(), Math.max(snapshot.entries().size() >= 2 ? 330 : 246, chatWidth + 12));
         int innerWidth = width - 14;
         int lineHeight = client.textRenderer.fontHeight + 1;
         List<OrderedText> lines = new ArrayList<>();

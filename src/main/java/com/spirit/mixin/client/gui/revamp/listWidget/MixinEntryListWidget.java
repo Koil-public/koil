@@ -99,7 +99,7 @@ public abstract class MixinEntryListWidget<E extends AlwaysSelectedEntryListWidg
      * @reason to remove black
      */
     @Overwrite
-    protected void drawSelectionHighlight(DrawContext context, int y, int entryWidth, int entryHeight, int borderColor, int fillColor) {
+    public void drawSelectionHighlight(DrawContext context, int y, int entryWidth, int entryHeight, int borderColor, int fillColor) {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
             if (!koil$usesKoilListRowHighlights()) {
                 if (koil$isLanguageOptionsScreen()) {

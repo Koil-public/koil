@@ -30,7 +30,7 @@ public class MixinGameOptionsScreen extends Screen {
      * @reason to make it look better
      */
     @Overwrite
-    protected void render(DrawContext context, OptionListWidget optionButtons, int mouseX, int mouseY, float tickDelta) {
+    public void render(DrawContext context, OptionListWidget optionButtons, int mouseX, int mouseY, float tickDelta) {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
             MinecraftClient client = MinecraftClient.getInstance();
             KoilVanillaScreenChrome.renderOptionsShell(context, client, this.width, this.height);

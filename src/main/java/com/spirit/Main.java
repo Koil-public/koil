@@ -5,10 +5,10 @@ import com.google.gson.JsonPrimitive;
 import com.spirit.koil.api.automation.AutomationPresenceServerBridge;
 import com.spirit.koil.api.automation.AutomationRemoteRunServerBridge;
 import com.spirit.koil.api.automation.KoilCommandPauseBridge;
-import com.spirit.koil.api.screen.KoilRemoteScreenServerBridge;
+import com.spirit.koil.api.chat.AttentionCommandBridge;
 import com.spirit.koil.api.console.ConsoleChannel;
+import com.spirit.koil.api.screen.KoilRemoteScreenServerBridge;
 import com.spirit.koil.api.stats.global.KoilGlobalActivityServer;
-import com.spirit.koil.chat.internal.sync.RichChatSyncServerBridge;
 import com.spirit.koil.api.util.application.WindowManager;
 import com.spirit.koil.api.util.console.log.SubFileLogger;
 import com.spirit.koil.api.util.file.FileSanitizer;
@@ -17,6 +17,7 @@ import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.util.file.json.JsonBlockMaker;
 import com.spirit.koil.api.util.file.json.JsonItemMaker;
 import com.spirit.koil.api.util.web.WebFileDownloader;
+import com.spirit.koil.api.chat.sync.RichChatSyncServerBridge;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
@@ -30,7 +31,6 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 import java.util.regex.Pattern;
 
 import static com.spirit.koil.api.util.file.jar.strings.ModIds.KOIL_ID;
@@ -135,11 +135,7 @@ public class Main implements ModInitializer {
 
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.getSession() != null) {
-            WebFileDownloader.downloadFile(
-                    "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data/player_data/" + client.getSession().getUsername() + "/uuid.json",
-                    "player_data.json",
-                    "./koil/sys/cache/player_data",
-                    16
+            WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data/player_data/" + client.getSession().getUsername() + "/uuid.json", "player_data.json", "./koil/sys/cache/player_data", 16
             );
         } else {
             SUBLOGGER.logW("Start-up thread", "Skipping player-data bootstrap because the Minecraft client session is not available yet.");
@@ -194,7 +190,7 @@ public class Main implements ModInitializer {
     }
 
     public static final String VERSION = "0.70.25";
-    public static final String BETA_VERSION = "0.70.26-unfinished.11";
+    public static final String BETA_VERSION = "0.70.26-unfinished.12";
     public static final String FREQUENT_BETA_VERSION = "0.70.26-frequent.0";
     public static final Identifier LOGO_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/icon.png");
     public static final Identifier AUTOMATION_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/automation.png");
@@ -362,7 +358,7 @@ public class Main implements ModInitializer {
         AutomationRemoteRunServerBridge.registerCommands();
         KoilRemoteScreenServerBridge.registerCommands();
         KoilCommandPauseBridge.register();
-        com.spirit.koil.api.chat.KoilAttentionCommandBridge.register();
+        AttentionCommandBridge.register();
         AutomationPresenceServerBridge.register();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -489,18 +485,6 @@ public class Main implements ModInitializer {
         return fallback;
     }
 
-    public static String changelog() {
-        isBetaTesting = JSONFileEditor.getValueFromJson("./koil/sys/config.json", "isBetaTesting").getAsBoolean();
-        if (isBetaTesting) return JSONFileEditor.getValueFromJson("./koil/sys/data.json", "changeLogBeta").getAsString();
-        else return JSONFileEditor.getValueFromJson("./koil/sys/data.json", "changeLog").getAsString();
-    }
-
-    public static String changelogFull() {
-        isBetaTesting = JSONFileEditor.getValueFromJson("./koil/sys/config.json", "isBetaTesting").getAsBoolean();
-        if (isBetaTesting) return JSONFileEditor.getValueFromJson("./koil/sys/data.json", "changeLogFullBeta").getAsString();
-        else return JSONFileEditor.getValueFromJson("./koil/sys/data.json", "changeLogFull").getAsString();
-    }
-
     /*
     --Branch Check Layout--
     registerMod
@@ -525,24 +509,9 @@ public class Main implements ModInitializer {
     Packets
     */
 
-    public static UUID getSessionUUID(MinecraftClient client) {
-        String uuidString = client.getSession().getUuid().replace("-", ""); // Remove dashes if present
-
-        if (isValidUUID(uuidString)) {
-            String formattedUUID = uuidString.replaceFirst(
-                    "(\\p{XDigit}{8})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}+)",
-                    "$1-$2-$3-$4-$5"
-            );
-            return UUID.fromString(formattedUUID);
-        } else {
-            throw new IllegalArgumentException("Invalid UUID string: " + uuidString);
-        }
-    }
-
     private static boolean isValidUUID(String uuid) {
         return UUID_PATTERN.matcher(uuid).matches();
     }
-
 
     public static final Map<Character, String[]> ENCRYPTION_MAP = new HashMap<>();
     private static final Map<String, Character> DECRYPTION_MAP = new HashMap<>();

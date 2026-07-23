@@ -109,11 +109,14 @@ public class MixinLanguageOptionsScreen extends GameOptionsScreen {
     }
 
     private void koil$renderLanguageChrome(DrawContext context, AlwaysSelectedEntryListWidget<?> languageList) {
-        KoilScreenBackgrounds.render(context, this.client, this.width, this.height);
-        if (KoilScreenBackgrounds.canRender(this.client)) {
-            context.fill(0, 0, this.width, this.height, KoilScreenBackgrounds.overlayColor(this.client));
-        }
-        koil$renderLanguageFrame(context, koil$chromeTop(languageList), koil$chromeBottom(languageList));
+        KoilVanillaScreenChrome.renderListShell(
+                context,
+                this.client,
+                this.width,
+                this.height,
+                koil$chromeTop(languageList),
+                koil$chromeBottom(languageList)
+        );
         KoilVanillaScreenChrome.renderTitle(context, this.textRenderer, Text.literal("Options"), this.title);
     }
 

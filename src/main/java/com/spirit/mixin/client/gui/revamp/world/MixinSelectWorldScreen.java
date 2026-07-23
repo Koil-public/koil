@@ -174,7 +174,7 @@ public abstract class MixinSelectWorldScreen extends Screen {
      * @reason WE BE BALLING
      */
     @Overwrite
-    protected void init() {
+    public void init() {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
             int x = 37;
             this.searchBox = new TextFieldWidget(this.textRenderer, width - 210, 10, 200, 20, this.searchBox, Text.translatable("selectWorld.search"));
@@ -260,7 +260,10 @@ public abstract class MixinSelectWorldScreen extends Screen {
             this.lastMouseX = mouseX;
             this.lastMouseY = mouseY;
             MinecraftClient client = MinecraftClient.getInstance();
-            context.drawTexture(DesignLoader.getLoadingTexture(), 0, 0, client.getWindow().getScaledWidth(), client.getWindow().getScaledHeight(), 0.0F, 0.0F, 319, 192, 319, 192);
+            boolean openedOverWorld = client.world != null;
+            if (!openedOverWorld) {
+                context.drawTexture(DesignLoader.getLoadingTexture(), 0, 0, client.getWindow().getScaledWidth(), client.getWindow().getScaledHeight(), 0.0F, 0.0F, 319, 192, 319, 192);
+            }
 
             context.fill(0, 0, width, 43, new Color(uiColorHeader, true).getRGB());
             context.fill(0, 39, width, 42, new Color(uiColorHeaderStripe, true).getRGB());
@@ -269,7 +272,9 @@ public abstract class MixinSelectWorldScreen extends Screen {
             context.fill(35, 39, 350, this.height - 60, new Color(uiColorContentBase, true).getRGB());
             context.fill(37, 39, 39, this.height - 60, new Color(uiColorContentStripeLeft, true).getRGB());
             context.fill(346, 39, 348, this.height - 60, new Color(uiColorContentStripeRight, true).getRGB());
-            context.fill(0, 0, width, height, new Color(uiColorBackgroundOverlay, true).getRGB());
+            if (!openedOverWorld) {
+                context.fill(0, 0, width, height, new Color(uiColorBackgroundOverlay, true).getRGB());
+            }
 
             if (this.ipButton != null) {
                 this.ipButton.visible = false;

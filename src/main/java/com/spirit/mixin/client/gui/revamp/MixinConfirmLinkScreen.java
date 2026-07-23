@@ -34,7 +34,7 @@ public abstract class MixinConfirmLinkScreen extends ConfirmScreen {
      * @reason im so tired
      */
     @Overwrite
-    protected void addButtons(int y) {
+    public void addButtons(int y) {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
             this.addDrawableChild(ButtonWidget.builder(this.COPY, (button) -> {
                 this.copyToClipboard();

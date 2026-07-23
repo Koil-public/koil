@@ -1,6 +1,7 @@
 package com.spirit.koil.api.f3;
 
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import org.lwjgl.glfw.GLFW;
@@ -13,6 +14,12 @@ public final class F3Controller {
 
     public static boolean vanillaFallback() {
         return vanillaFallback;
+    }
+
+    public static boolean isPlayableDebugContext(MinecraftClient client) {
+        return client != null
+                && client.world != null
+                && (client.currentScreen == null || client.currentScreen instanceof ChatScreen);
     }
 
     public static void toggleVanillaFallback() {

@@ -1,29 +1,29 @@
 package com.spirit.mixin.client.gui;
 
 import com.spirit.koil.api.automation.AutomationChatTrigger;
-import com.spirit.koil.chat.internal.ChatHudPanelStack;
-import com.spirit.koil.chat.internal.ChatHudRefreshBridge;
-import com.spirit.koil.chat.internal.LocalOverflowChatBridge;
-import com.spirit.koil.chat.internal.LocalMultilineChatBridge;
-import com.spirit.koil.chat.internal.MultilineChatInputLayout;
-import com.spirit.koil.chat.internal.RichChatCodeBlockBridge;
-import com.spirit.koil.chat.internal.RichChatCommandFeedbackFormatter;
-import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
-import com.spirit.koil.chat.internal.RichChatPrivateChunkBridge;
-import com.spirit.koil.chat.internal.RichChatPrivateMessageBridge;
-import com.spirit.koil.chat.internal.RichChatBodyWrapFormatter;
-import com.spirit.koil.chat.internal.RichChatRenderContext;
-import com.spirit.koil.chat.internal.RichChatRowClassifier;
-import com.spirit.koil.chat.internal.RichChatRowType;
-import com.spirit.koil.chat.internal.RichChatTimestampBridge;
-import com.spirit.koil.chat.internal.latex.RichChatLatexFormatter;
-import com.spirit.koil.chat.internal.latex.RichChatLatexTextureCache;
-import com.spirit.koil.chat.internal.upload.LocalRichAttachmentBridge;
-import com.spirit.koil.chat.internal.upload.RichChatAttachmentRenderer;
-import com.spirit.koil.chat.internal.upload.RichChatUploadDraft;
-import com.spirit.koil.chat.internal.upload.RichChatWebImageBridge;
-import com.spirit.koil.chat.internal.sync.RichChatSyncedMessageBridge;
-import com.spirit.koil.chat.api.RichChatSettings;
+import com.spirit.koil.api.chat.ChatHudPanelStack;
+import com.spirit.koil.api.chat.ChatHudRefreshBridge;
+import com.spirit.koil.api.chat.LocalOverflowChatBridge;
+import com.spirit.koil.api.chat.LocalMultilineChatBridge;
+import com.spirit.koil.api.chat.MultilineChatInputLayout;
+import com.spirit.koil.api.chat.RichChatCodeBlockBridge;
+import com.spirit.koil.api.chat.RichChatCommandFeedbackFormatter;
+import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
+import com.spirit.koil.api.chat.RichChatPrivateChunkBridge;
+import com.spirit.koil.api.chat.RichChatPrivateMessageBridge;
+import com.spirit.koil.api.chat.RichChatBodyWrapFormatter;
+import com.spirit.koil.api.chat.RichChatRenderContext;
+import com.spirit.koil.api.chat.RichChatRowClassifier;
+import com.spirit.koil.api.chat.RichChatRowType;
+import com.spirit.koil.api.chat.RichChatTimestampBridge;
+import com.spirit.koil.api.chat.latex.RichChatLatexFormatter;
+import com.spirit.koil.api.chat.latex.RichChatLatexTextureCache;
+import com.spirit.koil.api.chat.upload.LocalRichAttachmentBridge;
+import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
+import com.spirit.koil.api.chat.upload.RichChatUploadDraft;
+import com.spirit.koil.api.chat.upload.RichChatWebImageBridge;
+import com.spirit.koil.api.chat.sync.RichChatSyncedMessageBridge;
+import com.spirit.koil.api.chat.RichChatSettings;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
@@ -33,7 +33,9 @@ import net.minecraft.client.gui.hud.ChatHudLine;
 import net.minecraft.client.gui.hud.MessageIndicator;
 import net.minecraft.network.message.MessageSignatureData;
 import net.minecraft.text.OrderedText;
+import net.minecraft.text.StringVisitable;
 import net.minecraft.text.Text;
+import net.minecraft.client.util.ChatMessages;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -41,6 +43,7 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.Unique;
 
@@ -83,11 +86,29 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
     private boolean koil$chatScrollbarDragging;
     private int koil$chatScrollbarDragOffset;
 
+    @ModifyVariable(method = {"getTextStyleAt", "getIndicatorAt"}, at = @At("HEAD"), argsOnly = true, ordinal = 1)
+    private double koil$alignVanillaHoverYWithShiftedChat(double mouseY) {
+        return mouseY + koil$automationHudReservedHeight;
+    }
+
     @Invoker("addMessage")
     protected abstract void koil$invokeAddMessage(Text message, MessageSignatureData signature, int ticks, MessageIndicator indicator, boolean refresh);
 
     @Invoker("logChatMessage")
     protected abstract void koil$invokeLogChatMessage(Text message, MessageIndicator indicator);
+
+    @Redirect(
+            method = "addMessage(Lnet/minecraft/text/Text;Lnet/minecraft/network/message/MessageSignatureData;ILnet/minecraft/client/gui/hud/MessageIndicator;Z)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/util/ChatMessages;breakRenderedChatMessageLines(Lnet/minecraft/text/StringVisitable;ILnet/minecraft/client/font/TextRenderer;)Ljava/util/List;"
+            )
+    )
+    private List<OrderedText> koil$wrapWithoutHiddenPrivateMarkerWidth(StringVisitable message, int width, TextRenderer renderer) {
+        String visible = message == null ? "" : message.getString();
+        int adjustedWidth = width + RichChatPrivateMessageBridge.nativeWrapWidthAdjustment(renderer, visible);
+        return ChatMessages.breakRenderedChatMessageLines(message, adjustedWidth, renderer);
+    }
 
     @Inject(method = "render", at = @At("HEAD"))
     private void koil$beginAutomationHudRender(DrawContext context, int currentTick, int mouseX, int mouseY, CallbackInfo ci) {
@@ -97,6 +118,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         int reservedHeight = ChatHudPanelStack.reservedHeight(client)
                 + MultilineChatInputLayout.reservedHeight(client)
                 + RichChatUploadDraft.reservedHeight();
+        ChatHudPanelStack.beginChatFrame(reservedHeight);
         if (reservedHeight > 0) {
             koil$automationHudReservedHeight = reservedHeight;
             koil$shiftedForAutomationHud = true;
@@ -128,6 +150,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
             )
     )
     private int koil$renderLatexTextures(DrawContext context, TextRenderer renderer, OrderedText orderedText, int x, int y, int color) {
+        ChatHudPanelStack.observeChatLine(context, y);
         if (!RichChatSettings.enabled() || (!RichChatSettings.mediaEnabled() && !RichChatSettings.latexEnabled() && !RichChatSettings.effectsEnabled())) {
             return context.drawTextWithShadow(renderer, orderedText, x, y, color);
         }
@@ -191,7 +214,10 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
             rewritten = RichChatBodyWrapFormatter.format(rewritten, rowType);
         }
         if (commandFeedback) {
-            rewritten = RichChatCommandFeedbackFormatter.styleBeforeNativeWrap(rewritten);
+            rewritten = RichChatCommandFeedbackFormatter.styleBeforeNativeWrap(
+                    rewritten,
+                    rowType == RichChatRowType.COMMAND_BLOCK_REPEATING
+            );
         }
         if (RichChatSettings.timestampsEnabled()) {
             RichChatTimestampBridge.remember(rewritten);

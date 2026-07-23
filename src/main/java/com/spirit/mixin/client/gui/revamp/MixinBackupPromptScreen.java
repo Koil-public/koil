@@ -72,7 +72,7 @@ public class MixinBackupPromptScreen extends Screen {
      * @reason fuck it we ball
      */
     @Overwrite
-    protected void init() {
+    public void init() {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
             super.init();
             int x = KOIL_WARNING_LEFT;

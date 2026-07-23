@@ -35,7 +35,7 @@ public class MixinSkinOptionsScreen extends GameOptionsScreen {
      * @reason to add a button
      */
     @Overwrite
-    protected void init() {
+    public void init() {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
 
             int i = 0;

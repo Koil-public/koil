@@ -13,6 +13,17 @@ base {
 	archivesName = project.archives_base_name
 }
 
+def devLaunchProperties = new Properties()
+def devLaunchPropertiesFile = file("dev-launch.properties")
+if (devLaunchPropertiesFile.isFile()) {
+	devLaunchPropertiesFile.withInputStream { stream ->
+		devLaunchProperties.load(stream)
+	}
+}
+
+def devUsername = devLaunchProperties.getProperty("username", "Dev").trim()
+def devUuid = devLaunchProperties.getProperty("uuid", "").trim()
+
 repositories {
 	maven { url 'https://maven.fabricmc.net/' }
 	maven { url 'https://repo.spongepowered.org/maven/' }
@@ -35,6 +46,15 @@ repositories {
 	}
 }
 
+configurations.configureEach {
+	resolutionStrategy.eachDependency { details ->
+		if (details.requested.group == "org.lwjgl") {
+			details.useVersion("3.3.1")
+			details.because("Minecraft 1.20.1 runtime compatibility")
+		}
+	}
+}
+
 sourceSets {
 	main {
 		resources {
@@ -51,7 +71,6 @@ dependencies {
 	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-	modImplementation "com.terraformersmc:modmenu:7.2.2"
 	modImplementation("net.fabricmc:fabric-language-kotlin:1.12.3+kotlin.2.0.21")
 
 	// OkHttp and Gson dependencies
@@ -68,14 +87,6 @@ dependencies {
 	implementation 'org.scilab.forge:jlatexmath:1.0.7'
 	include 'org.scilab.forge:jlatexmath:1.0.7'
 
-	// Kotlin standard library
-	implementation "org.jetbrains.kotlin:kotlin-stdlib:1.8.10"
-
-	//LWJGL
-	implementation "org.lwjgl:lwjgl:3.2.3"
-	implementation "org.lwjgl:lwjgl-stb:3.2.3"
-	implementation "org.lwjgl:lwjgl:3.2.3:natives-windows"
-	implementation "org.lwjgl:lwjgl-stb:3.2.3:natives-windows"
 	implementation 'org.apache.maven:maven:3.6.3'
 	implementation 'org.avaje.ebeanorm:avaje-ebeanorm:4.7.3'
 
@@ -95,11 +106,35 @@ tasks.withType(JavaCompile).configureEach {
 	it.options.release = 17
 }
 
+tasks.withType(JavaExec).configureEach {
+	javaLauncher = javaToolchains.launcherFor {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
 loom {
 	accessWidenerPath = file("src/main/resources/koil.accesswidener")
+
+	runs {
+		client {
+			client()
+			name "Minecraft Client"
+			runDir "run"
+			// IntelliJ uses the checked-in Gradle run profile in .run/. Direct Loom
+			// profiles encode spaces in this project's path incorrectly on this setup.
+			ideConfigGenerated false
+			programArgs "--username", devUsername
+			if (!devUuid.isEmpty()) {
+				programArgs "--uuid", devUuid
+			}
+		}
+	}
 }
 
 java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
 	withSourcesJar()
 }
 

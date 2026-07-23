@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import com.spirit.koil.chat.api.RichChatSettings;
+import com.spirit.koil.api.chat.RichChatSettings;
 
 import java.util.Arrays;
 

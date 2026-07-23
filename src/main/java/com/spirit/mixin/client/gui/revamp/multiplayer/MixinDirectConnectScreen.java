@@ -37,7 +37,7 @@ public abstract class MixinDirectConnectScreen extends Screen {
      * @reason a :)
      */
     @Overwrite
-    protected void init() {
+    public void init() {
         this.addressField = new TextFieldWidget(this.textRenderer, this.width / 2 - 100, 116, 200, 20, Text.translatable("addServer.enterIp"));
         this.addressField.setMaxLength(128);
         assert this.client != null;

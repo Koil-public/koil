@@ -26,12 +26,16 @@ public final class AutomationChatHudRenderer {
     }
 
     public static int panelHeight(MinecraftClient client) {
-        AutomationHudBlock block = buildBlock(client);
+        return panelHeight(client, 0);
+    }
+
+    public static int panelHeight(MinecraftClient client, int requestedWidth) {
+        AutomationHudBlock block = buildBlock(client, requestedWidth);
         return block == null || client == null ? 0 : block.height;
     }
 
     public static void render(DrawContext context, MinecraftClient client) {
-        AutomationHudBlock block = buildBlock(client);
+        AutomationHudBlock block = buildBlock(client, 0);
         if (block == null || client == null) {
             return;
         }
@@ -40,7 +44,11 @@ public final class AutomationChatHudRenderer {
     }
 
     public static void renderAt(DrawContext context, MinecraftClient client, int y) {
-        AutomationHudBlock block = buildBlock(client);
+        renderAt(context, client, y, 0);
+    }
+
+    public static void renderAt(DrawContext context, MinecraftClient client, int y, int requestedWidth) {
+        AutomationHudBlock block = buildBlock(client, requestedWidth);
         if (block == null || client == null) {
             return;
         }
@@ -67,7 +75,7 @@ public final class AutomationChatHudRenderer {
         if (button != 0 || client == null) {
             return false;
         }
-        AutomationHudBlock block = buildBlock(client);
+        AutomationHudBlock block = buildBlock(client, 0);
         if (block == null) {
             return false;
         }
@@ -76,10 +84,14 @@ public final class AutomationChatHudRenderer {
     }
 
     public static boolean mouseClickedAt(MinecraftClient client, double mouseX, double mouseY, int button, int y) {
+        return mouseClickedAt(client, mouseX, mouseY, button, y, 0);
+    }
+
+    public static boolean mouseClickedAt(MinecraftClient client, double mouseX, double mouseY, int button, int y, int requestedWidth) {
         if (button != 0 || client == null) {
             return false;
         }
-        AutomationHudBlock block = buildBlock(client);
+        AutomationHudBlock block = buildBlock(client, requestedWidth);
         if (block == null) {
             return false;
         }
@@ -98,7 +110,7 @@ public final class AutomationChatHudRenderer {
         return false;
     }
 
-    private static AutomationHudBlock buildBlock(MinecraftClient client) {
+    private static AutomationHudBlock buildBlock(MinecraftClient client, int requestedWidth) {
         if (client == null || client.player == null || client.currentScreen instanceof ConsoleScreen) {
             return null;
         }
@@ -113,7 +125,10 @@ public final class AutomationChatHudRenderer {
             return null;
         }
         int chatWidth = client.inGameHud == null ? 0 : client.inGameHud.getChatHud().getWidth();
-        int maxWidth = Math.min(client.getWindow().getScaledWidth(), Math.max(190, chatWidth + 12));
+        int defaultWidth = Math.min(client.getWindow().getScaledWidth(), Math.max(190, chatWidth + 12));
+        int maxWidth = requestedWidth > 0
+                ? Math.min(client.getWindow().getScaledWidth(), Math.max(1, requestedWidth))
+                : defaultWidth;
         int innerWidth = maxWidth - 12;
         List<OrderedText> lines = new ArrayList<>();
         lines.addAll(wrappedLines(client, AutomationChatHudState.header(), innerWidth, 1));

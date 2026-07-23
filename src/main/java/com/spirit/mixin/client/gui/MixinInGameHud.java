@@ -3,7 +3,7 @@ package com.spirit.mixin.client.gui;
 import com.spirit.Client;
 import com.spirit.client.gui.EntityInspectionTooltipBuilder;
 import com.spirit.client.gui.debug.F3OverlayRenderer;
-import com.spirit.koil.chat.internal.ChatHudPanelStack;
+import com.spirit.koil.api.chat.ChatHudPanelStack;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.hud.InGameHud;
@@ -32,6 +32,13 @@ public abstract class MixinInGameHud {
         F3OverlayRenderer.render(context, client);
         context.getMatrices().pop();
         renderEntityInspectionTooltip(context);
+    }
+
+    @Inject(method = "renderCrosshair", at = @At("HEAD"), cancellable = true)
+    private void koil$hideVanillaCrosshairForDebugOverlay(DrawContext context, CallbackInfo ci) {
+        if (F3OverlayRenderer.shouldHideVanillaCrosshair(client)) {
+            ci.cancel();
+        }
     }
 
     private void renderEntityInspectionTooltip(DrawContext context) {

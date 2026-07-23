@@ -391,7 +391,7 @@ public class EditSkinScreen extends Screen {
     }
 
     private int toolsScrollbarTrackLeft() {
-        return this.toolsRight - 8;
+        return this.toolsRight - 6;
     }
 
     private int toolsScrollbarTrackTop() {

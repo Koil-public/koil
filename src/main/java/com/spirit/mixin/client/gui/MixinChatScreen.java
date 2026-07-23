@@ -9,28 +9,28 @@ import com.spirit.client.gui.SuggestionPopupRenderer;
 import com.spirit.koil.api.chat.RichChatMessageData;
 import com.spirit.koil.api.chat.RichChatScope;
 import com.spirit.koil.api.chat.RichMessageBuilder;
-import com.spirit.koil.chat.internal.ChatSuggestionAnchor;
-import com.spirit.koil.chat.internal.ChatHudPanelStack;
-import com.spirit.koil.chat.internal.LocalOverflowChatBridge;
-import com.spirit.koil.chat.internal.LocalMultilineChatBridge;
-import com.spirit.koil.chat.internal.MultilineChatInputLayout;
-import com.spirit.koil.chat.internal.RichChatPrivateChunkBridge;
-import com.spirit.koil.chat.internal.RichChatCommandOutputBridge;
-import com.spirit.koil.chat.internal.RichChatPrivateMessageBridge;
-import com.spirit.koil.chat.internal.RichChatPreviewFormatter;
-import com.spirit.koil.chat.internal.RichChatMessageStore;
-import com.spirit.koil.chat.internal.input.KoilCommandAnalysisService;
-import com.spirit.koil.chat.internal.input.VanillaBackedChatInputController;
-import com.spirit.koil.chat.internal.latex.RichChatLatexDetector;
-import com.spirit.koil.chat.internal.replace.EditorResult;
-import com.spirit.koil.chat.internal.replace.Replacer;
-import com.spirit.koil.chat.internal.sync.RichChatSyncClientBridge;
-import com.spirit.koil.chat.internal.sync.RichChatSyncedMessageBridge;
-import com.spirit.koil.chat.internal.upload.LocalRichAttachmentBridge;
-import com.spirit.koil.chat.internal.upload.RichChatAttachmentRenderer;
-import com.spirit.koil.chat.internal.upload.RichChatRemoteImageCache;
-import com.spirit.koil.chat.internal.upload.RichChatUploadDraft;
-import com.spirit.koil.chat.api.RichChatSettings;
+import com.spirit.koil.api.chat.ChatSuggestionAnchor;
+import com.spirit.koil.api.chat.ChatHudPanelStack;
+import com.spirit.koil.api.chat.LocalOverflowChatBridge;
+import com.spirit.koil.api.chat.LocalMultilineChatBridge;
+import com.spirit.koil.api.chat.MultilineChatInputLayout;
+import com.spirit.koil.api.chat.RichChatPrivateChunkBridge;
+import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
+import com.spirit.koil.api.chat.RichChatPrivateMessageBridge;
+import com.spirit.koil.api.chat.RichChatPreviewFormatter;
+import com.spirit.koil.api.chat.RichChatMessageStore;
+import com.spirit.koil.api.chat.input.KoilCommandAnalysisService;
+import com.spirit.koil.api.chat.input.VanillaBackedChatInputController;
+import com.spirit.koil.api.chat.latex.RichChatLatexDetector;
+import com.spirit.koil.api.chat.replace.EditorResult;
+import com.spirit.koil.api.chat.replace.Replacer;
+import com.spirit.koil.api.chat.sync.RichChatSyncClientBridge;
+import com.spirit.koil.api.chat.sync.RichChatSyncedMessageBridge;
+import com.spirit.koil.api.chat.upload.LocalRichAttachmentBridge;
+import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
+import com.spirit.koil.api.chat.upload.RichChatRemoteImageCache;
+import com.spirit.koil.api.chat.upload.RichChatUploadDraft;
+import com.spirit.koil.api.chat.RichChatSettings;
 import com.spirit.koil.api.chat.RichChatAttachment;
 import com.spirit.client.gui.PopupMenu;
 import com.spirit.client.gui.UiSoundHelper;
@@ -860,7 +860,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             MinecraftClient minecraft = MinecraftClient.getInstance();
             long handle = minecraft != null && minecraft.getWindow() != null ? minecraft.getWindow().getHandle() : 0L;
             boolean leftDown = handle != 0L && GLFW.glfwGetMouseButton(handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
-            if (minecraft != null && minecraft.inGameHud != null && minecraft.inGameHud.getChatHud() instanceof com.spirit.koil.chat.internal.ChatHudRefreshBridge bridge) {
+            if (minecraft != null && minecraft.inGameHud != null && minecraft.inGameHud.getChatHud() instanceof com.spirit.koil.api.chat.ChatHudRefreshBridge bridge) {
                 if (leftDown) {
                     bridge.koil$dragChatScrollbar(mouseY);
                 } else {
@@ -1000,7 +1000,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
 
         MinecraftClient minecraft = MinecraftClient.getInstance();
-        if (button == 0 && minecraft != null && minecraft.inGameHud != null && minecraft.inGameHud.getChatHud() instanceof com.spirit.koil.chat.internal.ChatHudRefreshBridge bridge) {
+        if (button == 0 && minecraft != null && minecraft.inGameHud != null && minecraft.inGameHud.getChatHud() instanceof com.spirit.koil.api.chat.ChatHudRefreshBridge bridge) {
             if (bridge.koil$chatScrollbarContains(mouseX, mouseY)) {
                 bridge.koil$beginChatScrollbarDrag(mouseY);
                 koil$chatScrollbarDragging = true;
@@ -1692,7 +1692,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
         if (RichChatUploadDraft.hasPending()) {
             int removeX = right - 18;
-            int removeTextY = top + Math.max(1, (height - this.textRenderer.fontHeight) / 2);
+            int removeTextY = top + Math.max(1, (height - this.textRenderer.fontHeight) / 2) - 1;
             context.drawTextWithShadow(this.textRenderer, Text.literal("x"), removeX + 5, removeTextY, 0xFFFF7777);
             if (mouseX >= removeX && mouseX <= right && mouseY >= top && mouseY <= bottom) {
                 context.drawTooltip(this.textRenderer, List.of(Text.literal("Remove attachment")), mouseX, mouseY);
@@ -2232,13 +2232,14 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
         koil$customSuggestionFuture = null;
         List<Suggestion> nextSuggestions = suggestions == null ? List.of() : suggestions.getList();
-        koil$customSuggestions = nextSuggestions == null ? List.of() : List.copyOf(nextSuggestions);
-        if (koil$customSuggestions.isEmpty()) {
+        List<Suggestion> completedSuggestions = nextSuggestions == null ? List.of() : List.copyOf(nextSuggestions);
+        if (completedSuggestions.isEmpty()) {
             // Preserve the last non-empty prefix list after a valid value.
             // It is deliberately marked sticky so acceptance replaces the
             // current token rather than reusing the old Brigadier range.
             return;
         }
+        koil$customSuggestions = completedSuggestions;
         List<SuggestionPopupRenderer.Entry> entries = new ArrayList<>(koil$customSuggestions.size());
         for (Suggestion suggestion : koil$customSuggestions) {
             String value = suggestion == null ? "" : suggestion.getText();
@@ -2286,7 +2287,46 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Unique
     private boolean koil$applySelectedCustomSuggestion() {
+        koil$pollCustomSuggestions();
+        if (koil$customSuggestionsAreSticky
+                && koil$customSuggestions.size() > 1
+                && koil$activeTokenMatchesSuggestion(koil$customSuggestionSelection)) {
+            koil$customSuggestionSelection = (koil$customSuggestionSelection + 1) % koil$customSuggestions.size();
+            koil$keepCustomSuggestionSelectionVisible();
+        }
         return koil$applyCustomSuggestion(koil$customSuggestionSelection);
+    }
+
+    @Unique
+    private boolean koil$activeTokenMatchesSuggestion(int suggestionIndex) {
+        if (koil$customSuggestionContext == null || suggestionIndex < 0 || suggestionIndex >= koil$customSuggestions.size()) {
+            return false;
+        }
+        Suggestion suggestion = koil$customSuggestions.get(suggestionIndex);
+        if (suggestion == null) {
+            return false;
+        }
+        String command = koil$customSuggestionContext.commandText();
+        int cursor = Math.max(0, Math.min(koil$customSuggestionContext.commandCursor(), command.length()));
+        int wordStart = cursor;
+        while (wordStart > 0 && !Character.isWhitespace(command.charAt(wordStart - 1))) {
+            wordStart--;
+        }
+        return command.substring(wordStart, cursor).equalsIgnoreCase(suggestion.getText());
+    }
+
+    @Unique
+    private void koil$keepCustomSuggestionSelectionVisible() {
+        int visibleRows = Math.min(SuggestionPopupRenderer.MAX_VISIBLE_ROWS, koil$customSuggestionEntries.size());
+        if (visibleRows <= 0) {
+            koil$customSuggestionScroll = 0;
+            return;
+        }
+        if (koil$customSuggestionSelection < koil$customSuggestionScroll) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection;
+        } else if (koil$customSuggestionSelection >= koil$customSuggestionScroll + visibleRows) {
+            koil$customSuggestionScroll = koil$customSuggestionSelection - visibleRows + 1;
+        }
     }
 
     @Unique
