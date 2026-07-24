@@ -1,6 +1,7 @@
 package com.spirit.mixin.client.gui.revamp;
 
 import com.spirit.koil.api.design.KoilVanillaScreenChrome;
+import com.spirit.koil.api.registry.client.ContentWorldTransitionCoordinator;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -21,6 +22,13 @@ import java.util.List;
 public abstract class MixinGameMenuScreen extends Screen {
     protected MixinGameMenuScreen(Text title) {
         super(title);
+    }
+
+    @Inject(method = "disconnect", at = @At("HEAD"), cancellable = true)
+    private void koil$unloadContentBeforeTitle(CallbackInfo callback) {
+        if (ContentWorldTransitionCoordinator.interceptGameMenuLeave(this.client)) {
+            callback.cancel();
+        }
     }
 
     @Inject(method = "init", at = @At("RETURN"))

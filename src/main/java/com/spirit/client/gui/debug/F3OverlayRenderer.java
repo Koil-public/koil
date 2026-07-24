@@ -38,8 +38,8 @@ import static com.spirit.koil.api.design.KoilScreenBackgrounds.uiRedesignEnabled
 
 @Environment(EnvType.CLIENT)
 public final class F3OverlayRenderer {
-    private static final int PANEL_BG = 0x8A050609;
-    private static final int PANEL_BG_SOFT = 0x62050609;
+    private static final int PANEL_BG = 0x70000000;
+    private static final int PANEL_BG_SOFT = 0x48000000;
     private static GhostTerrainField ghostTerrainFieldCache;
     private static double ghostProjectionRange = 8.0D;
     private static boolean jumpPreviewLocked = false;
@@ -67,10 +67,8 @@ public final class F3OverlayRenderer {
         }
         F3LayoutState.beginOverlayFrame();
         renderDebugCrosshairAxes(context, text, client, snapshot, width, height, mode);
-        PanelBounds left = renderLeftCore(context, text, snapshot, width, height, mode, mode != F3Mode.PERFORMANCE);
+        renderLeftRail(context, text, snapshot, width, height, mode);
         renderRightPerformance(context, text, snapshot, width, height, mode);
-        PanelBounds target = renderTarget(context, text, snapshot.target(), snapshot, height, mode, left);
-        renderSelfPanel(context, text, snapshot, height, mode, left, target);
         if (modeShowsGraphRail(mode)) {
             renderGraphRail(context, text, snapshot, width, height);
         }
@@ -1719,6 +1717,127 @@ public final class F3OverlayRenderer {
         drawText(context, text, trimToWidth(text, snapshot.target().title(), panelW - 16), x + 8, y + 34, snapshot.target().accentColor());
     }
 
+    private static void renderLeftRail(DrawContext context, TextRenderer text, F3Snapshot snapshot, int width, int height, F3Mode mode) {
+        List<F3DataLine> coreRows = leftCoreRows(snapshot, mode);
+        List<F3DataLine> targetData = targetPanelVisible(mode) && mode != F3Mode.PERFORMANCE
+                ? targetRows(snapshot.target(), mode, snapshot)
+                : List.of();
+        List<F3DataLine> selfData = selfPanelVisible(mode) ? inspectorSelfRows(snapshot) : List.of();
+        int maxPanelW = Math.max(168, Math.min(mode.developerDataEnabled() || mode == F3Mode.FULL ? 520 : 390, width / 2 - 18));
+        int panelW = panelWidth(text, coreRows, List.of("F3 Left"), 168, maxPanelW, true);
+        if (!targetData.isEmpty()) {
+            panelW = Math.max(panelW, panelWidth(text, targetData, List.of("Target " + snapshot.target().type().label()), 168, maxPanelW, false));
+        }
+        if (!selfData.isEmpty()) {
+            panelW = Math.max(panelW, panelWidth(text, selfData, List.of("Self Data"), 168, maxPanelW, false));
+        }
+
+        List<F3DataLine> wrappedCore = wrapRowsToWidth(text, coreRows, panelW - 16, true);
+        List<F3DataLine> wrappedTarget = targetData.isEmpty() ? List.of() : wrapRowsToWidth(text, targetData, panelW - 16, false);
+        List<F3DataLine> wrappedSelf = selfData.isEmpty() ? List.of() : wrapRowsToWidth(text, selfData, panelW - 16, false);
+        int coreMiniH = leftVisualStripHeight(mode);
+        int targetMiniH = targetData.isEmpty() ? 0 : targetVisualStripHeight(snapshot.target(), mode);
+        int selfMiniH = selfData.isEmpty() ? 0 : 28;
+        int coreHeight = 27 + coreMiniH + wrappedCore.size() * 10;
+        int targetHeight = wrappedTarget.isEmpty() ? 0 : 48 + targetMiniH + wrappedTarget.size() * 12;
+        int selfHeight = wrappedSelf.isEmpty() ? 0 : 48 + selfMiniH + wrappedSelf.size() * 12;
+        int gaps = (targetHeight > 0 ? 4 : 0) + (selfHeight > 0 ? 4 : 0);
+        int totalHeight = coreHeight + targetHeight + selfHeight + gaps;
+        int x = 8;
+        int y = 8;
+        int available = Math.max(72, height - 16);
+        int visibleUnits = Math.max(1, available / 12);
+        int totalUnits = Math.max(visibleUnits, (totalHeight + 11) / 12);
+        F3LayoutState.registerPanel(F3LayoutState.ScrollPanel.LEFT, x, y, panelW, available, totalUnits, visibleUnits);
+        int cursor = y - F3LayoutState.overlayLeftLineOffset() * 12;
+
+        context.enableScissor(x, y, x + panelW, y + available);
+        renderLeftCoreRailCard(context, text, snapshot, mode, x, cursor, panelW, coreHeight, wrappedCore, coreMiniH);
+        cursor += coreHeight;
+        if (targetHeight > 0) {
+            cursor += 4;
+            renderTargetRailCard(context, text, snapshot.target(), mode, x, cursor, panelW, targetHeight, wrappedTarget, targetMiniH);
+            cursor += targetHeight;
+        }
+        if (selfHeight > 0) {
+            cursor += 4;
+            renderSelfRailCard(context, text, snapshot, x, cursor, panelW, selfHeight, wrappedSelf, selfMiniH);
+        }
+        context.disableScissor();
+        renderRailScrollStatus(context, text, x, y, panelW, totalUnits, visibleUnits, F3LayoutState.overlayLeftLineOffset());
+    }
+
+    private static List<F3DataLine> leftCoreRows(F3Snapshot snapshot, F3Mode mode) {
+        List<F3DataLine> rows = new ArrayList<>(sectionLines(snapshot, "vanilla_left"));
+        if (!rows.isEmpty() && !isCaptureUnavailable(rows)) {
+            return rows;
+        }
+        rows.clear();
+        addMatching(rows, sectionLines(snapshot, "player"), "XYZ", "Block", "Chunk", "Facing", "Velocity", "Health", "Hunger", "Selected");
+        addMatching(rows, sectionLines(snapshot, "world"), "Dimension", "Biome", "Weather", "Block Light", "Sky Light", "Time");
+        if (mode != F3Mode.SIMPLE) {
+            addMatching(rows, sectionLines(snapshot, "chunk"), "Region File", "Block Entities", "Chunk Entities", "Client Entities");
+        }
+        return rows;
+    }
+
+    private static void renderLeftCoreRailCard(DrawContext context, TextRenderer text, F3Snapshot snapshot, F3Mode mode, int x, int y, int w, int h, List<F3DataLine> rows, int miniH) {
+        panel(context, x, y, w, h, 0xFF7FC8C2);
+        drawText(context, text, "F3 Left", x + 8, y + 8, 0xFFE6EDF5);
+        drawText(context, text, rows.size() + " rows", x + w - text.getWidth(rows.size() + " rows") - 8, y + 8, 0xFF8FA0B8);
+        int rowY = y + 23;
+        if (miniH > 0) {
+            drawLeftVisualStrip(context, text, snapshot, x + 8, rowY, w - 16, miniH, mode);
+            rowY += miniH;
+        }
+        for (F3DataLine line : rows) {
+            rowCompact(context, text, x + 8, rowY, w - 16, line);
+            rowY += 10;
+        }
+    }
+
+    private static void renderTargetRailCard(DrawContext context, TextRenderer text, F3TargetSnapshot target, F3Mode mode, int x, int y, int w, int h, List<F3DataLine> rows, int miniH) {
+        panel(context, x, y, w, h, target.accentColor());
+        drawText(context, text, "Target " + target.type().label(), x + 8, y + 8, softText(target.accentColor()));
+        drawText(context, text, trimToWidth(text, target.registryId(), Math.max(32, w - 132)), x + 116, y + 8, 0xFFB8C4D2);
+        drawText(context, text, trimToWidth(text, target.title(), w - 16), x + 8, y + 22, 0xFFE6EDF5);
+        int rowY = y + 40;
+        if (miniH > 0) {
+            drawTargetMiniStrip(context, text, target, x + 8, rowY, w - 16, mode);
+            rowY += miniH;
+        }
+        for (F3DataLine line : rows) {
+            row(context, text, x + 8, rowY, w - 16, line);
+            rowY += 12;
+        }
+    }
+
+    private static void renderSelfRailCard(DrawContext context, TextRenderer text, F3Snapshot snapshot, int x, int y, int w, int h, List<F3DataLine> rows, int miniH) {
+        panel(context, x, y, w, h, 0xFF7FC8C2);
+        drawText(context, text, "Self Data", x + 8, y + 8, 0xFFE6EDF5);
+        drawText(context, text, trimToWidth(text, compactValues(value(snapshot, "player", "XYZ"), value(snapshot, "player", "Facing")), w - 94), x + 86, y + 8, 0xFFB8C4D2);
+        int rowY = y + 40;
+        if (miniH > 0) {
+            drawSelfMiniStrip(context, text, snapshot, x + 8, rowY, w - 16);
+            rowY += miniH;
+        }
+        for (F3DataLine line : rows) {
+            row(context, text, x + 8, rowY, w - 16, line);
+            rowY += 12;
+        }
+    }
+
+    private static void renderRailScrollStatus(DrawContext context, TextRenderer text, int x, int y, int w, int totalUnits, int visibleUnits, int offset) {
+        if (totalUnits <= visibleUnits) {
+            return;
+        }
+        int end = Math.min(totalUnits, offset + visibleUnits);
+        String status = (offset + 1) + "-" + end + "/" + totalUnits;
+        int statusW = Math.min(w - 10, text.getWidth(status) + 8);
+        context.fill(x + w - statusW - 4, y + 4, x + w - 4, y + 16, 0xB0050609);
+        drawText(context, text, status, x + w - statusW, y + 6, 0xFF8FA0B8);
+    }
+
     private static PanelBounds renderLeftCore(DrawContext context, TextRenderer text, F3Snapshot snapshot, int width, int height, F3Mode mode, boolean reserveTarget) {
         List<F3DataLine> visible = new ArrayList<>(sectionLines(snapshot, "vanilla_left"));
         if (visible.isEmpty() || isCaptureUnavailable(visible)) {
@@ -1774,6 +1893,7 @@ public final class F3OverlayRenderer {
         int panelH = 174;
         int x = width - panelW - 8;
         int y = 8;
+        F3LayoutState.registerPanel(F3LayoutState.ScrollPanel.RIGHT, x, y, panelW, panelH, 1, 1);
         panel(context, x, y, panelW, panelH, perf.primaryBottleneck().color());
         drawText(context, text, "Performance", x + 8, y + 8, 0xFFE6EDF5);
         drawText(context, text, perf.primaryBottleneck().label(), x + 92, y + 8, perf.primaryBottleneck().color());
@@ -1797,36 +1917,34 @@ public final class F3OverlayRenderer {
         }
         List<F3DataLine> rightRows = compactRightRows(snapshot, visible, mode);
         int miniH = rightSummaryMeterHeight(mode);
-        int baseMax = switch (mode) {
-            case SIMPLE -> 10;
-            case NORMAL, WORLD, INSPECTOR -> 18;
-            default -> 42;
-        };
-        int maxPanelHeight = Math.max(78, height - 16);
-        int maxByHeight = Math.max(5, (maxPanelHeight - 27 - miniH) / 10);
-        int max = Math.max(3, Math.min(baseMax, maxByHeight));
         int rightEdge = rightColumnEdge(width, mode);
         int maxPanelW = rightPanelMaxWidth(width, mode);
-        int prePanelW = panelWidth(text, rightRows, List.of("F3 Right", scrollStatusRight(rightRows, max)), 176, maxPanelW, true);
-        List<F3DataLine> wrappedRightRows = developerDataMode(mode) ? wrapRowsToWidth(text, rightRows, prePanelW - 16, true) : rightRows;
-        List<F3DataLine> rows = visiblePanelLines(wrappedRightRows, max, F3LayoutState.ScrollPanel.RIGHT);
-        int panelW = panelWidth(text, rows.isEmpty() ? wrappedRightRows : rows, List.of("F3 Right", scrollStatusRight(wrappedRightRows, max)), 176, maxPanelW, true);
-        int panelH = 27 + miniH + rows.size() * 10;
+        int prePanelW = panelWidth(text, rightRows, List.of("F3 Right"), 176, maxPanelW, true);
+        List<F3DataLine> wrappedRightRows = wrapRowsToWidth(text, rightRows, prePanelW - 16, true);
+        int panelW = panelWidth(text, wrappedRightRows, List.of("F3 Right"), 176, maxPanelW, true);
+        int panelH = 27 + miniH + wrappedRightRows.size() * 10;
         int x = rightEdge - panelW;
         int y = 8;
-        F3LayoutState.registerPanel(F3LayoutState.ScrollPanel.RIGHT, x, y, panelW, panelH, wrappedRightRows.size(), max);
-        panel(context, x, y, panelW, panelH, 0xFF8FC5FF);
-        drawText(context, text, "F3 Right", x + 8, y + 8, 0xFFE6EDF5);
-        drawText(context, text, scrollStatusRight(wrappedRightRows, max), x + 80, y + 8, 0xFF8FA0B8);
-        int rowY = y + 23;
+        int available = Math.max(72, height - 16);
+        int visibleUnits = Math.max(1, available / 12);
+        int totalUnits = Math.max(visibleUnits, (panelH + 11) / 12);
+        F3LayoutState.registerPanel(F3LayoutState.ScrollPanel.RIGHT, x, y, panelW, available, totalUnits, visibleUnits);
+        int drawY = y - F3LayoutState.overlayRightLineOffset() * 12;
+        context.enableScissor(x, y, x + panelW, y + available);
+        panel(context, x, drawY, panelW, panelH, 0xFF8FC5FF);
+        drawText(context, text, "F3 Right", x + 8, drawY + 8, 0xFFE6EDF5);
+        drawText(context, text, wrappedRightRows.size() + " rows", x + panelW - text.getWidth(wrappedRightRows.size() + " rows") - 8, drawY + 8, 0xFF8FA0B8);
+        int rowY = drawY + 23;
         if (miniH > 0) {
             drawRightSummaryMeters(context, text, x + 8, rowY, panelW - 16, snapshot, mode);
             rowY += miniH;
         }
-        for (F3DataLine line : rows) {
+        for (F3DataLine line : wrappedRightRows) {
             rowCompact(context, text, x + 8, rowY, panelW - 16, line);
             rowY += 10;
         }
+        context.disableScissor();
+        renderRailScrollStatus(context, text, x, y, panelW, totalUnits, visibleUnits, F3LayoutState.overlayRightLineOffset());
     }
 
 
@@ -2402,14 +2520,14 @@ public final class F3OverlayRenderer {
         drawText(context, text, "Block Profile", x + 8, y + 7, 0xFFE6EDF5);
         int cx = x + 28;
         int cy = y + 43;
-        drawRadialSignals(context, cx, cy, Math.max(14, Math.min(22, h / 3)), new double[]{targetRatio(target, "Hardness", 50.0D), targetRatio(target, "Blast Resistance", 1200.0D), targetRatio(target, "Luminance", 15.0D), targetRatio(target, "Redstone Power", 15.0D)}, new int[]{0xFFE3B735, 0xFFE06A21, 0xFF8FC5FF, 0xFFA7003A});
+        drawRadialSignals(context, cx, cy, Math.max(14, Math.min(22, h / 3)), new double[]{targetRatio(target, "Hardness", 50.0D), targetRatio(target, "Blast Resistance", 1200.0D), targetRatio(target, "Emitted Light", 15.0D), targetRatio(target, "Redstone Power", 15.0D)}, new int[]{0xFFE3B735, 0xFFE06A21, 0xFF8FC5FF, 0xFFA7003A});
         int rowY = y + 21;
         int rowX = x + 58;
         miniBarRow(context, text, rowX, rowY, w - 66, "hard", targetLine(target, "Hardness"), targetRatio(target, "Hardness", 50.0D), 0xFF8FC5FF);
         rowY += 10;
         miniBarRow(context, text, rowX, rowY, w - 66, "blast", targetLine(target, "Blast Resistance"), targetRatio(target, "Blast Resistance", 1200.0D), 0xFFE06A21);
         rowY += 10;
-        miniBarRow(context, text, rowX, rowY, w - 66, "light", firstKnown(targetLine(target, "Luminance"), targetLine(target, "Client Light")), Math.max(targetRatio(target, "Luminance", 15.0D), targetRatio(target, "Client Light", 15.0D)), 0xFF8FC5FF);
+        miniBarRow(context, text, rowX, rowY, w - 66, "light", targetLightSummary(target), targetEnvironmentLightRatio(target), 0xFF8FC5FF);
         rowY += 10;
         if (rowY + 8 < y + h) {
             miniBarRow(context, text, rowX, rowY, w - 66, "power", targetLine(target, "Redstone Power"), targetRatio(target, "Redstone Power", 15.0D), 0xFFA7003A);
@@ -2433,7 +2551,7 @@ public final class F3OverlayRenderer {
         miniBarRow(context, text, rowX, rowY, w - 56, "shape", targetLine(target, "Collision Boxes") + "/" + targetLine(target, "Outline Boxes"), Math.max(collision, outline), 0xFFB47CFF);
         rowY += 10;
         if (rowY + 8 < y + h) {
-            miniBarRow(context, text, rowX, rowY, w - 56, "mine est", targetLine(target, "Mining Rate Est"), targetRatio(target, "Mining Rate Est", 10.0D), 0xFF2DA700);
+            miniBarRow(context, text, rowX, rowY, w - 56, "mine est", targetLine(target, "Relative Mining Speed Est"), targetRatio(target, "Relative Mining Speed Est", 10.0D), 0xFF2DA700);
         }
     }
 
@@ -3017,9 +3135,9 @@ public final class F3OverlayRenderer {
     private static List<F3DataLine> compactRightRows(F3Snapshot snapshot, List<F3DataLine> vanilla, F3Mode mode) {
         PerformanceSnapshot perf = snapshot.performance();
         List<F3DataLine> rows = new ArrayList<>();
-        rows.add(F3DataLine.state("Performance", perf.fps() + " fps | " + perf.frameTimeMs() + " ms | low " + (int) perf.onePercentLowFps(), "performance", fpsColor(perf.fps()), "FPS, current frame time, and 1% low in one row."));
+        rows.add(F3DataLine.state("Performance", perf.fps() + " fps | " + perf.frameTimeMs() + " ms | low " + (int) perf.onePercentLowFps(), "performance", fpsColor(perf.fps()), "Minecraft's current FPS, latest recorded frame duration, and sampled 1% low."));
         rows.add(F3DataLine.state("Heap", perf.usedMemoryMb() + "/" + perf.maxMemoryMb() + " MB | " + percent(perf.memoryPressure()), pressureState(perf.memoryPressure()), pressureColor(perf.memoryPressure()), "Heap memory compacted from memory and heap rows."));
-        rows.add(F3DataLine.state("Client Load", perf.entityCount() + " ent | chunk " + percent(perf.chunkStress()) + " | " + perf.renderDistance() + "/" + perf.simulationDistance(), "world", pressureColor(Math.max(perf.chunkStress(), perf.entityCount() / 300.0D)), "Client-loaded entities, estimated chunk pressure, render distance, and simulation distance."));
+        rows.add(F3DataLine.state("Client Load", perf.entityCount() + " ent | chunk est " + percent(perf.chunkStress()) + " | " + perf.renderDistance() + "/" + perf.simulationDistance(), "world", pressureColor(Math.max(perf.chunkStress(), perf.entityCount() / 300.0D)), "Client-loaded entities, explicitly estimated chunk pressure, render distance, and simulation distance."));
         addCompactRow(rows, "Instance", compactValues(value(snapshot, "system", "Minecraft"), suffixKnown(value(snapshot, "system", "Mods"), " mods"), value(snapshot, "system", "Uptime")), 0xFF8FC5FF);
         addCompactRow(rows, "Runtime", compactValues(prefixKnown("Java ", value(snapshot, "system", "Java")), value(snapshot, "system", "JVM"), suffixKnown(value(snapshot, "system", "CPU Threads"), " threads")), 0xFF8FC5FF);
         addCompactRow(rows, "System", compactValues(value(snapshot, "system", "OS"), value(snapshot, "system", "Fabric Env")), 0xFF8FC5FF);
@@ -3027,12 +3145,8 @@ public final class F3OverlayRenderer {
         addCompactRow(rows, "Visuals", compactValues(prefixKnown("clouds ", value(snapshot, "render", "Clouds")), prefixKnown("particles ", value(snapshot, "render", "Particles")), prefixKnown("mipmap ", value(snapshot, "render", "Mipmap"))), 0xFFB47CFF);
         addCompactRow(rows, "Toggles", compactValues(prefixKnown("shadows ", value(snapshot, "render", "Entity Shadows")), prefixKnown("vsync ", value(snapshot, "render", "VSync")), prefixKnown("shader ", value(snapshot, "render", "Shader Mod"))), 0xFFB47CFF);
         addCompactRow(rows, "Network", compactValues(value(snapshot, "network", "Connection"), value(snapshot, "network", "Ping"), suffixKnown(value(snapshot, "network", "Players Listed"), " players")), 0xFF8FC5FF);
-        if (mode == F3Mode.PLAYER || mode == F3Mode.WORLD || mode == F3Mode.TARGET) {
-            return rows;
-        }
         if (mode == F3Mode.CREATOR) {
             appendDeveloperSectionRows(rows, "Target", sectionLines(snapshot, "target"), snapshot.target().accentColor());
-            return rows;
         }
         if (developerDataMode(mode)) {
             appendDeveloperSectionRows(rows, "System", sectionLines(snapshot, "system"), 0xFFE6EDF5);
@@ -3361,11 +3475,11 @@ public final class F3OverlayRenderer {
         y += 17;
         if (target.type() == F3TargetType.BLOCK || target.type() == F3TargetType.CONTAINER || target.type() == F3TargetType.FLUID) {
             miniMeter(context, text, x, y, each, "HARD", firstKnown(targetLine(target, "Hardness"), "fluid"), targetRatio(target, "Hardness", 50.0D), 0xFF8FC5FF);
-            miniMeter(context, text, x + each + gap, y, each, "LIGHT", firstKnown(targetLine(target, "Luminance"), targetLine(target, "Client Light")), Math.max(targetRatio(target, "Luminance", 15.0D), targetRatio(target, "Client Light", 15.0D)), 0xFF8FC5FF);
+            miniMeter(context, text, x + each + gap, y, each, "LIGHT", targetLightSummary(target), targetEnvironmentLightRatio(target), 0xFF8FC5FF);
             miniMeter(context, text, x + (each + gap) * 2, y, each, "POWER", targetLine(target, "Redstone Power"), targetRatio(target, "Redstone Power", 15.0D), 0xFFA7003A);
             y += 17;
             miniMeter(context, text, x, y, each, "SHAPE", targetLine(target, "Collision Boxes"), targetRatio(target, "Collision Boxes", 16.0D), 0xFFB47CFF);
-            miniMeter(context, text, x + each + gap, y, each, "MINE", targetLine(target, "Mining Rate Est"), targetRatio(target, "Mining Rate Est", 10.0D), 0xFF2DA700);
+            miniMeter(context, text, x + each + gap, y, each, "MINE", targetLine(target, "Relative Mining Speed Est"), targetRatio(target, "Relative Mining Speed Est", 10.0D), 0xFF2DA700);
             miniMeter(context, text, x + (each + gap) * 2, y, each, "FLUID", targetLine(target, "Fluid Level"), targetRatio(target, "Fluid Level", 8.0D), 0xFF0085A4);
             return;
         }
@@ -3396,10 +3510,11 @@ public final class F3OverlayRenderer {
     private static void drawMeter(DrawContext context, int x, int y, int w, int h, double ratio, int color) {
         int filled = clamp((int) Math.round(w * clampRatio(ratio)), 0, w);
         context.fill(x, y, x + w, y + h, PANEL_BG_SOFT);
-        context.fill(x, y, x + filled, y + h, withAlpha(color, 210));
-        context.fill(x, y, x + 1, y + h, withAlpha(softText(color), 210));
+        int muted = developerColor(color);
+        context.fill(x, y, x + filled, y + h, withAlpha(muted, 185));
+        context.fill(x, y, x + 1, y + h, withAlpha(softText(muted), 190));
         if (filled > 2) {
-            context.fill(x + filled - 1, y, x + filled, y + h, softText(color));
+            context.fill(x + filled - 1, y, x + filled, y + h, softText(muted));
         }
     }
 
@@ -3588,7 +3703,7 @@ public final class F3OverlayRenderer {
 
     private static void panel(DrawContext context, int x, int y, int w, int h, int accent) {
         context.fill(x, y, x + w, y + h, PANEL_BG);
-        context.fill(x, y, x + 3, y + h, withAlpha(accent, 205));
+        context.drawBorder(x, y, w, h, 0x556F747A);
     }
 
     private static void drawMetric(DrawContext context, TextRenderer text, int x, int y, String label, String value, int color) {
@@ -3715,6 +3830,14 @@ public final class F3OverlayRenderer {
 
     private static double targetRatio(F3TargetSnapshot target, String label, double divisor) {
         return parseRatio(targetLine(target, label), divisor);
+    }
+
+    private static String targetLightSummary(F3TargetSnapshot target) {
+        return "B" + targetLine(target, "Block Light") + " S" + targetLine(target, "Sky Light");
+    }
+
+    private static double targetEnvironmentLightRatio(F3TargetSnapshot target) {
+        return Math.max(targetRatio(target, "Block Light", 15.0D), targetRatio(target, "Sky Light", 15.0D));
     }
 
     private static String firstKnown(String first, String second) {
@@ -4768,7 +4891,7 @@ public final class F3OverlayRenderer {
     }
 
     private static void drawText(DrawContext context, TextRenderer text, String value, int x, int y, int color) {
-        context.drawText(text, value, x, y, color, true);
+        context.drawText(text, value, x, y, developerColor(color), true);
     }
 
     private static int fpsColor(int fps) {
@@ -4786,8 +4909,21 @@ public final class F3OverlayRenderer {
     }
 
     private static int softText(int color) {
+        Color c = new Color(developerColor(color), true);
+        return new Color(Math.min(255, c.getRed() + 24), Math.min(255, c.getGreen() + 24), Math.min(255, c.getBlue() + 24), 255).getRGB();
+    }
+
+    private static int developerColor(int color) {
         Color c = new Color(color, true);
-        return new Color(Math.min(255, c.getRed() + 40), Math.min(255, c.getGreen() + 40), Math.min(255, c.getBlue() + 40), 255).getRGB();
+        int gray = (int) Math.round(c.getRed() * 0.299D + c.getGreen() * 0.587D + c.getBlue() * 0.114D);
+        int red = clampColor((int) Math.round((c.getRed() * 0.58D + gray * 0.42D) * 0.88D));
+        int green = clampColor((int) Math.round((c.getGreen() * 0.58D + gray * 0.42D) * 0.88D));
+        int blue = clampColor((int) Math.round((c.getBlue() * 0.58D + gray * 0.42D) * 0.88D));
+        return new Color(red, green, blue, c.getAlpha()).getRGB();
+    }
+
+    private static int clampColor(int value) {
+        return Math.max(0, Math.min(255, value));
     }
 
     private static int withAlpha(int color, int alpha) {
@@ -5276,7 +5412,7 @@ public final class F3OverlayRenderer {
         double collisionDepth = booleanValue(targetLine(target, "Side Solid East")) || booleanValue(targetLine(target, "Side Solid West")) ? outlineDepth : Math.max(0.28D, outlineDepth * 0.82D);
         boolean empty = booleanValue(targetLine(target, "Collision Empty"));
         double power = Math.max(targetRatio(target, "Power Level", 15.0D), targetRatio(target, "Redstone Power", 15.0D));
-        double light = Math.max(targetRatio(target, "Luminance", 15.0D), targetRatio(target, "Client Light", 15.0D));
+        double light = targetRatio(target, "Emitted Light", 15.0D);
         double fluid = booleanValue(firstKnown(targetLine(target, "Waterlogged State"), targetLine(target, "waterlogged"))) || !targetLine(target, "Waterlogged/Fluid").equals("none") ? 1.0D : targetRatio(target, "Fluid Level", 8.0D);
         double statePressure = Math.max(Math.max(power, light), fluid);
         int primary = power > 0.0D ? 0xFFA7003A : fluid > 0.0D ? 0xFF0085A4 : light > 0.0D ? 0xFFE3B735 : 0xFFB47CFF;

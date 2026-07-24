@@ -210,8 +210,21 @@ final class DefinitionValueReader {
         return settings;
     }
 
-    static AbstractBlock.Settings blockSettings(ContentDefinition definition) {
-        return blockSettings(definition.source());
+    static AbstractBlock.Settings blockSettings(
+            ContentDefinition definition,
+            DynamicBlockStateSchema schema
+    ) {
+        WorldContentIndex.DefinitionEntry source = definition.source();
+        JsonObject properties = object(source.definition(), "properties");
+        AbstractBlock.Settings settings = blockSettings(source);
+        int bootstrapLuminance = Math.max(0, Math.min(15, integer(properties, "luminance", 0)));
+        settings.luminance(state -> DynamicContentBlockBehavior.luminance(
+                definition.id(),
+                schema,
+                state,
+                bootstrapLuminance
+        ));
+        return settings;
     }
 
     static String creativeTab(WorldContentIndex.DefinitionEntry definition) {

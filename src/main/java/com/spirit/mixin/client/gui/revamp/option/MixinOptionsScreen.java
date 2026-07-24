@@ -7,7 +7,7 @@ import com.spirit.client.gui.macro.MacroScreen;
 import com.spirit.client.gui.skin.ChangeSkinScreen;
 import com.spirit.client.gui.skin.EditSkinScreen;
 import com.spirit.client.gui.shader.ShaderPackMenuScreen;
-import com.spirit.client.gui.tool.PerformanceOptimizerScreen;
+import com.spirit.client.gui.performance.PerformanceOptimizerScreen;
 import com.spirit.client.gui.video.KoilVideoOptionsScreen;
 import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;

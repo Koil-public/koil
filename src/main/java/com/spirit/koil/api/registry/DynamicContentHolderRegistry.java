@@ -4,6 +4,7 @@ import com.spirit.koil.api.registry.definition.ContentDefinition;
 import com.spirit.koil.api.registry.definition.DefinitionParser;
 import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemGroup;
@@ -87,6 +88,17 @@ public final class DynamicContentHolderRegistry {
 
     public static Set<String> contentIds() {
         return publishedContentIds;
+    }
+
+    /**
+     * Returns active Content luminance for a managed dynamic block, or {@code -1}
+     * when vanilla/modded block-state behavior must remain untouched.
+     */
+    public static int dynamicLuminance(BlockState state) {
+        if (state != null && state.getBlock() instanceof DynamicContentBlock dynamicBlock) {
+            return dynamicBlock.runtimeLuminance(state);
+        }
+        return -1;
     }
 
     public static synchronized List<String> restartRequiredDefinitions() {

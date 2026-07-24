@@ -537,6 +537,9 @@ public final class PerformanceRecommendationEngine {
             ));
         }
 
+        if (!snapshot.hasVerifiedVideoOptions()) {
+            recommendations.removeIf(recommendation -> isVanillaVideoSetting(recommendation.settingKey()));
+        }
         if (recommendations.isEmpty()) {
             recommendations.add(new PerformanceRecommendation(
                     "stable-no-change",
@@ -600,6 +603,9 @@ public final class PerformanceRecommendationEngine {
         addBenchmarkVanilla(recommendations, "benchmark-entity-shadows", "Benchmark entity shadow target", benchmarkReason("entity shadows", snapshot, stable, stressed, phases), PerformanceBottleneck.GPU, "entity_shadows", String.valueOf(snapshot.entityShadows()), String.valueOf(targetEntityShadows), PerformanceRecommendation.Severity.OPTIONAL);
         addBenchmarkVanilla(recommendations, "benchmark-vsync", "Benchmark VSync target", "Benchmark mode lets Koil draw as much power as needed, so VSync is disabled to avoid display pacing hiding true render capacity.", PerformanceBottleneck.GPU, "vsync", String.valueOf(snapshot.vsync()), "false", PerformanceRecommendation.Severity.OPTIONAL);
         addBenchmarkVanilla(recommendations, "benchmark-max-fps", "Benchmark max FPS target", "Benchmark mode uses unlimited FPS so Koil can measure the machine's real available headroom before profile caps are considered.", PerformanceBottleneck.GPU, "max_fps", String.valueOf(snapshot.maxFps()), "unlimited", PerformanceRecommendation.Severity.SAFE);
+        if (!snapshot.hasVerifiedVideoOptions()) {
+            recommendations.removeIf(recommendation -> isVanillaVideoSetting(recommendation.settingKey()));
+        }
         return recommendations;
     }
 
@@ -1080,5 +1086,21 @@ public final class PerformanceRecommendationEngine {
             return false;
         }
         return currentValue.trim().equalsIgnoreCase(afterValue.trim());
+    }
+
+    private static boolean isVanillaVideoSetting(String settingKey) {
+        String key = PerformanceSettingKeyMatcher.canonical(settingKey);
+        return key.equals("renderdistance")
+                || key.equals("simulationdistance")
+                || key.equals("entitydistance")
+                || key.equals("maxfps")
+                || key.equals("clouds")
+                || key.equals("mipmaps")
+                || key.equals("particles")
+                || key.equals("graphicsmode")
+                || key.equals("smoothlighting")
+                || key.equals("biomeblend")
+                || key.equals("entityshadows")
+                || key.equals("vsync");
     }
 }

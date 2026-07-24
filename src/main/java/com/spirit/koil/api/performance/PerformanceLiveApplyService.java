@@ -19,7 +19,7 @@ public final class PerformanceLiveApplyService {
                 continue;
             }
             for (PerformanceSettingDescriptor setting : settings) {
-                if (!setting.providerId().equals(provider.id()) || !setting.liveApplySupported()) {
+                if (!setting.providerId().equals(provider.id()) || !setting.hasActionableTarget()) {
                     continue;
                 }
                 if (!query.isEmpty() && !(setting.label().toLowerCase(java.util.Locale.ROOT).contains(query) || setting.category().toLowerCase(java.util.Locale.ROOT).contains(query) || setting.providerId().toLowerCase(java.util.Locale.ROOT).contains(query))) {
@@ -61,7 +61,7 @@ public final class PerformanceLiveApplyService {
         List<PerformanceProviderApplyResult> results = new ArrayList<>();
         for (PerformanceOptimizationProvider provider : PerformanceProviderRegistry.providers()) {
             for (PerformanceSettingDescriptor setting : settings) {
-                if (!setting.providerId().equals(provider.id()) || !setting.liveApplySupported()) {
+                if (!setting.providerId().equals(provider.id()) || !setting.hasActionableTarget()) {
                     continue;
                 }
                 if (!matchesSafeSetting(setting.settingId(), safeSettingKeys)) {
@@ -115,7 +115,9 @@ public final class PerformanceLiveApplyService {
                 continue;
             }
             for (PerformanceSettingDescriptor setting : provider.settings(client, snapshot)) {
-                if (!setting.liveApplySupported() || !matchesSettingKey(setting.settingId(), recommendation.settingKey())) {
+                if (!setting.liveApplySupported()
+                        || "unavailable".equalsIgnoreCase(setting.currentValue())
+                        || !matchesSettingKey(setting.settingId(), recommendation.settingKey())) {
                     continue;
                 }
                 PerformanceSettingDescriptor targetedSetting = new PerformanceSettingDescriptor(
@@ -138,17 +140,8 @@ public final class PerformanceLiveApplyService {
     }
 
     private static PerformanceRecommendation matchingRecommendation(String settingId, Map<String, PerformanceRecommendation> recommendationByKey) {
-        String normalized = settingId == null ? "" : settingId.toLowerCase(java.util.Locale.ROOT).replace('-', '_');
-        PerformanceRecommendation direct = recommendationByKey.get(normalized);
-        if (direct != null) {
-            return direct;
-        }
         for (Map.Entry<String, PerformanceRecommendation> entry : recommendationByKey.entrySet()) {
-            String key = entry.getKey();
-            if (normalized.equals(key) || normalized.contains(key)) {
-                return entry.getValue();
-            }
-            if ("shadow_distance".equals(key) && normalized.contains("shadow") && normalized.contains("distance")) {
+            if (PerformanceSettingKeyMatcher.matches(settingId, entry.getKey())) {
                 return entry.getValue();
             }
         }
@@ -156,19 +149,8 @@ public final class PerformanceLiveApplyService {
     }
 
     private static boolean matchesSafeSetting(String settingId, java.util.Set<String> safeSettingKeys) {
-        String normalized = settingId == null ? "" : settingId.toLowerCase(java.util.Locale.ROOT).replace('-', '_');
         for (String key : safeSettingKeys) {
-            String wanted = key.toLowerCase(java.util.Locale.ROOT).replace('-', '_');
-            if (normalized.equals(wanted) || normalized.contains(wanted)) {
-                return true;
-            }
-            if ("shadow_distance".equals(wanted) && normalized.contains("shadow") && normalized.contains("distance")) {
-                return true;
-            }
-            if ("render_distance".equals(wanted) && normalized.contains("render") && normalized.contains("distance")) {
-                return true;
-            }
-            if ("simulation_distance".equals(wanted) && normalized.contains("simulation") && normalized.contains("distance")) {
+            if (PerformanceSettingKeyMatcher.matches(settingId, key)) {
                 return true;
             }
         }
@@ -176,22 +158,6 @@ public final class PerformanceLiveApplyService {
     }
 
     private static boolean matchesSettingKey(String settingId, String recommendationKey) {
-        String normalized = normalize(settingId);
-        String wanted = normalize(recommendationKey);
-        if (normalized.isBlank() || wanted.isBlank()) {
-            return false;
-        }
-        if (normalized.equals(wanted) || normalized.contains(wanted) || wanted.contains(normalized)) {
-            return true;
-        }
-        if ("shadow_distance".equals(wanted) && normalized.contains("shadow") && normalized.contains("distance")) {
-            return true;
-        }
-        return ("quality_leaves_quality".equals(wanted) && normalized.contains("leaves") && normalized.contains("quality"))
-                || ("quality_weather_quality".equals(wanted) && normalized.contains("weather") && normalized.contains("quality"));
-    }
-
-    private static String normalize(String value) {
-        return value == null ? "" : value.toLowerCase(java.util.Locale.ROOT).replace('-', '_').replace('.', '_').replace("::", "_");
+        return PerformanceSettingKeyMatcher.matches(settingId, recommendationKey);
     }
 }

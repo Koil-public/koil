@@ -1,6 +1,7 @@
 package com.spirit.koil.api.registry.definition;
 
 import com.google.gson.JsonElement;
+import com.spirit.koil.api.registry.ContentExtensionRegistry;
 import com.spirit.koil.api.registry.WorldContentIndex;
 
 import java.util.ArrayList;
@@ -24,6 +25,7 @@ public final class DefinitionValidator {
         validateObjectSection(definition, "compatibility", messages);
         validateObjectSection(definition, "metadata", messages);
         validateObjectSection(definition, "extensions", messages);
+        validateObjectSection(definition, "blockstates", messages);
         validateArraySection(definition, "tags", messages);
         validateArraySection(definition, "recipes", messages);
 
@@ -37,6 +39,10 @@ public final class DefinitionValidator {
                             : "Check the field name or keep it as forward-compatible metadata."
             ));
         }
+        if (definition instanceof BlockDefinition blockDefinition) {
+            messages.addAll(DynamicBlockStateValidator.validate(definition, blockDefinition.blockStates()));
+        }
+        messages.addAll(ContentExtensionRegistry.validate(definition));
         messages.addAll(adapter.validate(definition));
         return List.copyOf(messages);
     }

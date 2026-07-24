@@ -238,7 +238,7 @@ public class KoilMenuScreen extends Screen {
         classNames.add("com.spirit.client.gui.ide.KoilAudioEditorScreen");
         classNames.add("com.spirit.client.gui.tool.KoilToolScreen");
         classNames.add("com.spirit.client.gui.tool.PackageBuilderScreen");
-        classNames.add("com.spirit.client.gui.tool.PerformanceOptimizerScreen");
+        classNames.add("com.spirit.client.gui.performance.PerformanceOptimizerScreen");
 
         classNames.addAll(scanToolScreenClassNames());
 

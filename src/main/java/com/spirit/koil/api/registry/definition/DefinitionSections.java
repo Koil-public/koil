@@ -4,6 +4,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 
 /** Immutable-by-copy section view that never discards unknown or namespaced extension fields. */
@@ -70,6 +72,24 @@ public final class DefinitionSections {
 
     public JsonObject extensions() {
         return object("extensions");
+    }
+
+    /**
+     * Returns explicit extension entries plus namespaced custom root sections.
+     * Explicit entries under {@code extensions} take precedence if both forms
+     * declare the same extension id.
+     */
+    public Map<String, JsonElement> extensionSections() {
+        LinkedHashMap<String, JsonElement> merged = new LinkedHashMap<>();
+        for (var entry : extensions().entrySet()) {
+            merged.put(entry.getKey(), entry.getValue().deepCopy());
+        }
+        for (var entry : unknownRootFields.entrySet()) {
+            if (entry.getKey().contains(":")) {
+                merged.putIfAbsent(entry.getKey(), entry.getValue().deepCopy());
+            }
+        }
+        return Map.copyOf(merged);
     }
 
     public JsonElement blockstates() {

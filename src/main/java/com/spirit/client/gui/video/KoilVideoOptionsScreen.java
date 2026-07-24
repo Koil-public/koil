@@ -4,7 +4,9 @@ import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceProfileMode;
 import com.spirit.koil.api.performance.PerformanceRecommendation;
 import com.spirit.koil.api.performance.PerformanceRecommendationEngine;
+import com.spirit.koil.api.performance.PerformanceSettingKeyMatcher;
 import com.spirit.koil.api.performance.PerformanceSnapshot;
+import com.spirit.koil.api.design.KoilListBoundsAccess;
 import com.mojang.serialization.Codec;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -12,6 +14,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.Element;
+import net.minecraft.client.gui.ParentElement;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.option.VideoOptionsScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
@@ -1029,7 +1032,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
 
     private String sodiumValueText(Object value, Object[] allowedValues, Text[] names) {
         if (value == null) {
-            return "unknown";
+            return "unavailable";
         }
         if (value instanceof Boolean bool) {
             return bool ? "ON" : "OFF";
@@ -1048,13 +1051,8 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     }
 
     private boolean sodiumOptionAvailable(Object option) {
-        try {
-            Method method = option.getClass().getMethod("isAvailable");
-            Object value = method.invoke(option);
-            return !(value instanceof Boolean bool) || bool;
-        } catch (Throwable ignored) {
-            return true;
-        }
+        Object value = invokeObject(option, "isAvailable", "available");
+        return !(value instanceof Boolean bool) || bool;
     }
 
     private Object sodiumOptionValue(Object option) {
@@ -1077,18 +1075,10 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     }
 
     private void applySodiumOptionNow(Object option) {
-        try {
-            Method method = option.getClass().getMethod("applyChanges");
-            method.invoke(option);
-        } catch (Throwable ignored) {
-        }
+        invokeObject(option, "applyChanges");
         Object storage = invokeObject(option, "getStorage", "storage");
         if (storage != null) {
-            try {
-                Method save = storage.getClass().getMethod("save");
-                save.invoke(storage);
-            } catch (Throwable ignored) {
-            }
+            invokeObject(storage, "save");
         }
     }
 
@@ -1236,16 +1226,23 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
 
     private String formatSodiumSliderValue(Object formatter, int value) {
         if (formatter != null) {
-            try {
-                Method method = formatter.getClass().getMethod("format", int.class);
-                Object result = method.invoke(formatter, value);
-                if (result instanceof Text text) {
-                    return text.getString();
+            for (Method method : safeMethods(formatter.getClass())) {
+                if (!method.getName().equals("format")
+                        || method.getParameterCount() != 1
+                        || (method.getParameterTypes()[0] != int.class && method.getParameterTypes()[0] != Integer.class)) {
+                    continue;
                 }
-                if (result != null) {
-                    return String.valueOf(result);
+                try {
+                    method.setAccessible(true);
+                    Object result = method.invoke(formatter, value);
+                    if (result instanceof Text text) {
+                        return text.getString();
+                    }
+                    if (result != null) {
+                        return String.valueOf(result);
+                    }
+                } catch (Throwable ignored) {
                 }
-            } catch (Throwable ignored) {
             }
         }
         return String.valueOf(value);
@@ -1342,14 +1339,27 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             return null;
         }
         for (String methodName : methodNames) {
-            try {
-                Method method = owner.getClass().getMethod(methodName);
-                if (method.getParameterCount() != 0) {
+            for (Method method : safeMethods(owner.getClass())) {
+                if ((!method.getName().equals(methodName) && !method.getName().equalsIgnoreCase(methodName))
+                        || method.getParameterCount() != 0) {
                     continue;
                 }
-                method.setAccessible(true);
-                return method.invoke(owner);
-            } catch (Throwable ignored) {
+                try {
+                    method.setAccessible(true);
+                    return method.invoke(owner);
+                } catch (Throwable ignored) {
+                }
+            }
+            Object fieldValue = readObjectField(owner, methodName);
+            if (fieldValue == null && methodName.startsWith("get") && methodName.length() > 3) {
+                String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
+                fieldValue = readObjectField(owner, fieldName);
+            } else if (fieldValue == null && methodName.startsWith("is") && methodName.length() > 2) {
+                String fieldName = Character.toLowerCase(methodName.charAt(2)) + methodName.substring(3);
+                fieldValue = readObjectField(owner, fieldName);
+            }
+            if (fieldValue != null) {
+                return fieldValue;
             }
         }
         return null;
@@ -1359,12 +1369,13 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         if (owner == null) {
             return false;
         }
-        try {
-            Method method = owner.getClass().getMethod(methodName);
-            return method.getParameterCount() == 0;
-        } catch (Throwable ignored) {
-            return false;
+        for (Method method : safeMethods(owner.getClass())) {
+            if ((method.getName().equals(methodName) || method.getName().equalsIgnoreCase(methodName))
+                    && method.getParameterCount() == 0) {
+                return true;
+            }
         }
+        return false;
     }
 
 
@@ -1969,6 +1980,20 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
 
     private void renderHintBadges(DrawContext context, int mouseX, int mouseY) {
         this.hintHitboxes.clear();
+        Set<ClickableWidget> listOwnedWidgets = Collections.newSetFromMap(new IdentityHashMap<>());
+        OptionListWidget optionList = vanillaOptionList();
+        if (optionList != null) {
+            for (Element entry : optionList.children()) {
+                if (!(entry instanceof ParentElement parentEntry)) {
+                    continue;
+                }
+                for (Element child : parentEntry.children()) {
+                    if (child instanceof ClickableWidget widget) {
+                        listOwnedWidgets.add(widget);
+                    }
+                }
+            }
+        }
         for (ClickableWidget widget : collectCurrentScreenWidgets()) {
             if (!widget.visible) {
                 continue;
@@ -1977,7 +2002,10 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             if (shouldHideWidget(label, widget) || normalize(label).equals("done") || label.isBlank()) {
                 continue;
             }
-            if (this.sodiumWidgets.contains(widget) && !isWidgetInsideVanillaListViewport(widget)) {
+            if (listOwnedWidgets.contains(widget) && !isWidgetInsideListViewport(widget, optionList)) {
+                continue;
+            }
+            if (this.sodiumWidgets.contains(widget) && !isWidgetInsideSodiumFallbackViewport(widget)) {
                 continue;
             }
             PerformanceRecommendation recommendation = recommendationForWidget(widget, label);
@@ -2002,12 +2030,33 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
         }
     }
 
-    private boolean isWidgetInsideVanillaListViewport(ClickableWidget widget) {
+    private boolean isWidgetInsideListViewport(ClickableWidget widget, OptionListWidget optionList) {
+        if (optionList == null) {
+            return false;
+        }
+        int top;
+        int bottom;
+        if (optionList instanceof KoilListBoundsAccess bounds) {
+            top = bounds.koil$getListTop();
+            bottom = bounds.koil$getListBottom();
+        } else {
+            top = readIntField(optionList, "top", 32);
+            bottom = readIntField(optionList, "bottom", this.height - 32);
+        }
+        if (bottom <= top) {
+            return false;
+        }
+        int widgetTop = widget.getY();
+        int widgetBottom = widgetTop + widget.getHeight();
+        return widgetTop >= top && widgetBottom <= bottom;
+    }
+
+    private boolean isWidgetInsideSodiumFallbackViewport(ClickableWidget widget) {
         int top = this.sodiumListTop <= 0 ? 32 : this.sodiumListTop;
         int bottom = this.sodiumListBottom <= top ? this.height - 32 : this.sodiumListBottom;
         int widgetTop = widget.getY();
         int widgetBottom = widgetTop + widget.getHeight();
-        return widgetBottom >= top && widgetTop <= bottom;
+        return widgetTop >= top && widgetBottom <= bottom;
     }
 
     private int readIntField(Object owner, String name, int fallback) {
@@ -2217,29 +2266,7 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
     }
 
     private boolean settingKeyMatches(String recommendationKey, String optionKey) {
-        String recommendation = normalizeSettingPath(recommendationKey);
-        String option = normalizeSettingPath(optionKey);
-        if (recommendation.isBlank() || option.isBlank()) {
-            return false;
-        }
-        String recommendationFlat = normalize(recommendation);
-        String optionFlat = normalize(option);
-        return recommendation.equals(option)
-                || recommendation.endsWith("." + option)
-                || recommendation.endsWith("::" + option)
-                || recommendation.endsWith("/" + option)
-                || (!recommendationFlat.isBlank() && !optionFlat.isBlank() && (recommendationFlat.equals(optionFlat) || recommendationFlat.endsWith(optionFlat) || optionFlat.endsWith(recommendationFlat)));
-    }
-
-    private String normalizeSettingPath(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.toLowerCase(Locale.ROOT)
-                .replace('\\', '/')
-                .replace('_', '-')
-                .replaceAll("\\s+", "")
-                .trim();
+        return PerformanceSettingKeyMatcher.matches(recommendationKey, optionKey);
     }
 
     private void addRecommendationKey(String key, PerformanceRecommendation recommendation) {
@@ -2627,9 +2654,11 @@ public class KoilVideoOptionsScreen extends VideoOptionsScreen {
             Collections.addAll(methods, type.getMethods());
         } catch (Throwable ignored) {
         }
-        try {
-            Collections.addAll(methods, type.getDeclaredMethods());
-        } catch (Throwable ignored) {
+        for (Class<?> current = type; current != null && current != Object.class; current = current.getSuperclass()) {
+            try {
+                Collections.addAll(methods, current.getDeclaredMethods());
+            } catch (Throwable ignored) {
+            }
         }
         return methods.toArray(new Method[0]);
     }

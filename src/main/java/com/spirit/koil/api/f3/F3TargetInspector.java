@@ -22,6 +22,8 @@ import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.util.shape.VoxelShape;
+import net.minecraft.world.LightType;
 import net.minecraft.world.World;
 
 import java.util.ArrayList;
@@ -104,8 +106,14 @@ public final class F3TargetInspector {
         lines.add(F3DataLine.of("Blast Resistance", formatNumber(state.getBlock().getBlastResistance())));
         lines.add(F3DataLine.of("Break Pressure Est", blockBreakScore(state, client.world, pos)));
         lines.add(F3DataLine.of("Properties", String.valueOf(state.getProperties().size())));
-        lines.add(F3DataLine.of("Luminance", String.valueOf(state.getLuminance())));
-        lines.add(F3DataLine.of("Client Light", String.valueOf(client.world.getLightLevel(pos))));
+        int emittedLight = state.getLuminance();
+        int blockLight = client.world.getLightLevel(LightType.BLOCK, pos);
+        int skyLight = client.world.getLightLevel(LightType.SKY, pos);
+        int combinedLight = client.world.getLightLevel(pos);
+        lines.add(F3DataLine.state("Emitted Light", String.valueOf(emittedLight), "direct", 0xFFB8C4D2, "Exact luminance emitted by this block state."));
+        lines.add(F3DataLine.state("Block Light", String.valueOf(blockLight), "direct", 0xFFB8C4D2, "Exact client block-light value at the targeted position."));
+        lines.add(F3DataLine.state("Sky Light", String.valueOf(skyLight), "direct", 0xFFB8C4D2, "Exact client sky-light value at the targeted position."));
+        lines.add(F3DataLine.state("Combined Light", String.valueOf(combinedLight), "direct", 0xFFB8C4D2, "Minecraft's combined client light level at the targeted position."));
         lines.add(F3DataLine.of("Redstone Power", String.valueOf(client.world.getReceivedRedstonePower(pos))));
         lines.add(F3DataLine.of("Comparator Output", state.hasComparatorOutput() ? String.valueOf(state.getComparatorOutput(client.world, pos)) : "none"));
         lines.add(F3DataLine.of("Emits Redstone", String.valueOf(state.emitsRedstonePower())));
@@ -117,25 +125,32 @@ public final class F3TargetInspector {
         lines.add(F3DataLine.of("Burnable", String.valueOf(state.isBurnable())));
         lines.add(F3DataLine.of("Random Ticks", String.valueOf(state.hasRandomTicks())));
         lines.add(F3DataLine.of("Side Solid Up", String.valueOf(state.isSideSolidFullSquare(client.world, pos, Direction.UP))));
+        lines.add(F3DataLine.of("Side Solid Down", String.valueOf(state.isSideSolidFullSquare(client.world, pos, Direction.DOWN))));
         lines.add(F3DataLine.of("Side Solid North", String.valueOf(state.isSideSolidFullSquare(client.world, pos, Direction.NORTH))));
+        lines.add(F3DataLine.of("Side Solid South", String.valueOf(state.isSideSolidFullSquare(client.world, pos, Direction.SOUTH))));
+        lines.add(F3DataLine.of("Side Solid East", String.valueOf(state.isSideSolidFullSquare(client.world, pos, Direction.EAST))));
+        lines.add(F3DataLine.of("Side Solid West", String.valueOf(state.isSideSolidFullSquare(client.world, pos, Direction.WEST))));
         lines.add(F3DataLine.of("Waterlogged/Fluid", fluid.isEmpty() ? "none" : Registries.FLUID.getId(fluid.getFluid()).toString()));
         lines.add(F3DataLine.of("Fluid Level", fluid.isEmpty() ? "none" : String.valueOf(fluid.getLevel())));
         lines.add(F3DataLine.of("Fluid Still", fluid.isEmpty() ? "none" : String.valueOf(fluid.isStill())));
         lines.add(F3DataLine.of("Fluid Height", fluid.isEmpty() ? "none" : formatNumber(fluid.getHeight())));
-        lines.add(F3DataLine.of("Collision Empty", String.valueOf(state.getCollisionShape(client.world, pos).isEmpty())));
-        lines.add(F3DataLine.of("Collision Boxes", String.valueOf(state.getCollisionShape(client.world, pos).getBoundingBoxes().size())));
-        lines.add(F3DataLine.of("Collision Height", formatNumber(state.getCollisionShape(client.world, pos).getMax(Direction.Axis.Y))));
-        lines.add(F3DataLine.of("Outline Empty", String.valueOf(state.getOutlineShape(client.world, pos).isEmpty())));
-        lines.add(F3DataLine.of("Outline Boxes", String.valueOf(state.getOutlineShape(client.world, pos).getBoundingBoxes().size())));
-        lines.add(F3DataLine.of("Outline Height", formatNumber(state.getOutlineShape(client.world, pos).getMax(Direction.Axis.Y))));
+        VoxelShape collisionShape = state.getCollisionShape(client.world, pos);
+        VoxelShape outlineShape = state.getOutlineShape(client.world, pos);
+        lines.add(F3DataLine.of("Collision Empty", String.valueOf(collisionShape.isEmpty())));
+        lines.add(F3DataLine.of("Collision Boxes", String.valueOf(collisionShape.getBoundingBoxes().size())));
+        lines.add(F3DataLine.of("Collision Height", shapeHeight(collisionShape)));
+        lines.add(F3DataLine.of("Outline Empty", String.valueOf(outlineShape.isEmpty())));
+        lines.add(F3DataLine.of("Outline Boxes", String.valueOf(outlineShape.getBoundingBoxes().size())));
+        lines.add(F3DataLine.of("Outline Height", shapeHeight(outlineShape)));
         lines.add(F3DataLine.of("Slipperiness", formatNumber(state.getBlock().getSlipperiness())));
         lines.add(F3DataLine.of("Velocity Mult", formatNumber(state.getBlock().getVelocityMultiplier())));
         lines.add(F3DataLine.of("Jump Mult", formatNumber(state.getBlock().getJumpVelocityMultiplier())));
         ItemStack tool = client.player.getMainHandStack();
-        lines.add(F3DataLine.state("Current Tool", tool.isEmpty() ? "empty hand" : tool.getName().getString(), tool.isSuitableFor(state) ? "good" : "review", tool.isSuitableFor(state) ? 0xFF2DA700 : 0xFFE3B735, "Shows whether Minecraft says the current tool is suitable for this block."));
-        lines.add(F3DataLine.of("Tool Suitable", String.valueOf(tool.isSuitableFor(state))));
+        boolean toolSuitable = !state.isToolRequired() || tool.isSuitableFor(state);
+        lines.add(F3DataLine.state("Current Tool", tool.isEmpty() ? "empty hand" : tool.getName().getString(), toolSuitable ? "good" : "review", toolSuitable ? 0xFF2DA700 : 0xFFE3B735, "Shows whether the current item can harvest this block according to Minecraft's client-visible state."));
+        lines.add(F3DataLine.of("Tool Suitable", String.valueOf(toolSuitable)));
         lines.add(F3DataLine.of("Mining Speed", tool.isEmpty() ? "1.00" : formatNumber(tool.getMiningSpeedMultiplier(state))));
-        lines.add(F3DataLine.of("Mining Rate Est", miningScore(state, tool, client.world, pos)));
+        lines.add(F3DataLine.of("Relative Mining Speed Est", miningScore(state, tool, client.world, pos)));
         BlockEntity blockEntity = client.world.getBlockEntity(pos);
         lines.add(F3DataLine.of("Block Entity", blockEntity == null ? "none" : Registries.BLOCK_ENTITY_TYPE.getId(blockEntity.getType()).toString()));
         lines.add(F3DataLine.of("Has Block Entity", String.valueOf(blockEntity != null)));
@@ -465,6 +480,10 @@ public final class F3TargetInspector {
         double speed = tool.isEmpty() ? 1.0D : tool.getMiningSpeedMultiplier(state);
         double score = hardness <= 0.0D ? speed : speed / Math.max(1.0D, hardness);
         return formatNumber(score);
+    }
+
+    private static String shapeHeight(VoxelShape shape) {
+        return shape == null || shape.isEmpty() ? "none" : formatNumber(shape.getMax(Direction.Axis.Y));
     }
 
     private static double clampNumber(double value, double min, double max) {

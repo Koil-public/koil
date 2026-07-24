@@ -15,6 +15,7 @@ import com.spirit.koil.api.navigation.StartupDestinationService;
 import com.spirit.koil.api.performance.PerformanceCommandBridge;
 import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
+import com.spirit.koil.api.registry.client.ActiveWorldContentResourceBridge;
 import com.spirit.koil.api.stats.global.GlobalActivityClient;
 import com.spirit.koil.api.world.WorldCommandBridge;
 import com.spirit.koil.api.world.WorldInstanceResourceProfileService;
@@ -38,6 +39,7 @@ public class Client implements ClientModInitializer {
     public void onInitializeClient() {
         StartupDestinationService.initialize();
         WorldInstanceResourceProfileService.initialize();
+        ActiveWorldContentResourceBridge.initialize();
         ConsoleRequestBridge.initializeHost();
         GlobalActivityClient.registerClient();
         RichChatPrivacyNoticeClient.register();
@@ -54,6 +56,7 @@ public class Client implements ClientModInitializer {
             MacroRuntime.tick(client);
             StartupDestinationService.tick(client);
             WorldInstanceResourceProfileService.tick(client);
+            ActiveWorldContentResourceBridge.tick(client);
             boolean focused = client.isWindowFocused();
             if (lastWindowFocused != null && focused && !lastWindowFocused) {
                 UiSoundHelper.playButtonClick();

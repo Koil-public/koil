@@ -94,12 +94,12 @@ final class JsonPerformanceConfigProvider implements PerformanceOptimizationProv
                 path,
                 "optimization mod",
                 value,
-                recommendedValue(value),
+                value,
                 "manual-review",
-                true,
-                true,
+                false,
+                false,
                 configPath.toString(),
-                label + " config key. Koil can write it and request a live resource reload; verify the mod accepts runtime reload."
+                label + " config key. The current value is shown exactly as stored; Koil does not invent a target without a provider-specific rule."
         ));
     }
 
@@ -161,21 +161,6 @@ final class JsonPerformanceConfigProvider implements PerformanceOptimizationProv
             }
         }
         return false;
-    }
-
-    private String recommendedValue(String value) {
-        if ("true".equalsIgnoreCase(value)) {
-            return "false";
-        }
-        if ("false".equalsIgnoreCase(value)) {
-            return "true";
-        }
-        try {
-            double number = Double.parseDouble(value);
-            return String.valueOf(Math.max(0.0D, Math.round(number * 0.85D * 100.0D) / 100.0D));
-        } catch (NumberFormatException ignored) {
-            return value;
-        }
     }
 
     private void backup() throws java.io.IOException {

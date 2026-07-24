@@ -24,16 +24,29 @@ public final class VersionAdapter_1_20_1 implements ContentVersionAdapter {
             "/properties/rarity",
             "/properties/fireproof",
             "/properties/recipe_remainder",
+            "/properties/repair_ingredient",
+            "/properties/tool",
+            "/properties/weapon",
             "/properties/hardness",
             "/properties/resistance",
+            "/properties/slipperiness",
+            "/properties/velocity_multiplier",
+            "/properties/jump_velocity_multiplier",
             "/properties/collision",
             "/properties/opaque",
             "/properties/solid",
+            "/properties/full_cube",
+            "/properties/transparent",
+            "/properties/translucent",
             "/properties/map_color",
             "/properties/sound_group",
             "/properties/instrument",
             "/properties/piston_behavior",
-            "/blockstates"
+            "/properties/requires_tool",
+            "/properties/burnable",
+            "/properties/replaceable",
+            "/behavior/random_ticks",
+            "/blockstates/properties"
     );
 
     @Override
@@ -55,6 +68,24 @@ public final class VersionAdapter_1_20_1 implements ContentVersionAdapter {
         validateNumberAtLeast(properties, "hardness", 0.0, definition, messages);
         validateNumberAtLeast(properties, "resistance", 0.0, definition, messages);
         validateInteger(properties, "luminance", 0, 15, definition, messages);
+        validateInteger(properties, "enchantability", 0, Integer.MAX_VALUE, definition, messages);
+        validateNumberAtLeast(properties, "slipperiness", 0.0, definition, messages);
+        validateNumberAtLeast(properties, "velocity_multiplier", 0.0, definition, messages);
+        validateNumberAtLeast(properties, "jump_velocity_multiplier", 0.0, definition, messages);
+        validateKnownEnum(properties, "rarity", Set.of("common", "uncommon", "rare", "epic"), definition, messages);
+
+        JsonObject behavior = definition.sections().behavior();
+        validateInteger(behavior, "cooldown_ticks", 0, Integer.MAX_VALUE, definition, messages);
+        JsonObject redstone = object(behavior, "redstone");
+        validateInteger(redstone, "weak_power", 0, 15, definition, messages);
+        validateInteger(redstone, "strong_power", 0, 15, definition, messages);
+        JsonObject tool = object(properties, "tool");
+        validateInteger(tool, "mining_level", 0, Integer.MAX_VALUE, definition, messages);
+        validateNumberAtLeast(tool, "mining_speed", 0.0, definition, messages);
+        JsonObject weapon = object(properties, "weapon");
+        validateNumber(weapon, "attack_damage", definition, messages);
+        validateNumber(weapon, "attack_speed", definition, messages);
+        validateNumberAtLeast(weapon, "knockback", 0.0, definition, messages);
         return List.copyOf(messages);
     }
 
@@ -115,6 +146,53 @@ public final class VersionAdapter_1_20_1 implements ContentVersionAdapter {
         } catch (RuntimeException exception) {
             messages.add(error("invalid_" + key, key + " must be numeric.", definition));
         }
+    }
+
+    private static void validateNumber(
+            JsonObject object,
+            String key,
+            ContentDefinition definition,
+            List<WorldContentIndex.ValidationMessage> messages
+    ) {
+        JsonElement value = object.get(key);
+        if (value == null) {
+            return;
+        }
+        try {
+            value.getAsDouble();
+        } catch (RuntimeException exception) {
+            messages.add(error("invalid_" + key, key + " must be numeric.", definition));
+        }
+    }
+
+    private static void validateKnownEnum(
+            JsonObject object,
+            String key,
+            Set<String> allowed,
+            ContentDefinition definition,
+            List<WorldContentIndex.ValidationMessage> messages
+    ) {
+        JsonElement value = object.get(key);
+        if (value == null) {
+            return;
+        }
+        try {
+            String parsed = value.getAsString().toLowerCase(java.util.Locale.ROOT);
+            if (!allowed.contains(parsed)) {
+                messages.add(error(
+                        "invalid_" + key,
+                        key + " must be one of: " + String.join(", ", allowed) + ".",
+                        definition
+                ));
+            }
+        } catch (RuntimeException exception) {
+            messages.add(error("invalid_" + key, key + " must be a string.", definition));
+        }
+    }
+
+    private static JsonObject object(JsonObject object, String key) {
+        JsonElement value = object.get(key);
+        return value != null && value.isJsonObject() ? value.getAsJsonObject() : new JsonObject();
     }
 
     private static WorldContentIndex.ValidationMessage error(

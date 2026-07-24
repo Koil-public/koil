@@ -1,7 +1,7 @@
 package com.spirit.koil.api.performance;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
-import com.spirit.client.gui.tool.PerformanceOptimizerScreen;
+import com.spirit.client.gui.performance.PerformanceOptimizerScreen;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;

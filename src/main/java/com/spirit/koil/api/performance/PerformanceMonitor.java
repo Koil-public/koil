@@ -13,7 +13,6 @@ import java.util.List;
 public final class PerformanceMonitor {
     private static final int SAMPLE_LIMIT = 240;
     private static final Deque<Sample> SAMPLES = new ArrayDeque<>();
-    private static long lastTickNanos;
     private static PerformanceSnapshot latestSnapshot;
     private static String latestWarning = "";
     private static long latestWarningAt;
@@ -27,16 +26,16 @@ public final class PerformanceMonitor {
         if (client == null) {
             return;
         }
-        long now = System.nanoTime();
-        double frameMs = lastTickNanos == 0L ? 0.0D : (now - lastTickNanos) / 1_000_000.0D;
-        lastTickNanos = now;
-        int fps = safeFps(client);
+        MinecraftPerformanceDataReader.FrameMetrics frameMetrics = MinecraftPerformanceDataReader.frameMetrics(client);
+        double frameMs = frameMetrics.latestFrameTimeMs();
+        int fps = frameMetrics.currentFps();
         Runtime runtime = Runtime.getRuntime();
         long used = (runtime.totalMemory() - runtime.freeMemory()) / 1024L / 1024L;
         long max = Math.max(1L, runtime.maxMemory() / 1024L / 1024L);
         GcStats gc = gcDelta();
         int entityCount = countEntities(client);
-        int renderDistance = safeOption(client, "getViewDistance", 0);
+        MinecraftPerformanceDataReader.OptionMetrics options = MinecraftPerformanceDataReader.options(client);
+        int renderDistance = options.renderDistance();
         PerformanceRuntimeContext context = PerformanceRuntimeContextService.capture(client);
         double chunkStress = chunkStress(frameMs, renderDistance, context.worldType());
         boolean screenOpen = client.currentScreen != null;
@@ -98,23 +97,25 @@ public final class PerformanceMonitor {
         long used = (runtime.totalMemory() - runtime.freeMemory()) / 1024L / 1024L;
         long max = Math.max(1L, runtime.maxMemory() / 1024L / 1024L);
         double memoryPressure = Math.min(1.0D, used / (double) max);
-        int fps = safeFps(client);
+        MinecraftPerformanceDataReader.FrameMetrics frameMetrics = MinecraftPerformanceDataReader.frameMetrics(client);
+        int fps = frameMetrics.currentFps();
         double averageFps = samples.stream().mapToInt(Sample::fps).average().orElse(fps);
         double onePercentLow = percentileLowFps(samples);
-        double frameMs = samples.peekLast() == null ? 0.0D : samples.peekLast().frameTimeMs();
-        double maxFrameMs = samples.stream().mapToDouble(Sample::frameTimeMs).max().orElse(frameMs);
-        int renderDistance = safeOption(client, "getViewDistance", 0);
-        int simulationDistance = safeOption(client, "getSimulationDistance", 0);
-        int maxFps = safeOption(client, "getMaxFps", 0);
-        double entityDistanceScale = safeOptionDouble(client, "getEntityDistanceScaling", 1.0D);
-        int mipmapLevels = safeOption(client, "getMipmapLevels", 0);
-        String particlesMode = safeOptionString(client, "getParticles", "unknown");
-        String graphicsMode = safeOptionString(client, "getGraphicsMode", "unknown");
-        String cloudsMode = safeOptionString(client, "getCloudRenderMode", "unknown");
-        boolean smoothLighting = safeOptionBoolean(client, "getAo", true);
-        int biomeBlend = safeOption(client, "getBiomeBlendRadius", 0);
-        boolean entityShadows = safeOptionBoolean(client, "getEntityShadows", true);
-        boolean vsync = safeOptionBoolean(client, "getEnableVsync", false);
+        double frameMs = samples.peekLast() == null ? frameMetrics.latestFrameTimeMs() : samples.peekLast().frameTimeMs();
+        double maxFrameMs = Math.max(frameMetrics.maxFrameTimeMs(), samples.stream().mapToDouble(Sample::frameTimeMs).max().orElse(frameMs));
+        MinecraftPerformanceDataReader.OptionMetrics options = MinecraftPerformanceDataReader.options(client);
+        int renderDistance = options.renderDistance();
+        int simulationDistance = options.simulationDistance();
+        int maxFps = options.maxFps();
+        double entityDistanceScale = options.entityDistanceScale();
+        int mipmapLevels = options.mipmapLevels();
+        String particlesMode = options.particlesMode();
+        String graphicsMode = options.graphicsMode();
+        String cloudsMode = options.cloudsMode();
+        boolean smoothLighting = options.smoothLighting();
+        int biomeBlend = options.biomeBlend();
+        boolean entityShadows = options.entityShadows();
+        boolean vsync = options.vsync();
         boolean shaderInstalled = FabricLoader.getInstance().isModLoaded("iris") || FabricLoader.getInstance().isModLoaded("oculus");
         int entityCount = countEntities(client);
         PerformanceRuntimeContext context = PerformanceRuntimeContextService.capture(client);
@@ -166,60 +167,6 @@ public final class PerformanceMonitor {
         );
     }
 
-    private static int safeFps(MinecraftClient client) {
-        try {
-            return client.getCurrentFps();
-        } catch (Throwable ignored) {
-            return 0;
-        }
-    }
-
-    private static int safeOption(MinecraftClient client, String method, int fallback) {
-        try {
-            Object option = client.options.getClass().getMethod(method).invoke(client.options);
-            Object value = option.getClass().getMethod("getValue").invoke(option);
-            if (value instanceof Number number) {
-                return number.intValue();
-            }
-        } catch (Throwable ignored) {
-        }
-        return fallback;
-    }
-
-    private static double safeOptionDouble(MinecraftClient client, String method, double fallback) {
-        try {
-            Object option = client.options.getClass().getMethod(method).invoke(client.options);
-            Object value = option.getClass().getMethod("getValue").invoke(option);
-            if (value instanceof Number number) {
-                return number.doubleValue();
-            }
-        } catch (Throwable ignored) {
-        }
-        return fallback;
-    }
-
-    private static String safeOptionString(MinecraftClient client, String method, String fallback) {
-        try {
-            Object option = client.options.getClass().getMethod(method).invoke(client.options);
-            Object value = option.getClass().getMethod("getValue").invoke(option);
-            return value == null ? fallback : value.toString();
-        } catch (Throwable ignored) {
-            return fallback;
-        }
-    }
-
-    private static boolean safeOptionBoolean(MinecraftClient client, String method, boolean fallback) {
-        try {
-            Object option = client.options.getClass().getMethod(method).invoke(client.options);
-            Object value = option.getClass().getMethod("getValue").invoke(option);
-            if (value instanceof Boolean bool) {
-                return bool;
-            }
-        } catch (Throwable ignored) {
-        }
-        return fallback;
-    }
-
     private static int countEntities(MinecraftClient client) {
         try {
             if (client == null || client.world == null) {
@@ -239,9 +186,16 @@ public final class PerformanceMonitor {
         if (samples.isEmpty()) {
             return 0.0D;
         }
-        int[] values = samples.stream().mapToInt(Sample::fps).sorted().toArray();
-        int index = Math.max(0, Math.min(values.length - 1, values.length / 100));
-        return values[index];
+        double[] frameTimes = samples.stream()
+                .mapToDouble(Sample::frameTimeMs)
+                .filter(value -> value > 0.0D && Double.isFinite(value))
+                .sorted()
+                .toArray();
+        if (frameTimes.length == 0) {
+            return samples.peekLast() == null ? 0.0D : samples.peekLast().fps();
+        }
+        int index = Math.max(0, Math.min(frameTimes.length - 1, (int) Math.ceil(frameTimes.length * 0.99D) - 1));
+        return 1_000.0D / frameTimes[index];
     }
 
     private static PerformanceBottleneck classify(int fps, double averageFps, double maxFrameMs, double memoryPressure, int entityCount, double gcPressure, double chunkStress, double shaderPressure, double uiFramePressure, double modLoadPressure) {

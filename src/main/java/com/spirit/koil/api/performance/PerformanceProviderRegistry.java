@@ -5,7 +5,9 @@ import net.minecraft.client.MinecraftClient;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class PerformanceProviderRegistry {
     private PerformanceProviderRegistry() {
@@ -87,10 +89,24 @@ public final class PerformanceProviderRegistry {
     }
 
     public static List<PerformanceSettingDescriptor> settings(MinecraftClient client, PerformanceSnapshot snapshot) {
-        List<PerformanceSettingDescriptor> settings = new ArrayList<>();
+        Map<String, PerformanceSettingDescriptor> settings = new LinkedHashMap<>();
         for (PerformanceOptimizationProvider provider : providers()) {
-            settings.addAll(provider.settings(client, snapshot));
+            try {
+                for (PerformanceSettingDescriptor setting : provider.settings(client, snapshot)) {
+                    if (setting == null) {
+                        continue;
+                    }
+                    if (!setting.hasVerifiedCurrentValue()) {
+                        continue;
+                    }
+                    String key = setting.providerId() + "\u0000" + setting.settingId();
+                    settings.putIfAbsent(key, setting);
+                }
+            } catch (Throwable ignored) {
+                // A broken optional provider must not remove verified values from
+                // Minecraft or the other installed providers.
+            }
         }
-        return settings;
+        return List.copyOf(settings.values());
     }
 }

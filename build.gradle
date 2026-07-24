@@ -58,16 +58,6 @@ configurations.configureEach {
 	}
 }
 
-sourceSets {
-	main {
-		resources {
-			srcDirs += [
-					'src/main/generated'
-			]
-		}
-	}
-}
-
 dependencies {
 	// Minecraft dependencies
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
@@ -124,7 +114,10 @@ tasks.withType(JavaExec).configureEach {
 
 def runClientRequiredClassFiles = [
 		file("$buildDir/classes/java/main/com/spirit/client/gui/browser/ContentBrowserListRowRenderer.class"),
-		file("$buildDir/classes/java/main/com/spirit/mixin/client/gui/revamp/world/MixinWorldEntry.class")
+		file("$buildDir/classes/java/main/com/spirit/mixin/client/gui/revamp/world/MixinWorldEntry.class"),
+		file("$buildDir/classes/java/main/com/spirit/koil/api/util/file/media/VisualTransportControls.class"),
+		file("$buildDir/classes/java/main/com/spirit/Client.class"),
+		file("$buildDir/classes/java/main/com/spirit/Main.class")
 ]
 
 tasks.named("compileJava", JavaCompile).configure {
@@ -158,7 +151,7 @@ tasks.register('generateContentRegistryTestDatapack', JavaExec) {
 	dependsOn classes
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'com.spirit.koil.api.registry.dev.ContentTestDatapackGenerator'
-	args file('docs/test-datapacks').absolutePath, file('src/main/generated').absolutePath
+	args file('docs/test-datapacks').absolutePath
 }
 
 tasks.register('installContentRegistryTestDatapackGeorgia', JavaExec) {

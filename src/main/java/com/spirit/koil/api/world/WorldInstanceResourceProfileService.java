@@ -3,13 +3,10 @@ package com.spirit.koil.api.world;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.resource.ResourcePackManager;
-import net.minecraft.server.integrated.IntegratedServer;
-import net.minecraft.util.WorldSavePath;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -29,11 +26,9 @@ import java.util.Set;
  */
 public final class WorldInstanceResourceProfileService {
     private static final int TEXTURE_UPDATE_DATA_VERSION = 1952;
-    private static final int APPLY_DELAY_TICKS = 20;
     private static final Set<Path> MANAGED_LINKS = new LinkedHashSet<>();
 
     private static List<String> originalEnabledNames = List.of();
-    private static int pendingTicks = -1;
     private static boolean active;
     private static boolean initialized;
 
@@ -45,45 +40,34 @@ public final class WorldInstanceResourceProfileService {
             return;
         }
         initialized = true;
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            if (client != null) {
-                pendingTicks = APPLY_DELAY_TICKS;
-            }
-        });
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
-            pendingTicks = -1;
-            if (client != null) {
-                client.execute(() -> restore(client));
-            }
-        });
     }
 
     public static void tick(MinecraftClient client) {
-        if (client == null || pendingTicks < 0) {
-            return;
-        }
-        if (pendingTicks-- > 0) {
-            return;
-        }
-        pendingTicks = -1;
-        applyForJoinedWorld(client);
+        // Transition-owned since Content resources must be ready before join.
     }
 
-    private static synchronized void applyForJoinedWorld(MinecraftClient client) {
-        IntegratedServer server = client.getServer();
+    /**
+     * Selects the legacy/source-instance profile before the integrated server
+     * starts. The Content transition performs the one combined client reload.
+     *
+     * @return whether the selected resource profile changed
+     */
+    public static synchronized boolean prepareBeforeWorldJoin(
+            MinecraftClient client,
+            Path sessionRoot
+    ) {
         ResourcePackManager manager = client.getResourcePackManager();
-        if (server == null || manager == null || active) {
-            return;
+        if (client == null || sessionRoot == null || manager == null || active) {
+            return false;
         }
         try {
-            Path sessionRoot = server.getSavePath(WorldSavePath.ROOT).toAbsolutePath().normalize();
-            Path realWorldRoot = sessionRoot.toRealPath();
+            Path realWorldRoot = sessionRoot.toAbsolutePath().normalize().toRealPath();
             Path gameRoot = client.runDirectory.toPath().toAbsolutePath().normalize().toRealPath();
             boolean externalWorld = !realWorldRoot.startsWith(gameRoot);
             int dataVersion = readDataVersion(realWorldRoot);
             boolean legacyTextures = dataVersion > 0 && dataVersion < TEXTURE_UPDATE_DATA_VERSION;
             if (!externalWorld && !legacyTextures) {
-                return;
+                return false;
             }
 
             originalEnabledNames = List.copyOf(manager.getEnabledNames());
@@ -101,39 +85,47 @@ public final class WorldInstanceResourceProfileService {
             if (desired.equals(new LinkedHashSet<>(originalEnabledNames))) {
                 cleanupManagedLinks();
                 originalEnabledNames = List.of();
-                return;
+                return false;
             }
             manager.setEnabledProfiles(desired);
             active = true;
-            client.reloadResources();
+            return true;
         } catch (Exception ignored) {
             cleanupManagedLinks();
             originalEnabledNames = List.of();
             active = false;
+            return false;
         }
     }
 
-    private static synchronized void restore(MinecraftClient client) {
+    public static synchronized boolean hasActiveProfile() {
+        return active;
+    }
+
+    /**
+     * Restores the pre-world profile without starting a second reload. The
+     * Content transition reloads the combined final profile before Title.
+     */
+    public static synchronized boolean restoreBeforeDisconnect(MinecraftClient client) {
         if (!active) {
             cleanupManagedLinks();
-            return;
+            return false;
         }
         ResourcePackManager manager = client.getResourcePackManager();
         if (manager == null) {
             cleanupManagedLinks();
             originalEnabledNames = List.of();
             active = false;
-            return;
+            return false;
         }
         List<String> restoreNames = originalEnabledNames;
         active = false;
         originalEnabledNames = List.of();
         manager.scanPacks();
         manager.setEnabledProfiles(restoreNames);
-        client.reloadResources().whenComplete((ignored, failure) -> client.execute(() -> {
-            cleanupManagedLinks();
-            manager.scanPacks();
-        }));
+        cleanupManagedLinks();
+        manager.scanPacks();
+        return true;
     }
 
     private static int readDataVersion(Path worldRoot) {

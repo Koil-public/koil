@@ -87,8 +87,9 @@ public final class RichChatAttachmentRenderer {
     private static final Map<UUID, ImageTexture> THUMBNAILS = new ConcurrentHashMap<>();
     private static final Map<UUID, String> FAILURES = new ConcurrentHashMap<>();
     private static final Map<String, MediaBounds> BOUNDS = new ConcurrentHashMap<>();
-    private static final Map<ButtonKey, ButtonBounds> BUTTONS = new ConcurrentHashMap<>();
-    private static final Map<String, CodeButtonBounds> CODE_BUTTONS = new ConcurrentHashMap<>();
+    private static final Map<ButtonKey, int[]> BUTTONS = new ConcurrentHashMap<>();
+    private static final Map<ButtonKey, RichChatAttachment> BUTTON_ATTACHMENTS = new ConcurrentHashMap<>();
+    private static final Map<String, int[]> CODE_BUTTONS = new ConcurrentHashMap<>();
     private static final Map<String, UsernameHover> USERNAME_HOVERS = new ConcurrentHashMap<>();
     private static final Map<String, HoverTooltip> HOVER_TOOLTIPS = new ConcurrentHashMap<>();
     private static final Map<String, SpoilerBounds> SPOILER_BOUNDS = new ConcurrentHashMap<>();
@@ -146,6 +147,7 @@ public final class RichChatAttachmentRenderer {
         OCCURRENCE_DRAW_X.clear();
         BOUNDS.clear();
         BUTTONS.clear();
+        BUTTON_ATTACHMENTS.clear();
         CODE_BUTTONS.clear();
         USERNAME_HOVERS.clear();
         HOVER_TOOLTIPS.clear();
@@ -1335,7 +1337,7 @@ public final class RichChatAttachmentRenderer {
         }
         context.disableScissor();
         if (marker.row() == 0) {
-            putInlineCodeButton(context, block.id(), CodeButtonAction.MENU, menuX, drawY + 1, MENU_BUTTON_SIZE, MENU_BUTTON_SIZE);
+            putInlineCodeButton(context, block.id(), menuX, drawY + 1, MENU_BUTTON_SIZE, MENU_BUTTON_SIZE);
         }
         return drawX + width;
     }
@@ -1476,18 +1478,19 @@ public final class RichChatAttachmentRenderer {
             INFO_POPUP.close();
             return true;
         }
-        Optional<ButtonBounds> buttonHit = BUTTONS.values().stream()
-                .filter(bounds -> mouseX >= bounds.x() && mouseX <= bounds.x() + bounds.width() && mouseY >= bounds.y() && mouseY <= bounds.y() + bounds.height())
+        Optional<Map.Entry<ButtonKey, int[]>> buttonHit = BUTTONS.entrySet().stream()
+                .filter(entry -> contains(entry.getValue(), mouseX, mouseY))
                 .findFirst();
         if (buttonHit.isPresent()) {
-            runButtonAction(buttonHit.get(), mouseX, mouseY);
+            ButtonKey key = buttonHit.get().getKey();
+            runButtonAction(key.action(), BUTTON_ATTACHMENTS.get(key), buttonHit.get().getValue(), mouseX, mouseY);
             return true;
         }
-        Optional<CodeButtonBounds> codeButtonHit = CODE_BUTTONS.values().stream()
-                .filter(bounds -> mouseX >= bounds.x() && mouseX <= bounds.x() + bounds.width() && mouseY >= bounds.y() && mouseY <= bounds.y() + bounds.height())
+        Optional<Map.Entry<String, int[]>> codeButtonHit = CODE_BUTTONS.entrySet().stream()
+                .filter(entry -> contains(entry.getValue(), mouseX, mouseY))
                 .findFirst();
         if (codeButtonHit.isPresent()) {
-            runCodeButtonAction(codeButtonHit.get(), mouseX, mouseY);
+            runCodeButtonAction(codeButtonHit.get().getKey(), mouseX, mouseY);
             return true;
         }
         if (button == 0) {
@@ -1768,71 +1771,71 @@ public final class RichChatAttachmentRenderer {
         return attachment != null && "remote_link".equalsIgnoreCase(metadata(attachment, "upload_state"));
     }
 
-    private static void runButtonAction(ButtonBounds bounds, double mouseX, double mouseY) {
-        if (bounds == null || bounds.attachment() == null) {
+    private static void runButtonAction(ButtonAction action, RichChatAttachment attachment, int[] rect, double mouseX, double mouseY) {
+        if (action == null || attachment == null || rect == null || rect.length < 4) {
             return;
         }
-        if (bounds.action() == ButtonAction.PINNED_VIDEO_PLAY_PAUSE) {
+        if (action == ButtonAction.PINNED_VIDEO_PLAY_PAUSE) {
             VisualPlaybackSession session = pinnedVisualSession;
-            if (session != null && sameAttachmentId(pinnedVisualAttachmentId, bounds.attachment().attachmentId())) {
+            if (session != null && sameAttachmentId(pinnedVisualAttachmentId, attachment.attachmentId())) {
                 if (session.state() == VisualPlaybackState.PLAYING) {
                     session.pause();
                 } else {
-                    playVideoSession(session, bounds.attachment());
+                    playVideoSession(session, attachment);
                 }
             }
             return;
         }
-        if (bounds.action() == ButtonAction.PINNED_VIDEO_STOP) {
+        if (action == ButtonAction.PINNED_VIDEO_STOP) {
             VisualPlaybackSession session = pinnedVisualSession;
-            if (session != null && sameAttachmentId(pinnedVisualAttachmentId, bounds.attachment().attachmentId())) {
+            if (session != null && sameAttachmentId(pinnedVisualAttachmentId, attachment.attachmentId())) {
                 session.stop();
                 ActiveVisualPlaybackRegistry.clear(session);
             }
             return;
         }
-        if (bounds.action() == ButtonAction.PINNED_VIDEO_SEEK) {
+        if (action == ButtonAction.PINNED_VIDEO_SEEK) {
             VisualPlaybackSession session = pinnedVisualSession;
-            if (session != null && session.canSeek() && sameAttachmentId(pinnedVisualAttachmentId, bounds.attachment().attachmentId())) {
-                float progress = progressForMouse(bounds.x(), bounds.width(), mouseX);
+            if (session != null && session.canSeek() && sameAttachmentId(pinnedVisualAttachmentId, attachment.attachmentId())) {
+                float progress = progressForMouse(rect[0], rect[2], mouseX);
                 session.seekTo(Math.round(session.durationMillis() * progress));
                 if (session.state() != VisualPlaybackState.PLAYING) {
-                    playVideoSession(session, bounds.attachment());
+                    playVideoSession(session, attachment);
                 }
             }
             return;
         }
-        if (bounds.action() == ButtonAction.PLAY_PAUSE) {
-            if (bounds.attachment().type() == RichChatAttachmentType.VIDEO) {
-                VisualPlaybackSession session = videoActionSession(bounds.attachment());
+        if (action == ButtonAction.PLAY_PAUSE) {
+            if (attachment.type() == RichChatAttachmentType.VIDEO) {
+                VisualPlaybackSession session = videoActionSession(attachment);
                 if (session == null) {
                     return;
                 }
                 if (session.state() == VisualPlaybackState.PLAYING) {
                     session.pause();
                 } else {
-                    playVideoSession(session, bounds.attachment());
+                    playVideoSession(session, attachment);
                 }
                 return;
             }
-            File file = attachmentFile(bounds.attachment());
+            File file = attachmentFile(attachment);
             if (file == null) {
                 return;
             }
             if (!AudioManager.isCurrentAudioFile(file)) {
-                activeAudioAttachmentId = bounds.attachment().attachmentId();
+                activeAudioAttachmentId = attachment.attachmentId();
                 AudioManager.playAudio(file, false, 1.0F);
             } else if (AudioManager.isAudioPlaying()) {
                 AudioManager.pauseAudio();
             } else {
-                activeAudioAttachmentId = bounds.attachment().attachmentId();
+                activeAudioAttachmentId = attachment.attachmentId();
                 AudioManager.playAudio(file, false, 1.0F);
             }
             return;
         }
-        if (bounds.action() == ButtonAction.STOP) {
-            if (bounds.attachment().type() == RichChatAttachmentType.VIDEO) {
-                VisualPlaybackSession session = videoActionSession(bounds.attachment());
+        if (action == ButtonAction.STOP) {
+            if (attachment.type() == RichChatAttachmentType.VIDEO) {
+                VisualPlaybackSession session = videoActionSession(attachment);
                 if (session != null) {
                     session.stop();
                     ActiveVisualPlaybackRegistry.clear(session);
@@ -1843,23 +1846,23 @@ public final class RichChatAttachmentRenderer {
             AudioManager.stopAllAudio();
             return;
         }
-        if (bounds.action() == ButtonAction.SEEK) {
+        if (action == ButtonAction.SEEK) {
             seekDrag = null;
-            seekToMouse(bounds.attachment(), bounds.x(), bounds.width(), mouseX, true);
+            seekToMouse(attachment, rect[0], rect[2], mouseX, true);
             return;
         }
-        if (bounds.action() == ButtonAction.VIEW) {
-            openInReadOnlyEditor(bounds.attachment());
+        if (action == ButtonAction.VIEW) {
+            openInReadOnlyEditor(attachment);
             return;
         }
-        if (bounds.action() == ButtonAction.MENU) {
-            actionMenuAttachment = bounds.attachment();
+        if (action == ButtonAction.MENU) {
+            actionMenuAttachment = attachment;
             actionMenuCodeBlockId = null;
             INFO_POPUP.close();
             MinecraftClient client = MinecraftClient.getInstance();
             int width = client == null || client.getWindow() == null ? 320 : client.getWindow().getScaledWidth();
             int height = client == null || client.getWindow() == null ? 240 : client.getWindow().getScaledHeight();
-            ACTION_MENU.toggleAtPointer(mouseX, mouseY, width, height, attachmentMenuEntries(bounds.attachment()));
+            ACTION_MENU.toggleAtPointer(mouseX, mouseY, width, height, attachmentMenuEntries(attachment));
         }
     }
 
@@ -1872,12 +1875,12 @@ public final class RichChatAttachmentRenderer {
         );
     }
 
-    private static void runCodeButtonAction(CodeButtonBounds bounds, double mouseX, double mouseY) {
-        if (bounds == null || bounds.action() != CodeButtonAction.MENU) {
+    private static void runCodeButtonAction(String blockId, double mouseX, double mouseY) {
+        if (blockId == null || blockId.isBlank()) {
             return;
         }
         actionMenuAttachment = null;
-        actionMenuCodeBlockId = bounds.blockId();
+        actionMenuCodeBlockId = blockId;
         INFO_POPUP.close();
         MinecraftClient client = MinecraftClient.getInstance();
         int width = client == null || client.getWindow() == null ? 320 : client.getWindow().getScaledWidth();
@@ -2248,14 +2251,13 @@ public final class RichChatAttachmentRenderer {
         Vector4f bottomRight = new Vector4f(x + width, y + height, 0.0F, 1.0F);
         topLeft.mul(matrix);
         bottomRight.mul(matrix);
-        BUTTONS.put(key, new ButtonBounds(
-                key.action(),
-                attachment,
+        BUTTONS.put(key, new int[]{
                 Math.round(Math.min(topLeft.x(), bottomRight.x())),
                 Math.round(Math.min(topLeft.y(), bottomRight.y())),
                 Math.max(1, Math.round(Math.abs(bottomRight.x() - topLeft.x()))),
                 Math.max(1, Math.round(Math.abs(bottomRight.y() - topLeft.y())))
-        ));
+        });
+        BUTTON_ATTACHMENTS.put(key, attachment);
     }
 
     private static void putInlineButton(DrawContext context, ButtonKey key, RichChatAttachment attachment, int x, int y, int width, int height) {
@@ -2263,37 +2265,42 @@ public final class RichChatAttachmentRenderer {
         if (rect == null) {
             return;
         }
-        BUTTONS.put(key, new ButtonBounds(key.action(), attachment, rect[0], rect[1], rect[2], rect[3]));
+        BUTTONS.put(key, rect);
+        BUTTON_ATTACHMENTS.put(key, attachment);
     }
 
-    private static void putCodeButton(DrawContext context, String blockId, CodeButtonAction action, int x, int y, int width, int height) {
+    private static void putCodeButton(DrawContext context, String blockId, int x, int y, int width, int height) {
         Matrix4f matrix = context.getMatrices().peek().getPositionMatrix();
         Vector4f topLeft = new Vector4f(x, y, 0.0F, 1.0F);
         Vector4f bottomRight = new Vector4f(x + width, y + height, 0.0F, 1.0F);
         topLeft.mul(matrix);
         bottomRight.mul(matrix);
         CODE_BUTTONS.put(
-                blockId + ":" + action.name(),
-                new CodeButtonBounds(
-                        action,
-                        blockId,
+                blockId,
+                new int[]{
                         Math.round(Math.min(topLeft.x(), bottomRight.x())),
                         Math.round(Math.min(topLeft.y(), bottomRight.y())),
                         Math.max(1, Math.round(Math.abs(bottomRight.x() - topLeft.x()))),
                         Math.max(1, Math.round(Math.abs(bottomRight.y() - topLeft.y())))
-                )
+                }
         );
     }
 
-    private static void putInlineCodeButton(DrawContext context, String blockId, CodeButtonAction action, int x, int y, int width, int height) {
+    private static void putInlineCodeButton(DrawContext context, String blockId, int x, int y, int width, int height) {
         int[] rect = clippedInlineRect(context, x, y, width, height);
         if (rect == null) {
             return;
         }
-        CODE_BUTTONS.put(
-                blockId + ":" + action.name(),
-                new CodeButtonBounds(action, blockId, rect[0], rect[1], rect[2], rect[3])
-        );
+        CODE_BUTTONS.put(blockId, rect);
+    }
+
+    private static boolean contains(int[] rect, double mouseX, double mouseY) {
+        return rect != null
+                && rect.length >= 4
+                && mouseX >= rect[0]
+                && mouseX <= rect[0] + rect[2]
+                && mouseY >= rect[1]
+                && mouseY <= rect[1] + rect[3];
     }
 
     private static PreviewSize previewSize(ImageTexture texture, int chatWidth) {
@@ -3013,17 +3020,7 @@ public final class RichChatAttachmentRenderer {
         PINNED_VIDEO_SEEK
     }
 
-    private enum CodeButtonAction {
-        MENU
-    }
-
     private record ButtonKey(String occurrenceId, ButtonAction action) {
-    }
-
-    private record ButtonBounds(ButtonAction action, RichChatAttachment attachment, int x, int y, int width, int height) {
-    }
-
-    private record CodeButtonBounds(CodeButtonAction action, String blockId, int x, int y, int width, int height) {
     }
 
     private record UsernameHover(int x, int y, int width, int height, String timestamp, boolean inlineShown) {

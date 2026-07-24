@@ -37,4 +37,17 @@ public record PerformanceSnapshot(
         String likelyCause,
         PerformanceBottleneck primaryBottleneck
 ) {
+    public boolean hasVerifiedVideoOptions() {
+        return renderDistance > 0
+                && simulationDistance > 0
+                && maxFps >= 0
+                && entityDistanceScale > 0.0D
+                && mipmapLevels >= 0
+                && particlesMode != null
+                && graphicsMode != null
+                && cloudsMode != null
+                && !"unavailable".equalsIgnoreCase(particlesMode)
+                && !"unavailable".equalsIgnoreCase(graphicsMode)
+                && !"unavailable".equalsIgnoreCase(cloudsMode);
+    }
 }

@@ -70,7 +70,7 @@ public final class F3Controller {
 
     public static boolean handleOverlayMouseScroll(double verticalAmount) {
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.currentScreen != null || !F3LayoutState.overlayVisible() || F3LayoutState.mode() == F3Mode.COMPACT) {
+        if (!isPlayableDebugContext(client) || !F3LayoutState.overlayVisible() || F3LayoutState.mode() == F3Mode.COMPACT) {
             return false;
         }
         int amount = scrollAmount(verticalAmount);

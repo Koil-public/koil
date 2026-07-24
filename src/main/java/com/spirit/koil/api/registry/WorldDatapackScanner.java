@@ -146,6 +146,7 @@ public final class WorldDatapackScanner {
         } else {
             scanFolderPack(packPath, scan);
         }
+        scan.validation.addAll(ContentAssetValidator.validate(packPath, packed, scan.definitions));
         String state = packState(packId, fileName, worldMetadata, scan.metadataValid);
         PackMetadata metadata = readPackMetadata(scan.metadata, fileName, packPath, scan.validation);
         return new WorldContentIndex.PackEntry(
@@ -269,6 +270,7 @@ public final class WorldDatapackScanner {
     }
 
     private void addDefinition(String relativePath, String sourcePath, IoSupplier<byte[]> bytes, PackScan scan) {
+        ContentRegistryEvents.beforeParse(sourcePath);
         String[] segments = relativePath.split("/");
         if (segments.length < 5) {
             return;
@@ -292,6 +294,7 @@ public final class WorldDatapackScanner {
 
         String rawId = string(definition, "id");
         if (definition.has("mod-id")) {
+            ContentRegistryEvents.legacyModId(sourcePath);
             validation.add(WorldContentIndex.ValidationMessage.error(
                     "unsupported_legacy_mod_id",
                     "The replacement Content schema does not accept mod-id.",
@@ -380,10 +383,9 @@ public final class WorldDatapackScanner {
                 true,
                 validation
         );
-        validation.addAll(DefinitionValidator.validate(
-                DefinitionParser.parse(typedValidationSource),
-                ContentVersionAdapters.current()
-        ));
+        var parsedDefinition = DefinitionParser.parse(typedValidationSource);
+        ContentRegistryEvents.afterParse(parsedDefinition);
+        validation.addAll(DefinitionValidator.validate(parsedDefinition, ContentVersionAdapters.current()));
         boolean activatable = validation.stream().noneMatch(WorldContentIndex.ValidationMessage::blocksActivation);
         scan.definitions.add(new WorldContentIndex.DefinitionEntry(
                 typedValidationSource.id(),

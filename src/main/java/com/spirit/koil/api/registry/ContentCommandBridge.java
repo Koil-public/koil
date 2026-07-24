@@ -44,7 +44,10 @@ public final class ContentCommandBridge {
                         .then(literal("scan")
                                 .requires(source -> source.hasPermissionLevel(2))
                                 .then(literal("worlds").executes(context -> scanWorlds(context.getSource()))))
-                        .then(literal("validate").executes(context -> validate(context.getSource())))
+                        .then(literal("validate")
+                                .executes(context -> validateActive(context.getSource()))
+                                .then(literal("all").executes(context -> validateAll(context.getSource()))))
+                        .then(literal("changes").executes(context -> changes(context.getSource())))
                         .then(literal("report").executes(context -> report(context.getSource())))
                         .then(literal("reload")
                                 .requires(source -> source.hasPermissionLevel(2))
@@ -61,17 +64,27 @@ public final class ContentCommandBridge {
         }
         message(
                 source,
-                "Content: " + active.worldId() + " • " + active.enabledPackIds().size() + " enabled pack(s) • "
+                "Content: " + active.worldId() + " - " + active.enabledPackIds().size() + " enabled pack(s) - "
                         + active.definitions().size() + " active definition(s)",
                 Formatting.AQUA
         );
         message(
                 source,
-                "Physical holders: " + DynamicContentHolderRegistry.holders().size() + " registered • "
+                "Physical holders: " + DynamicContentHolderRegistry.holders().size() + " registered - "
                         + DynamicContentHolderRegistry.restartRequiredDefinitions().size() + " restart-required definition(s)",
                 DynamicContentHolderRegistry.restartRequiredDefinitions().isEmpty() ? Formatting.GREEN : Formatting.YELLOW
         );
         message(source, "Snapshot updated: " + active.updatedAt(), Formatting.DARK_GRAY);
+        ContentReloadResult reload = DynamicRegistryManager.instance().lastReloadResult();
+        if (!"not_run".equals(reload.reason())) {
+            message(
+                    source,
+                    "Last reload: " + reload.hotReloadableCount() + " hot - "
+                            + reload.restartRequiredCount() + " restart-required - "
+                            + reload.validation().size() + " validation message(s)",
+                    reload.restartRequiredCount() > 0 ? Formatting.YELLOW : Formatting.DARK_GRAY
+            );
+        }
         return active.definitions().size();
     }
 
@@ -85,10 +98,10 @@ public final class ContentCommandBridge {
                 .sorted(Comparator.comparing(WorldContentIndex.DefinitionEntry::id))
                 .forEach(definition -> message(
                         source,
-                        "• " + definition.id() + " [" + definition.type() + "] from " + definition.packId()
+                        "- " + definition.id() + " [" + definition.type() + "] from " + definition.packId()
                                 + (DynamicContentHolderRegistry.hasHolder(definition.id())
-                                ? " • physical holder ready"
-                                : " • restart required for physical holder"),
+                                ? " - physical holder ready"
+                                : " - restart required for physical holder"),
                         definition.activatable() ? Formatting.GREEN : Formatting.RED
                 ));
         return active.definitions().size();
@@ -100,7 +113,7 @@ public final class ContentCommandBridge {
         for (WorldContentIndex.WorldEntry world : index.worlds()) {
             message(
                     source,
-                    "• " + world.worldId() + " • " + world.packs().size() + " pack(s) • " + world.definitionCount() + " definition(s)",
+                    "- " + world.worldId() + " - " + world.packs().size() + " pack(s) - " + world.definitionCount() + " definition(s)",
                     world.definitionCount() > 0 ? Formatting.GREEN : Formatting.GRAY
             );
         }
@@ -123,7 +136,7 @@ public final class ContentCommandBridge {
             if (pack.definitions().isEmpty()) {
                 continue;
             }
-            message(source, "• " + pack.packId() + " [" + pack.state() + "]", Formatting.YELLOW);
+            message(source, "- " + pack.packId() + " [" + pack.state() + "]", Formatting.YELLOW);
             for (WorldContentIndex.DefinitionEntry definition : pack.definitions()) {
                 message(source, "  - " + definition.id() + " [" + definition.type() + "]", Formatting.GRAY);
                 count++;
@@ -142,16 +155,41 @@ public final class ContentCommandBridge {
         return index.definitionCount();
     }
 
-    private static int validate(ServerCommandSource source) {
+    private static int validateActive(ServerCommandSource source) {
+        ContentReloadResult reload = DynamicRegistryManager.instance().lastReloadResult();
+        List<WorldContentIndex.ValidationMessage> messages = reload.validation();
+        return showValidation(
+                source,
+                "Active-world Content validation",
+                messages,
+                "Use /content validate all to inspect cached definitions from every indexed world."
+        );
+    }
+
+    private static int validateAll(ServerCommandSource source) {
         WorldContentIndex index = DynamicRegistryManager.instance().worldIndex();
-        List<WorldContentIndex.ValidationMessage> messages = validationMessages(index);
+        return showValidation(
+                source,
+                "All-world Content validation",
+                validationMessages(index),
+                "These results include disabled packs and worlds other than the active world."
+        );
+    }
+
+    private static int showValidation(
+            ServerCommandSource source,
+            String label,
+            List<WorldContentIndex.ValidationMessage> messages,
+            String scopeNote
+    ) {
         long errors = messages.stream().filter(WorldContentIndex.ValidationMessage::blocksActivation).count();
         long warnings = messages.size() - errors;
         Formatting color = errors > 0 ? Formatting.RED : warnings > 0 ? Formatting.YELLOW : Formatting.GREEN;
-        message(source, "Content validation: " + errors + " error(s), " + warnings + " warning(s).", color);
+        message(source, label + ": " + errors + " error(s), " + warnings + " warning(s).", color);
+        message(source, "- " + scopeNote, Formatting.DARK_GRAY);
         messages.stream().limit(12).forEach(issue -> message(
                 source,
-                "• [" + issue.code() + "] " + issue.message(),
+                "- [" + issue.code() + "] " + issue.message(),
                 issue.blocksActivation() ? Formatting.RED : Formatting.YELLOW
         ));
         if (messages.size() > 12) {
@@ -174,7 +212,34 @@ public final class ContentCommandBridge {
         message(source, "Content generated state:", Formatting.AQUA);
         message(source, gameDirectory.resolve("koil/sys/content/world_content_index.json").toString(), Formatting.GRAY);
         message(source, gameDirectory.resolve("koil/sys/content/active_world_registry.json").toString(), Formatting.GRAY);
+        message(source, gameDirectory.resolve("koil/sys/content/content_reload_history.json").toString(), Formatting.GRAY);
+        message(source, gameDirectory.resolve("koil/sys/content/content_validation_results.json").toString(), Formatting.GRAY);
+        message(source, DynamicRegistryManager.instance().contentReportDirectory().toString(), Formatting.GRAY);
         return 1;
+    }
+
+    private static int changes(ServerCommandSource source) {
+        ContentReloadResult result = DynamicRegistryManager.instance().lastReloadResult();
+        message(
+                source,
+                "Last Content reload [" + result.reason() + "]: " + result.changes().size() + " change(s)",
+                result.successful() ? Formatting.AQUA : Formatting.RED
+        );
+        result.changes().stream().limit(20).forEach(change -> message(
+                source,
+                "- " + change.id() + " - " + change.kind().name().toLowerCase(java.util.Locale.ROOT)
+                        + " - " + change.classification().name().toLowerCase(java.util.Locale.ROOT)
+                        + (change.changedPaths().isEmpty() ? "" : " - " + String.join(", ", change.changedPaths())),
+                switch (change.classification()) {
+                    case HOT_RELOADABLE -> Formatting.GREEN;
+                    case RESTART_REQUIRED -> Formatting.YELLOW;
+                    case UNSUPPORTED -> Formatting.RED;
+                }
+        ));
+        if (result.changes().size() > 20) {
+            message(source, "… " + (result.changes().size() - 20) + " more; use /content report.", Formatting.GRAY);
+        }
+        return result.changes().size();
     }
 
     private static int reload(ServerCommandSource source) {
@@ -184,8 +249,19 @@ public final class ContentCommandBridge {
             if (failure != null) {
                 message(source, "Content reload failed: " + failure.getMessage(), Formatting.RED);
             } else {
-                WorldContentIndex.ActiveWorldSnapshot active = DynamicRegistryManager.instance().activeWorldSnapshot();
-                message(source, "Content reload complete: " + active.definitions().size() + " active definition(s).", Formatting.GREEN);
+                ContentReloadResult result = DynamicRegistryManager.instance().lastReloadResult();
+                message(
+                        source,
+                        "Content reload complete: " + result.activeDefinitionCount() + " active - "
+                                + result.hotReloadableCount() + " hot change(s) - "
+                                + result.restartRequiredCount() + " restart-required change(s).",
+                        result.restartRequiredCount() > 0 ? Formatting.YELLOW : Formatting.GREEN
+                );
+                message(
+                        source,
+                        "- Minecraft 1.20.1 client asset edits may require F3+T after Content reload.",
+                        Formatting.YELLOW
+                );
             }
         }));
         return 1;

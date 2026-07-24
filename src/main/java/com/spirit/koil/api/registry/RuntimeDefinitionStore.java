@@ -21,8 +21,11 @@ final class RuntimeDefinitionStore {
             WorldContentIndex.WorldEntry world,
             Collection<String> liveEnabledPackNames
     ) {
+        Map<String, WorldContentIndex.DefinitionEntry> previous =
+                snapshot.worldPath().equals(world.worldPath()) ? activeDefinitions : Map.of();
         Set<String> enabledNames = new LinkedHashSet<>(liveEnabledPackNames);
         Map<String, List<WorldContentIndex.DefinitionEntry>> candidates = new LinkedHashMap<>();
+        Map<String, List<WorldContentIndex.DefinitionEntry>> invalidCandidates = new LinkedHashMap<>();
         List<String> activePackIds = new ArrayList<>();
         List<WorldContentIndex.ValidationMessage> validation = new ArrayList<>();
 
@@ -34,6 +37,9 @@ final class RuntimeDefinitionStore {
             for (WorldContentIndex.DefinitionEntry definition : pack.definitions()) {
                 if (definition.activatable()) {
                     candidates.computeIfAbsent(definition.id(), ignored -> new ArrayList<>()).add(definition);
+                } else {
+                    invalidCandidates.computeIfAbsent(definition.id(), ignored -> new ArrayList<>()).add(definition);
+                    validation.addAll(definition.validation());
                 }
             }
         }
@@ -48,6 +54,25 @@ final class RuntimeDefinitionStore {
                         "Multiple enabled datapacks define " + candidate.getKey() + "; activation was blocked for that id.",
                         world.worldPath(),
                         "Disable one conflicting pack or give the definitions unique ids."
+                ));
+            }
+        }
+        for (Map.Entry<String, List<WorldContentIndex.DefinitionEntry>> invalid : invalidCandidates.entrySet()) {
+            if (activated.containsKey(invalid.getKey())
+                    || invalid.getValue().size() != 1
+                    || candidates.containsKey(invalid.getKey())) {
+                continue;
+            }
+            WorldContentIndex.DefinitionEntry oldDefinition = previous.get(invalid.getKey());
+            WorldContentIndex.DefinitionEntry brokenDefinition = invalid.getValue().get(0);
+            if (oldDefinition != null && oldDefinition.packId().equals(brokenDefinition.packId())) {
+                activated.put(invalid.getKey(), oldDefinition);
+                validation.add(WorldContentIndex.ValidationMessage.warning(
+                        "retained_last_valid_definition",
+                        "The edited definition for " + invalid.getKey()
+                                + " is invalid; Koil retained the last valid active version.",
+                        brokenDefinition.sourcePath(),
+                        "Fix the reported validation errors and reload again."
                 ));
             }
         }

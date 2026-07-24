@@ -19,9 +19,6 @@ public final class ContentTestDatapackGenerator {
     public static void main(String[] arguments) throws Exception {
         Path parent = arguments.length == 0 ? Path.of("docs", "test-datapacks") : Path.of(arguments[0]);
         Path pack = generate(parent);
-        if (arguments.length > 1) {
-            generateAssetCache(Path.of(arguments[1]));
-        }
         System.out.println(pack.toAbsolutePath().normalize());
     }
 
@@ -54,24 +51,6 @@ public final class ContentTestDatapackGenerator {
         writeTexture(pack.resolve("assets/" + NAMESPACE + "/textures/item/ruby_sword.png"), TextureKind.SWORD);
         writeTexture(pack.resolve("assets/" + NAMESPACE + "/textures/block/ruby_block.png"), TextureKind.BLOCK);
         return pack;
-    }
-
-    public static Path generateAssetCache(Path resourceRoot) throws IOException {
-        Path assets = resourceRoot.resolve("assets").resolve(NAMESPACE);
-        write(assets.resolve("lang/en_us.json"), language());
-        write(assets.resolve("models/item/ruby.json"), generatedItemModel("ruby"));
-        write(assets.resolve("models/item/ruby_sword.json"), handheldItemModel("ruby_sword"));
-        write(assets.resolve("models/item/ruby_block.json"), blockItemModel());
-        write(assets.resolve("models/block/ruby_block.json"), cubeBlockModel());
-        write(assets.resolve("blockstates/ruby_block.json"), blockstateAsset());
-        writeTexture(assets.resolve("textures/item/ruby.png"), TextureKind.RUBY);
-        writeTexture(assets.resolve("textures/item/ruby_sword.png"), TextureKind.SWORD);
-        writeTexture(assets.resolve("textures/block/ruby_block.png"), TextureKind.BLOCK);
-        write(
-                resourceRoot.resolve("koil-content-registry-test-cache.txt"),
-                "Generated test asset cache. Authoritative fixture assets live in the owning world datapack.\n"
-        );
-        return assets;
     }
 
     private static void write(Path path, String contents) throws IOException {
@@ -133,7 +112,7 @@ public final class ContentTestDatapackGenerator {
                 - tool item: `koil_registry_test:ruby_sword`
                 - block: `koil_registry_test:ruby_block`
 
-                The bundled `assets/` tree remains the authoritative asset input for Koil's linked-resource loader; vanilla does not load client assets from an ordinary server datapack by itself.
+                The bundled `assets/` tree is loaded in place by Koil's active-world resource bridge; vanilla does not load client assets from an ordinary server datapack by itself.
                 Recipes, tags, and loot target the early-registered world-scoped Ruby holders. Adding a brand-new physical id after game startup still requires a restart.
                 """;
     }
@@ -295,6 +274,9 @@ public final class ContentTestDatapackGenerator {
                       "weak_power": 7,
                       "strong_power": 3
                     },
+                    "state_interactions": {
+                      "cycle_on_use": ["lit", "charge", "mode"]
+                    },
                     "waterloggable": true,
                     "random_ticks": true,
                     "block_entity": "koil_registry_test:ruby_block_entity"
@@ -322,12 +304,14 @@ public final class ContentTestDatapackGenerator {
                     "burnable": false,
                     "replaceable": false
                   },
-                  "blockstate": {
+                  "blockstates": {
                     "properties": [
                       {"name": "lit", "type": "boolean", "allowed_values": [false, true], "default": false},
-                      {"name": "facing", "type": "enum", "allowed_values": ["north", "east", "south", "west"], "default": "north"},
+                      {"name": "facing", "type": "direction", "allowed_values": ["north", "east", "south", "west"], "default": "north"},
                       {"name": "charge", "type": "integer", "allowed_values": [0, 1, 2, 3], "minimum": 0, "maximum": 3, "default": 0},
                       {"name": "waterlogged", "type": "boolean", "allowed_values": [false, true], "default": false},
+                      {"name": "powered", "type": "boolean", "allowed_values": [false, true], "default": false},
+                      {"name": "mode", "type": "enum", "allowed_values": ["idle", "charged"], "default": "idle"},
                       {"name": "examplemod:phase", "type": "custom", "allowed_values": ["solid", "shifting"], "default": "solid"}
                     ],
                     "variants": {
@@ -374,6 +358,10 @@ public final class ContentTestDatapackGenerator {
                     "author": "Koil",
                     "version": "1.0.0",
                     "test_fixture": true
+                  },
+                  "examplemod:root_preserved": {
+                    "future_runtime_value": 73,
+                    "nested": {"keep": true}
                   },
                   "extensions": {
                     "koil:test": {"coverage": "all-block-and-blockstate-fields"},
@@ -429,9 +417,9 @@ public final class ContentTestDatapackGenerator {
     private static String blockstateAsset() {
         return """
                 {
-                  "variants": {
-                    "": {"model": "koil_registry_test:block/ruby_block"}
-                  }
+                  "multipart": [
+                    {"apply": {"model": "koil_registry_test:block/ruby_block"}}
+                  ]
                 }
                 """;
     }

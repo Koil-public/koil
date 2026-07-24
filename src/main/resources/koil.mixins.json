@@ -6,6 +6,7 @@
   "mixins": [
     "KoilButton",
     "client.nbt.Tooltip",
+    "server.content.MixinAbstractBlockStateContentLuminance",
     "server.content.MixinBlockStateArgument",
     "server.content.MixinBlockStateArgumentType",
     "server.content.MixinItemEntityContentGuard",
@@ -28,6 +29,10 @@
     "client.KoilSkinPlayerMixin",
     "client.MinecraftClientMixin",
     "client.MixinClientPlayNetworkHandler",
+    "client.content.MinecraftClientContentReloadAccessor",
+    "client.content.MixinIntegratedServerLoaderContentPreload",
+    "client.content.MixinReloadableResourceManagerContentReloadTracker",
+    "client.content.MixinMinecraftClientContentResourcePacks",
     "client.gui.MixinChatHud",
     "client.gui.MixinChatOptionsScreen",
     "client.gui.MixinChatInputSuggestor",

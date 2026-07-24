@@ -108,8 +108,6 @@ public final class F3LayoutState {
 
     public static void scrollLeftSidePanels(int amount) {
         scrollPanel(ScrollPanel.LEFT, amount);
-        scrollPanel(ScrollPanel.TARGET, amount);
-        scrollPanel(ScrollPanel.SELF, amount);
     }
 
     public static void scrollRightSidePanels(int amount) {
@@ -178,7 +176,7 @@ public final class F3LayoutState {
     }
 
     public static boolean canScrollLeftLines(int amount) {
-        return canScroll(ScrollPanel.LEFT, amount) || canScroll(ScrollPanel.TARGET, amount) || canScroll(ScrollPanel.SELF, amount);
+        return canScroll(ScrollPanel.LEFT, amount);
     }
 
     public static boolean canScrollRightLines(int amount) {
