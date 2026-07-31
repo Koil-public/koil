@@ -1,0 +1,28 @@
+version: 2
+kind: task_template
+id: template.inventory_core_equip_item
+template_id: inventory/core/equip_item
+semantic_operation: sem.inventory.equip
+params: [item.id]
+metadata:
+  semantic_operations: [sem.inventory.equip]
+  target_kinds: [item]
+  required_params: [item.id]
+  optional_params: []
+  tags: [inventory, equip]
+  description: Validate and equip an item from the player inventory
+  visibility: public
+  model_callable: true
+  resource_locks: [inventory, input]
+  side_effects: [changes_selected_item]
+  timeout_ticks: 200
+  failure_policy: fail
+steps:
+  - type: delegate
+    delegate: inventory/core/require_item.ktl item.id=${item.id} count.value=1 condition.op=gte
+  - type: run_primitive
+    action: cap.inventory.equip_item
+    params:
+      item.id: ${item.id}
+  - type: return
+    label: done

@@ -395,7 +395,7 @@ public final class RichChatPrivateMessageBridge {
         entries.add(new PopupMenu.MenuEntry("pm_filter_toggle", "Private filter: " + (filterEnabled ? "On" : "Off")));
         entries.add(new PopupMenu.MenuEntry("pm_show_main_toggle", "Show global chat: " + (showMainWhenFiltering ? "On" : "Off")));
         String currentTarget = hasTarget() ? targetPlayer : "none";
-        entries.add(new PopupMenu.MenuEntry("pm_target_header", "with: " + currentTarget));
+        entries.add(new PopupMenu.MenuEntry("pm_target_header", "with: " + currentTarget, 0, "", 0xFFAAB4C3, ">"));
         return entries;
     }
 

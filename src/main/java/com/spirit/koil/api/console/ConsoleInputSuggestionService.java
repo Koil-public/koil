@@ -4,6 +4,8 @@ import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.suggestion.Suggestion;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
+import com.spirit.koil.api.chat.input.CommandSuggestionFuturePoller;
+import com.spirit.koil.api.minecraft.MinecraftRegistrySuggestions;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.command.CommandSource;
 import net.minecraft.registry.Registries;
@@ -12,7 +14,6 @@ import net.minecraft.util.Identifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -78,14 +79,15 @@ public final class ConsoleInputSuggestionService {
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate off", "disable automation mode", 12));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate exit", "leave automation mode", 12));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate chat", "open compact automation prompt", 13));
+        suggestions.add(new ConsoleInputSuggestion("CMD", "/automate yolo", "session-only approval-free registered capabilities", 13));
+        suggestions.add(new ConsoleInputSuggestion("CMD", "/automate deep", "toggle bounded deep thinking for complex objectives", 13));
+        suggestions.add(new ConsoleInputSuggestion("CMD", "/automate deep on", "enable bounded deep thinking", 14));
+        suggestions.add(new ConsoleInputSuggestion("CMD", "/automate deep off", "disable bounded deep thinking", 14));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate improve", "generate automation improvement files", 13));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/proof", "run automation proof suite", 14));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/proof cache", "run automation cache proof", 14));
-        suggestions.add(new ConsoleInputSuggestion("RUN", "/run walk straight 4 blocks", "run phrase-search", 18));
-        suggestions.add(new ConsoleInputSuggestion("RUN", "/execute as @s run run eat 2 apples", "run prompt with actor label", 18));
-        suggestions.add(new ConsoleInputSuggestion("RUN", "/run kill 3 creepers", "run phrase-search", 18));
-        suggestions.add(new ConsoleInputSuggestion("RUN", "/run open_container_and_transfer_matching_items.ktl item.id=minecraft:cobblestone", "run template", 18));
         suggestions.add(new ConsoleInputSuggestion("TASK", "walk straight 4 blocks", "automation prompt", 22));
+        suggestions.add(new ConsoleInputSuggestion("TASK", "walk 10 blocks then jump", "model-planned sequence", 22));
         suggestions.add(new ConsoleInputSuggestion("TASK", "kill 3 creepers", "automation prompt", 22));
         suggestions.add(new ConsoleInputSuggestion("TASK", "open the nearest chest", "automation prompt", 22));
         suggestions.add(new ConsoleInputSuggestion("TASK", "eat them", "reference phrase", 24));
@@ -102,13 +104,7 @@ public final class ConsoleInputSuggestionService {
         try {
             KtlCompilerService.CompiledAssets assets = KtlCompilerService.getInstance().assets();
             for (String templateId : assets.templates.keySet()) {
-                suggestions.add(new ConsoleInputSuggestion("KTL", "/run " + templateId + ".ktl", "compiled task template", 14));
-            }
-            for (String operationId : assets.semanticOperations.keySet()) {
-                suggestions.add(new ConsoleInputSuggestion("SEM", operationId, "semantic operation", 28));
-            }
-            for (String selectorId : assets.selectors.values()) {
-                suggestions.add(new ConsoleInputSuggestion("SEL", selectorId, "selector id", 34));
+                suggestions.add(new ConsoleInputSuggestion("KTL", templateId + ".ktl", "registered automation task", 28));
             }
             Path root = Path.of("koil/automation");
             if (Files.isDirectory(root)) {
@@ -148,7 +144,11 @@ public final class ConsoleInputSuggestionService {
             }
             String commandInput = input.substring(1);
             ParseResults<CommandSource> parse = client.getNetworkHandler().getCommandDispatcher().parse(commandInput, client.getNetworkHandler().getCommandSource());
-            Suggestions brigadierSuggestions = client.getNetworkHandler().getCommandDispatcher().getCompletionSuggestions(parse).join();
+            var future = client.getNetworkHandler().getCommandDispatcher().getCompletionSuggestions(parse);
+            Suggestions brigadierSuggestions = CommandSuggestionFuturePoller.readyOrNull(future);
+            if (brigadierSuggestions == null) {
+                return suggestions;
+            }
             for (Suggestion suggestion : brigadierSuggestions.getList()) {
                 String completed = "/" + suggestion.apply(commandInput);
                 suggestions.add(new ConsoleInputSuggestion("MC", completed, "chat completion", 4));
@@ -203,44 +203,21 @@ public final class ConsoleInputSuggestionService {
     }
 
     private static void addRegistryArgumentSuggestions(List<ConsoleInputSuggestion> suggestions, String prefixBeforeCurrent, String currentToken, Iterable<Identifier> ids, String kind, String detail, int priority) {
-        String normalizedToken = currentToken == null ? "" : currentToken.toLowerCase(Locale.ROOT);
-        List<RegistryCandidate> candidates = new ArrayList<>();
-        for (Identifier id : ids) {
-            RegistryCandidate candidate = toRegistryCandidate(id, prefixBeforeCurrent, normalizedToken, detail, priority);
-            if (candidate != null) {
-                candidates.add(candidate);
-            }
+        MinecraftRegistrySuggestions.SearchResult result = MinecraftRegistrySuggestions.search(
+                ids,
+                currentToken,
+                MAX_SUGGESTIONS
+        );
+        for (MinecraftRegistrySuggestions.Candidate candidate : result.candidates()) {
+            Identifier id = candidate.identifier();
+            String value = "minecraft".equals(id.getNamespace()) ? id.getPath() : id.toString();
+            suggestions.add(new ConsoleInputSuggestion(
+                    kind,
+                    prefixBeforeCurrent + value,
+                    detail,
+                    priority + candidate.score()
+            ));
         }
-        candidates.sort(Comparator
-                .comparingInt(RegistryCandidate::score)
-                .thenComparing(candidate -> candidate.identifier().getNamespace().equals("minecraft") ? 0 : 1)
-                .thenComparing(candidate -> candidate.identifier().toString()));
-        for (int i = 0; i < Math.min(MAX_SUGGESTIONS, candidates.size()); i++) {
-            RegistryCandidate candidate = candidates.get(i);
-            suggestions.add(new ConsoleInputSuggestion(kind, candidate.completed(), detail, priority + candidate.score()));
-        }
-    }
-
-    private static RegistryCandidate toRegistryCandidate(Identifier id, String prefixBeforeCurrent, String normalizedToken, String detail, int priority) {
-        String full = id.toString().toLowerCase(Locale.ROOT);
-        String path = id.getPath().toLowerCase(Locale.ROOT);
-        String namespace = id.getNamespace().toLowerCase(Locale.ROOT);
-        int score;
-        if (normalizedToken.isEmpty()) {
-            score = namespace.equals("minecraft") ? 0 : 2;
-        } else if (path.startsWith(normalizedToken)) {
-            score = namespace.equals("minecraft") ? 0 : 1;
-        } else if (full.startsWith(normalizedToken)) {
-            score = 2;
-        } else if (path.contains(normalizedToken)) {
-            score = 3;
-        } else if (full.contains(normalizedToken)) {
-            score = 4;
-        } else {
-            return null;
-        }
-        String value = id.getNamespace().equals("minecraft") ? id.getPath() : id.toString();
-        return new RegistryCandidate(id, prefixBeforeCurrent + value, score);
     }
 
     private static List<String> searchTerms(ConsoleInputSuggestion suggestion) {
@@ -302,8 +279,5 @@ public final class ConsoleInputSuggestionService {
     }
 
     public record ConsoleInputSuggestion(String kind, String value, String detail, int priority) {
-    }
-
-    private record RegistryCandidate(Identifier identifier, String completed, int score) {
     }
 }

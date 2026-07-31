@@ -1,0 +1,8 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.farming
+operations:
+  - id: sem.farming.harvest_replant
+    intent: harvest_and_replant
+    target_kinds: [block, item]
+    preferred_templates: [farming/core/harvest_and_replant]

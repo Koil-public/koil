@@ -24,6 +24,8 @@ public final class ChatHudPanelRegistry {
     private static final Map<String, ChatHudPanel> PANELS = new ConcurrentHashMap<>();
     private static volatile int observedTopmostMessageY = Integer.MAX_VALUE;
     private static volatile int currentChatReservedHeight;
+    private static volatile int currentTopSafetyReserve;
+    private static volatile int nextTopSafetyReserve;
 
     private ChatHudPanelRegistry() {
     }
@@ -101,9 +103,18 @@ public final class ChatHudPanelRegistry {
     public static void beginChatFrame(int reservedHeight) {
         observedTopmostMessageY = Integer.MAX_VALUE;
         currentChatReservedHeight = Math.max(0, reservedHeight);
+        currentTopSafetyReserve = Math.max(0, nextTopSafetyReserve);
     }
 
-    /** Records a line's final screen Y so closed-chat top panels follow real visible content. */
+    /**
+     * A top reserve is normally zero. It becomes one or more whole chat rows
+     * only after the previous layout proved that the top stack would clip.
+     */
+    public static int topSafetyReserve() {
+        return currentTopSafetyReserve;
+    }
+
+    /** Records a line's final screen Y for consumers that inspect visible chat geometry. */
     public static void observeChatLine(DrawContext drawContext, int localY) {
         if (drawContext == null) {
             return;
@@ -139,6 +150,28 @@ public final class ChatHudPanelRegistry {
                 } catch (RuntimeException ignored) {
                     // Keep other registered panels interactive.
                 }
+            }
+        }
+        return false;
+    }
+
+    public static boolean mouseScrolled(MinecraftClient client, double mouseX, double mouseY, double amount) {
+        if (client == null || client.getWindow() == null || amount == 0.0D) {
+            return false;
+        }
+        ChatHudPanelContext context = context(client);
+        List<PlacedPanel> placed = layout(context);
+        for (int i = placed.size() - 1; i >= 0; i--) {
+            PlacedPanel entry = placed.get(i);
+            if (!entry.bounds().contains(mouseX, mouseY)) {
+                continue;
+            }
+            try {
+                if (entry.panel().mouseScrolled(context, entry.bounds(), mouseX, mouseY, amount)) {
+                    return true;
+                }
+            } catch (RuntimeException ignored) {
+                // Keep other registered panels interactive.
             }
         }
         return false;
@@ -194,15 +227,53 @@ public final class ChatHudPanelRegistry {
     }
 
     private static int topAnchor(ChatHudPanelContext context) {
-        if (!context.chatOpen() && observedTopmostMessageY != Integer.MAX_VALUE) {
-            return observedTopmostMessageY;
-        }
         MinecraftClient client = context.client();
         double scale = client == null || client.inGameHud == null || client.inGameHud.getChatHud() == null
                 ? 1.0D
                 : Math.max(0.1D, client.inGameHud.getChatHud().getChatScale());
         int viewportTop = Math.round((float) (RichChatLatexTextureCache.currentChatViewportTop() * scale));
-        return viewportTop - currentChatReservedHeight;
+        int shiftedViewportTop = viewportTop - currentChatReservedHeight + currentTopSafetyReserve;
+        int anchor;
+        if (observedTopmostMessageY == Integer.MAX_VALUE) {
+            int bottomHeight = totalHeight(context, ChatHudPanelPlacement.BOTTOM);
+            if (bottomHeight > 0) {
+                // With an empty feed, anchor directly to the real top edge of
+                // the bottom stack. The multiline input reservation is part
+                // of this geometry and must not become an artificial gap
+                // between a feedback/model panel and the top status panel.
+                int bottomEdge = context.screenHeight()
+                        - controlClearance(context)
+                        - MultilineChatInputLayout.reservedHeight(context.client());
+                // This anchor is already a safe screen-space edge. Do not
+                // retain a previous viewport-clipping reserve here; doing so
+                // creates the transient empty row between the two stacks.
+                nextTopSafetyReserve = 0;
+                return bottomEdge - bottomHeight;
+            } else {
+                // An empty/fully faded feed has no row to anchor against. Place the
+                // top stack where the first vanilla chat row would appear instead
+                // of leaving the full configured chat-height gap above the input.
+                anchor = Math.max(
+                        shiftedViewportTop,
+                        context.screenHeight()
+                                - VANILLA_CHAT_BOTTOM
+                                - currentChatReservedHeight
+                                + currentTopSafetyReserve
+                                - MultilineChatInputLayout.reservedHeight(context.client())
+                );
+            }
+        } else {
+            // A short chat feed occupies only the lower part of the configured
+            // viewport. Keep the top-panel stack directly above the highest actual
+            // visible row instead of leaving the unused viewport height as a gap.
+            anchor = Math.max(shiftedViewportTop, observedTopmostMessageY - 1);
+        }
+        int unreservedAnchor = anchor - currentTopSafetyReserve;
+        int deficit = Math.max(0, totalHeight(context, ChatHudPanelPlacement.TOP) - unreservedAnchor);
+        int lineHeight = Math.max(1, Math.round((float) (RichChatLatexTextureCache.currentChatLineHeight() * scale)));
+        int requiredReserve = deficit <= 0 ? 0 : ((deficit + lineHeight - 1) / lineHeight) * lineHeight;
+        nextTopSafetyReserve = requiredReserve;
+        return unreservedAnchor + requiredReserve;
     }
 
     private static int totalHeight(ChatHudPanelContext context, ChatHudPanelPlacement placement) {

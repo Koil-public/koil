@@ -1,0 +1,26 @@
+version: 2
+kind: task_template
+id: template.movement_core_uncrouch
+template_id: movement/core/movement_uncrouch
+semantic_operation: sem.task.uncrouch
+params: []
+metadata:
+  semantic_operations: [sem.task.uncrouch]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [movement, core, crouch]
+  description: Movement Uncrouch
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 3600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.player.uncrouch
+    params: {}
+  - type: return
+    label: done
+

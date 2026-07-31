@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.flow_core_release_input
+template_id: flow/core/release_input
+semantic_operation: sem.task.release_input
+params: [input.key]
+metadata:
+  semantic_operations: [sem.task.release_input]
+  target_kinds: []
+  required_params: [input.key]
+  optional_params: []
+  tags: [flow, input]
+  description: Release Input
+  visibility: internal
+  model_callable: false
+  resource_locks: [input, screen]
+  side_effects: [changes_input_or_screen]
+  timeout_ticks: 600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.input.release_key
+    params:
+      input.key: ${input.key}
+  - type: return
+    label: done
+

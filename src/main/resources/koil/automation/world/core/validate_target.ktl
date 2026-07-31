@@ -1,0 +1,36 @@
+version: 2
+kind: task_template
+id: template.world_core_validate_target
+template_id: world/core/validate_target
+semantic_operation: sem.world.validate_target
+params: [target.id, target.kind, target.selector, radius, max.distance]
+metadata:
+  semantic_operations: [sem.world.validate_target]
+  target_kinds: [block, entity, player]
+  required_params: [target.id, target.kind]
+  optional_params: [target.selector, radius, max.distance]
+  tags: [world, target, validation]
+  description: Resolve a target and validate its live state and range
+  visibility: internal
+  model_callable: false
+  resource_locks: [world]
+  side_effects: []
+  timeout_ticks: 300
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.world.scan_target
+    params:
+      target.id: ${target.id}
+      target.kind: ${target.kind}
+      target.selector: ${target.selector}
+      radius: ${radius}
+  - type: run_primitive
+    action: cap.world.validate_target
+    params: {}
+  - type: run_primitive
+    action: cap.world.target_in_range
+    params:
+      max.distance: ${max.distance}
+  - type: return
+    label: done

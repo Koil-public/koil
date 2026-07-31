@@ -2,6 +2,7 @@ package com.spirit.koil.api.automation.cli;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.player.PlayerEntity;
+import com.spirit.koil.api.model.presence.ModelPresenceState;
 
 import java.util.Map;
 import java.util.UUID;
@@ -22,11 +23,13 @@ public final class AutomationPresenceState {
         localState = normalize(state);
         localDetail = clean(detail);
         localUpdatedAt = System.currentTimeMillis();
+        ModelPresenceState.updateAutomation(localAutomationMode, localState);
     }
 
     public static void updateLocalMode(boolean enabled) {
         localAutomationMode = enabled;
         localUpdatedAt = System.currentTimeMillis();
+        ModelPresenceState.updateAutomation(enabled, enabled ? localState : "idle");
     }
 
     public static void receiveRemote(UUID uuid, boolean automationMode, String state, String detail, long updatedAt) {
@@ -36,14 +39,17 @@ public final class AutomationPresenceState {
         String normalized = normalize(state);
         if (!automationMode) {
             REMOTE.remove(uuid);
+            ModelPresenceState.removeRemote(uuid);
             return;
         }
         REMOTE.put(uuid, new PresenceSnapshot(automationMode, normalized, clean(detail), updatedAt <= 0L ? System.currentTimeMillis() : updatedAt));
+        ModelPresenceState.receiveLegacyRemote(uuid, true, normalized, updatedAt);
     }
 
     public static void removeRemote(UUID uuid) {
         if (uuid != null) {
             REMOTE.remove(uuid);
+            ModelPresenceState.removeRemote(uuid);
         }
     }
 
@@ -63,19 +69,19 @@ public final class AutomationPresenceState {
     }
 
     public static boolean automationModeFor(PlayerEntity player) {
-        PresenceSnapshot snapshot = snapshotFor(player);
-        return snapshot != null && snapshot.automationMode();
+        return player != null && ModelPresenceState.visibleFor(player.getUuid());
     }
 
     public static int colorFor(PlayerEntity player) {
-        PresenceSnapshot snapshot = snapshotFor(player);
-        if (snapshot == null || !snapshot.automationMode()) {
-            return AutomationStateColors.color("idle");
-        }
-        if ("idle".equals(snapshot.state()) || "header".equals(snapshot.state())) {
-            return 0xFF9AA0A6;
-        }
-        return AutomationStateColors.color(snapshot.state());
+        return ModelPresenceState.colorFor(player);
+    }
+
+    public static boolean automationModeFor(UUID playerId) {
+        return ModelPresenceState.visibleFor(playerId);
+    }
+
+    public static int colorFor(UUID playerId) {
+        return ModelPresenceState.colorFor(playerId);
     }
 
     public static String localState() {
@@ -98,16 +104,23 @@ public final class AutomationPresenceState {
         if (player == null) {
             return null;
         }
+        return snapshotFor(player.getUuid());
+    }
+
+    private static PresenceSnapshot snapshotFor(UUID playerId) {
+        if (playerId == null) {
+            return null;
+        }
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client != null && client.player != null && client.player.getUuid().equals(player.getUuid())) {
+        if (client != null && client.player != null && client.player.getUuid().equals(playerId)) {
             return localAutomationMode ? new PresenceSnapshot(true, localState, localDetail, localUpdatedAt) : null;
         }
-        PresenceSnapshot remote = REMOTE.get(player.getUuid());
+        PresenceSnapshot remote = REMOTE.get(playerId);
         if (remote == null) {
             return null;
         }
         if (System.currentTimeMillis() - remote.updatedAt() > STALE_AFTER_MS) {
-            REMOTE.remove(player.getUuid());
+            REMOTE.remove(playerId);
             return null;
         }
         return remote;

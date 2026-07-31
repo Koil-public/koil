@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.flow_core_say_text
+template_id: flow/core/say_text
+semantic_operation: sem.task.say_text
+params: [message]
+metadata:
+  semantic_operations: [sem.task.say_text]
+  target_kinds: []
+  required_params: [message]
+  optional_params: []
+  tags: [flow, chat]
+  description: Say Text
+  visibility: public
+  model_callable: true
+  resource_locks: [report]
+  side_effects: [writes_automation_output]
+  timeout_ticks: 600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.report.say
+    params:
+      message: ${message}
+  - type: return
+    label: done
+

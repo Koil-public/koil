@@ -1,0 +1,30 @@
+version: 2
+kind: task_template
+id: template.look_core_set_rotation
+template_id: look/core/set_rotation
+semantic_operation: sem.look.set_rotation
+params: [yaw.value, pitch.value]
+metadata:
+  semantic_operations: [sem.look.set_rotation]
+  target_kinds: []
+  required_params: [yaw.value, pitch.value]
+  optional_params: []
+  tags: [look, rotation]
+  description: Set the player's yaw and pitch
+  visibility: public
+  model_callable: true
+  resource_locks: [look, input]
+  side_effects: [changes_orientation]
+  timeout_ticks: 200
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.look.set_yaw
+    params:
+      yaw.value: ${yaw.value}
+  - type: run_primitive
+    action: cap.look.set_pitch
+    params:
+      pitch.value: ${pitch.value}
+  - type: return
+    label: done

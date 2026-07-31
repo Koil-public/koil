@@ -1,0 +1,26 @@
+version: 2
+kind: task_template
+id: template.movement_recovery_recover_water
+template_id: movement/recovery/recover_water
+semantic_operation: sem.task.swim
+params: []
+metadata:
+  semantic_operations: [sem.task.swim]
+  target_kinds: [location]
+  required_params: []
+  optional_params: []
+  tags: [movement, recovery, water]
+  description: Recover Water
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 3600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.movement.run_recovery
+    params:
+      recovery.tactic: swim_to_edge
+  - type: return
+    label: done

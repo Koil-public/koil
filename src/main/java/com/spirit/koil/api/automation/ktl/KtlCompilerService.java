@@ -2,6 +2,7 @@ package com.spirit.koil.api.automation.ktl;
 
 import com.spirit.koil.api.automation.AutomationReporter;
 import com.spirit.koil.api.automation.AutomationRequest;
+import com.spirit.koil.api.automation.capability.AutomationPrimitiveRegistry;
 import com.spirit.koil.api.automation.runtime.ExecutionPlan;
 import com.spirit.koil.api.automation.runtime.InterpretationResult;
 import net.minecraft.client.MinecraftClient;
@@ -22,40 +23,22 @@ import java.util.regex.Pattern;
 public final class KtlCompilerService {
     private static final Path ROOT = Path.of("koil/automation");
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\"([^\"]+)\"|(\\S+)");
-    private static final Set<String> CAPABILITY_KEYS = Set.of(
-            "cap.combat.attack_target", "cap.combat.attack_until_dead", "cap.combat.confirm_target_death", "cap.command.execute_raw", "cap.container.find_item_in_open_screen",
-            "cap.container.quick_move_selected_hotbar", "cap.container.quick_move_slot", "cap.input.mouse_delta", "cap.input.press_key",
-            "cap.input.release_all", "cap.input.release_key", "cap.input.tap_key", "cap.interaction.attack_target",
-            "cap.interaction.break_block_target", "cap.interaction.close_screen", "cap.interaction.consume_selected_item", "cap.interaction.interact_entity_target",
-            "cap.interaction.interact_target", "cap.interaction.open_target", "cap.interaction.stop_using_item", "cap.interaction.use_item",
-            "cap.interaction.use_item_on_block_target", "cap.interaction.use_item_on_current_block", "cap.interaction.use_item_on_entity_target", "cap.interaction.use_main_hand_item",
-            "cap.interaction.use_off_hand_item", "cap.interaction.use_selected_item", "cap.goal.execute_named", "cap.inventory.consume_item", "cap.inventory.count_item",
-            "cap.inventory.drop_selected_item", "cap.inventory.equip_item", "cap.inventory.has_item", "cap.inventory.open_inventory_screen", "cap.inventory.require_count",
-            "cap.inventory.select_hotbar_item", "cap.look.face_position", "cap.look.face_target", "cap.look.face_target_horizontal",
-            "cap.look.face_block_center", "cap.look.face_block_face", "cap.look.face_movement_direction", "cap.look.face_parkour_landing",
-            "cap.look.set_pitch", "cap.look.set_yaw", "cap.look.turn_pitch", "cap.look.turn_relative", "cap.look.turn_yaw",
-            "cap.movement.check_progress", "cap.movement.check_safety", "cap.movement.choose_recovery", "cap.movement.release_all",
-            "cap.movement.run_recovery", "cap.movement.set_backward", "cap.movement.set_forward", "cap.movement.set_jump",
-            "cap.movement.set_left_strafe", "cap.movement.set_right_strafe", "cap.movement.set_sneak", "cap.movement.set_sprint",
-            "cap.movement.snapshot", "cap.movement.stop", "cap.movement.timed_jump", "cap.movement.walk_relative",
-            "cap.parkour.analyze_jump", "cap.parkour.execute_jump", "cap.path.compute_relative_target", "cap.path.follow_target",
-            "cap.path.move_relative_verified", "cap.path.move_to_target", "cap.path.plan_local", "cap.path.replan_local_segment", "cap.path.resolve_target", "cap.path.verify_relative_arrival", "cap.path.verify_target_arrival",
-            "cap.player.crouch", "cap.player.dismount", "cap.player.jump", "cap.player.sprint", "cap.player.uncrouch",
-            "cap.player.unsprint", "cap.report.error_line", "cap.report.say", "cap.report.status_line",
-            "cap.state.capture_player_position", "cap.state.copy_value", "cap.state.decrement_counter", "cap.state.increment_counter",
-            "cap.state.read_stat", "cap.state.remove_memory", "cap.state.set_counter", "cap.state.write_memory",
-            "cap.wait.ticks", "cap.world.scan_blocks", "cap.world.scan_entities", "cap.world.scan_players",
-            "cap.world.scan_target", "cap.world.target_in_range", "cap.world.validate_target"
-    );
     private static final Set<String> EVALUATOR_KEYS = Set.of(
             "counter_lt_target", "eval.block_matches", "eval.compare_numbers", "eval.compare_stat",
             "eval.inventory_count_compare", "eval.target_exists", "eval.time_of_day_compare", "eval.automation_task_running"
     );
     private static final Set<String> KTL_KINDS = Set.of(
-            "lexicon", "grammar_patterns", "condition_definition", "condition_pack", "semantic_operation", "semantic_operation_pack",
-            "template_metadata", "task_template", "task_preset", "task_macro", "resolver_rules", "alias_pack", "compile_profile",
-            "namespace_pack", "reference_patterns", "selector_pack"
+            "condition_definition", "condition_pack", "semantic_operation", "semantic_operation_pack",
+            "template_metadata", "task_template", "task_preset", "task_macro", "compile_profile", "namespace_pack"
     );
+    private static final Set<String> RETIRED_PROMPT_TASKS = Set.of(
+            "movement/core/sequence_prompt.ktl",
+            "flow/core/branch_condition_prompt.ktl",
+            "flow/core/raw_command.ktl"
+    );
+    // Retained only so stale language documents can still produce a precise
+    // validation error when inspected directly. They are excluded from the
+    // executable task registry by isRetiredPromptSource.
     private static final Set<String> GRAMMAR_SHAPES = Set.of(
             "sequence_then", "sequence_and_then", "if_condition_then_else", "if_condition_then", "action_count_target",
             "action_target", "action_selector_target", "action_direction_amount_unit", "action_direction", "action_amount_unit",
@@ -78,15 +61,22 @@ public final class KtlCompilerService {
 
     public synchronized void reload() {
         ensureDirectories();
+        KtlBuiltinLibraryInstaller.installMissing(ROOT);
         Map<String, NormalizedDocument> normalized = new LinkedHashMap<>();
         int hits = 0;
         int misses = 0;
         try {
-            List<Path> paths = Files.exists(ROOT) ? Files.walk(ROOT).filter(path -> path.toString().endsWith(".ktl")).sorted().toList() : List.of();
+            List<Path> paths = Files.exists(ROOT)
+                    ? Files.walk(ROOT)
+                    .filter(path -> path.toString().endsWith(".ktl"))
+                    .filter(path -> !isRetiredPromptSource(path))
+                    .sorted()
+                    .toList()
+                    : List.of();
             String sourceFingerprint = fingerprint(paths);
             if (!this.lastSourceFingerprint.isBlank() && this.lastSourceFingerprint.equals(sourceFingerprint)) {
                 this.lastSummary = new CompileSummary(paths.size(), paths.size(), 0);
-                AutomationReporter.cache("[cache]", "language reuse=hot files=" + paths.size());
+                AutomationReporter.cache("[cache]", "task registry reuse=hot files=" + paths.size());
                 return;
             }
             for (Path path : paths) {
@@ -116,78 +106,53 @@ public final class KtlCompilerService {
             this.assets = compile(normalized.values());
             this.lastSummary = new CompileSummary(paths.size(), hits, misses);
             this.lastSourceFingerprint = sourceFingerprint;
-            AutomationReporter.cache("[cache]", "language memory_hit=" + hits + " rebuild=" + misses + " files=" + paths.size());
+            AutomationReporter.cache("[cache]", "task registry memory_hit=" + hits + " rebuild=" + misses + " files=" + paths.size());
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to load .ktl sources: " + exception.getMessage(), exception);
         }
     }
 
     public synchronized InterpretationResult interpret(AutomationRequest request) {
-        CompletionCommandParse completionCommands = parseCompletionCommands(request.rawInput().trim());
-        String input = completionCommands.input();
-        List<String> tokens = tokenize(input);
+        if (request == null || !request.directTemplate()) {
+            throw new IllegalArgumentException(
+                    "KTL accepts explicit task invocations only. Route natural-language intent through Automation Mode."
+            );
+        }
+        String input = request.rawInput().trim();
         AutomationReporter.info("[raw ]", input);
-        if (!completionCommands.successCommand().isBlank()) {
-            AutomationReporter.bind("completion.success.command", completionCommands.successCommand());
+        DirectTemplateInvocation invocation = parseDirectTemplate(input);
+        CompiledTaskTemplate template = requireTemplate(invocation.templateId());
+        Map<String, Object> params = new LinkedHashMap<>(invocation.params());
+        if ("kill_target_until_count".equals(template.templateId())) {
+            params.putIfAbsent("state.counter", 0);
         }
-        if (!completionCommands.failureCommand().isBlank()) {
-            AutomationReporter.bind("completion.failure.command", completionCommands.failureCommand());
-        }
-        AutomationReporter.pipeline("[tok ]", tokens.isEmpty() ? "(none)" : String.join(" / ", describeTokens(tokens)));
-        if (request.directTemplate()) {
-            DirectTemplateInvocation invocation = parseDirectTemplate(input);
-            CompiledTaskTemplate template = requireTemplate(invocation.templateId());
-            Map<String, Object> params = new LinkedHashMap<>(invocation.params());
-            applyCompletionCommands(params, completionCommands);
-            if ("kill_target_until_count".equals(template.templateId())) {
-                params.putIfAbsent("state.counter", 0);
-            }
-            AutomationReporter.run("[run ]", "direct template -> " + template.templateId());
-            for (Map.Entry<String, Object> entry : params.entrySet()) {
-                AutomationReporter.bind(entry.getKey(), entry.getValue());
-            }
-            return new InterpretationResult(new ExecutionPlan(template, params), template.semanticOperationId(), template.templateId(), params, Map.of());
-        }
-        if (input.startsWith("/")) {
-            CompiledTaskTemplate template = requireTemplate("raw_command");
-            Map<String, Object> params = new LinkedHashMap<>();
-            params.put("raw.command", input.substring(1));
-            applyCompletionCommands(params, completionCommands);
-            AutomationReporter.pipeline("[gram]", "raw_command");
-            AutomationReporter.bind("raw.command", input.substring(1));
-            return new InterpretationResult(new ExecutionPlan(template, params), "sem.task.raw_command", template.templateId(), params, Map.of());
-        }
-
-        Frame frame = parseFrame(input);
-        if (frame == null) {
-            AutomationReporter.block("[block]", "grammar = no_match for '" + input + "'");
-            throw new IllegalStateException("No grammar pattern matched input: " + input);
-        }
-
-        reportLexiconMatches(tokens);
-        if (frame.semanticOperationId != null && !frame.semanticOperationId.isBlank()) {
-            AutomationReporter.pipeline("[lex ]", frame.semanticOperationId);
-        }
-        if (frame.selectorId != null && !frame.selectorId.isBlank()) {
-            AutomationReporter.pipeline("[sel ]", frame.selectorId);
-        }
-        AutomationReporter.pipeline("[gram]", frame.shape);
-        if (frame.conditionId != null) {
-            AutomationReporter.pipeline("[cond]", frame.conditionId + " threshold=" + frame.conditionThreshold);
-        }
-        Map<String, Object> resolved = resolve(frame);
-        String templateId = selectTemplate(frame, resolved);
-        CompiledTaskTemplate template = requireTemplate(templateId);
-        Map<String, Object> params = new LinkedHashMap<>(resolved);
-        params.putAll(frame.additionalParams);
-        applyCompletionCommands(params, completionCommands);
+        AutomationReporter.run("[task]", "task template -> " + template.templateId());
         for (Map.Entry<String, Object> entry : params.entrySet()) {
             AutomationReporter.bind(entry.getKey(), entry.getValue());
         }
-        return new InterpretationResult(new ExecutionPlan(template, params), frame.semanticOperationId, template.templateId(), params, Map.of(
-                "frame", frame.shape,
-                "target", frame.targetRawText == null ? "" : frame.targetRawText
-        ));
+        return new InterpretationResult(
+                new ExecutionPlan(template, params),
+                template.semanticOperationId(),
+                template.templateId(),
+                params,
+                Map.of("source", "typed_capability"),
+                request.executionId()
+        );
+    }
+
+    private static boolean isRetiredPromptSource(Path path) {
+        if (path == null) {
+            return true;
+        }
+        String relative;
+        try {
+            relative = ROOT.relativize(path).toString().replace('\\', '/');
+        } catch (IllegalArgumentException ignored) {
+            relative = path.toString().replace('\\', '/');
+        }
+        return relative.startsWith("language/")
+                || relative.contains("/language/")
+                || RETIRED_PROMPT_TASKS.contains(relative);
     }
 
     private static void applyCompletionCommands(Map<String, Object> params, CompletionCommandParse commands) {
@@ -634,13 +599,47 @@ public final class KtlCompilerService {
             validateSteps(compiled, template, errors);
         }
         for (CompiledTemplateMetadata metadata : compiled.templateMetadata.values()) {
-            if (!compiled.templates.containsKey(metadata.templateId())) {
+            CompiledTaskTemplate declaredTemplate = compiled.templates.get(metadata.templateId());
+            if (declaredTemplate == null) {
                 errors.add("template_metadata " + metadata.templateId() + " does not point at a task_template");
+            } else {
+                Set<String> declaredParams = new LinkedHashSet<>(declaredTemplate.params());
+                for (String required : metadata.requiredParams()) {
+                    if (!declaredParams.contains(required)) {
+                        errors.add("template_metadata " + metadata.templateId()
+                                + " declares unknown required_param " + required);
+                    }
+                }
+                for (String optional : metadata.optionalParams()) {
+                    if (!declaredParams.contains(optional)) {
+                        errors.add("template_metadata " + metadata.templateId()
+                                + " declares unknown optional_param " + optional);
+                    }
+                }
             }
             for (String semanticOperation : metadata.semanticOperations()) {
                 if (!compiled.semanticOperations.containsKey(semanticOperation)) {
                     errors.add("template_metadata " + metadata.templateId() + " references unknown semantic_operation " + semanticOperation);
                 }
+            }
+            if (!Set.of("public", "internal", "test").contains(metadata.visibility())) {
+                errors.add("template_metadata " + metadata.templateId() + " has invalid visibility " + metadata.visibility());
+            }
+            if (!Set.of("fail", "recover", "retry", "continue").contains(metadata.failurePolicy())) {
+                errors.add("template_metadata " + metadata.templateId() + " has invalid failure_policy " + metadata.failurePolicy());
+            }
+            if ("recover".equals(metadata.failurePolicy()) && metadata.recoveryTask().isBlank()) {
+                errors.add("template_metadata " + metadata.templateId()
+                        + " uses recover without a recovery_task");
+            }
+            if (!metadata.recoveryTask().isBlank()
+                    && !compiled.templates.containsKey(stripKtlSuffix(metadata.recoveryTask()))) {
+                errors.add("template_metadata " + metadata.templateId()
+                        + " references unknown recovery_task " + metadata.recoveryTask());
+            }
+            if (metadata.modelCallable() && !"public".equals(metadata.visibility())) {
+                errors.add("template_metadata " + metadata.templateId()
+                        + " is model_callable but not public");
             }
         }
         for (SemanticOperationDefinition operation : compiled.semanticOperations.values()) {
@@ -687,7 +686,7 @@ public final class KtlCompilerService {
                 case "run_primitive" -> {
                     if (step.action().isBlank()) {
                         errors.add(path + " run_primitive is missing action");
-                    } else if (!CAPABILITY_KEYS.contains(step.action())) {
+                    } else if (!AutomationPrimitiveRegistry.contains(step.action())) {
                         errors.add(path + " run_primitive references unknown capability " + step.action());
                     }
                 }
@@ -839,7 +838,15 @@ public final class KtlCompilerService {
                         stringList(entry.get("target_kinds")),
                         stringList(entry.get("required_params")),
                         stringList(entry.get("optional_params")),
-                        stringList(entry.get("tags"))
+                        stringList(entry.get("tags")),
+                        string(entry.get("description")),
+                        booleanValue(entry.get("model_callable"), defaultModelCallable(entry)),
+                        stringOrDefault(entry.get("visibility"), "internal"),
+                        stringList(entry.get("resource_locks")),
+                        stringList(entry.get("side_effects")),
+                        positiveInt(entry.get("timeout_ticks"), 1_200),
+                        stringOrDefault(entry.get("failure_policy"), "fail"),
+                        string(entry.get("recovery_task"))
                 );
                 compiled.templateMetadata.put(metadata.templateId(), metadata);
             }
@@ -851,7 +858,15 @@ public final class KtlCompilerService {
                 stringList(document.body.get("target_kinds")),
                 stringList(document.body.get("required_params")),
                 stringList(document.body.get("optional_params")),
-                stringList(document.body.get("tags"))
+                stringList(document.body.get("tags")),
+                string(document.body.get("description")),
+                booleanValue(document.body.get("model_callable"), defaultModelCallable(document.body)),
+                stringOrDefault(document.body.get("visibility"), "internal"),
+                stringList(document.body.get("resource_locks")),
+                stringList(document.body.get("side_effects")),
+                positiveInt(document.body.get("timeout_ticks"), 1_200),
+                stringOrDefault(document.body.get("failure_policy"), "fail"),
+                string(document.body.get("recovery_task"))
         );
         compiled.templateMetadata.put(metadata.templateId(), metadata);
     }
@@ -898,7 +913,15 @@ public final class KtlCompilerService {
                     stringList(embeddedMetadata.get("target_kinds")),
                     stringList(embeddedMetadata.get("required_params")),
                     stringList(embeddedMetadata.get("optional_params")),
-                    stringList(embeddedMetadata.get("tags"))
+                    stringList(embeddedMetadata.get("tags")),
+                    string(embeddedMetadata.get("description")),
+                    booleanValue(embeddedMetadata.get("model_callable"), defaultModelCallable(embeddedMetadata)),
+                    stringOrDefault(embeddedMetadata.get("visibility"), "internal"),
+                    stringList(embeddedMetadata.get("resource_locks")),
+                    stringList(embeddedMetadata.get("side_effects")),
+                    positiveInt(embeddedMetadata.get("timeout_ticks"), 1_200),
+                    stringOrDefault(embeddedMetadata.get("failure_policy"), "fail"),
+                    string(embeddedMetadata.get("recovery_task"))
             ));
         }
     }
@@ -1921,6 +1944,52 @@ public final class KtlCompilerService {
         return List.of();
     }
 
+    private static boolean defaultModelCallable(Map<String, Object> metadata) {
+        List<String> tags = stringList(metadata == null ? null : metadata.get("tags"));
+        return !tags.contains("internal") && !tags.contains("test");
+    }
+
+    private static boolean booleanValue(Object value, boolean fallback) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value == null) {
+            return fallback;
+        }
+        String normalized = String.valueOf(value).strip();
+        if ("true".equalsIgnoreCase(normalized)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(normalized)) {
+            return false;
+        }
+        return fallback;
+    }
+
+    private static int positiveInt(Object value, int fallback) {
+        try {
+            return Math.max(1, Integer.parseInt(String.valueOf(value)));
+        } catch (RuntimeException ignored) {
+            return fallback;
+        }
+    }
+
+    private static String stringOrDefault(Object value, String fallback) {
+        String text = string(value).strip();
+        return text.isBlank() ? fallback : text;
+    }
+
+    private static String stripKtlSuffix(String value) {
+        String normalized = value == null ? "" : value.strip();
+        int separator = normalized.indexOf(' ');
+        if (separator >= 0) {
+            normalized = normalized.substring(0, separator);
+        }
+        return normalized.endsWith(".ktl")
+                ? normalized.substring(0, normalized.length() - 4)
+                : normalized;
+    }
+
     private static void requireField(Map<String, Object> map, String field, String path, List<String> errors) {
         if (string(map.get(field)).isBlank()) {
             errors.add(path + " missing " + field);
@@ -2302,7 +2371,62 @@ public final class KtlCompilerService {
     public record SemanticOperationDefinition(String id, String intent, List<String> targetKinds, List<String> preferredTemplates) {
     }
 
-    public record CompiledTemplateMetadata(String templateId, List<String> semanticOperations, List<String> targetKinds, List<String> requiredParams, List<String> optionalParams, List<String> tags) {
+    public record CompiledTemplateMetadata(
+            String templateId,
+            List<String> semanticOperations,
+            List<String> targetKinds,
+            List<String> requiredParams,
+            List<String> optionalParams,
+            List<String> tags,
+            String description,
+            boolean modelCallable,
+            String visibility,
+            List<String> resourceLocks,
+            List<String> sideEffects,
+            int timeoutTicks,
+            String failurePolicy,
+            String recoveryTask
+    ) {
+        public CompiledTemplateMetadata {
+            semanticOperations = List.copyOf(semanticOperations);
+            targetKinds = List.copyOf(targetKinds);
+            requiredParams = List.copyOf(requiredParams);
+            optionalParams = List.copyOf(optionalParams);
+            tags = List.copyOf(tags);
+            description = description == null ? "" : description;
+            visibility = visibility == null || visibility.isBlank() ? "internal" : visibility;
+            resourceLocks = List.copyOf(resourceLocks);
+            sideEffects = List.copyOf(sideEffects);
+            timeoutTicks = Math.max(1, timeoutTicks);
+            failurePolicy = failurePolicy == null || failurePolicy.isBlank() ? "fail" : failurePolicy;
+            recoveryTask = recoveryTask == null ? "" : recoveryTask;
+        }
+
+        public CompiledTemplateMetadata(
+                String templateId,
+                List<String> semanticOperations,
+                List<String> targetKinds,
+                List<String> requiredParams,
+                List<String> optionalParams,
+                List<String> tags
+        ) {
+            this(
+                    templateId,
+                    semanticOperations,
+                    targetKinds,
+                    requiredParams,
+                    optionalParams,
+                    tags,
+                    "",
+                    !tags.contains("internal") && !tags.contains("test"),
+                    tags.contains("test") ? "test" : tags.contains("internal") ? "internal" : "public",
+                    List.of(),
+                    List.of(),
+                    1_200,
+                    "fail",
+                    ""
+            );
+        }
     }
 
     public record CompiledTaskTemplate(String templateId, String semanticOperationId, List<String> params, List<CompiledStep> steps) {

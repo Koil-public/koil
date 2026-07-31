@@ -1,6 +1,7 @@
 package com.spirit.koil.api.chat;
 
 import com.spirit.koil.api.chat.input.KoilCommandAnalysisService;
+import com.spirit.koil.api.command.CommandOutputPresentation;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.hud.MessageIndicator;
 import net.minecraft.text.MutableText;
@@ -61,16 +62,16 @@ public final class RichChatCommandOutputBridge {
         if (analysis == null || analysis.status() == null) {
             return message;
         }
-        MutableText enhanced = Text.literal("Command failed: ").formatted(Formatting.RED)
-                .append(Text.literal(analysis.status().text()).formatted(Formatting.WHITE));
-        enhanced.append(Text.literal("\nCommand: /" + lastOutgoingCommand).formatted(Formatting.GRAY));
+        MutableText enhanced = CommandOutputPresentation.text("Command failed: ", CommandOutputPresentation.Tone.ERROR)
+                .append(CommandOutputPresentation.text(analysis.status().text(), CommandOutputPresentation.Tone.PRIMARY));
+        enhanced.append(CommandOutputPresentation.text("\nCommand: /" + lastOutgoingCommand, CommandOutputPresentation.Tone.METADATA));
         for (String detail : analysis.details()) {
             if (detail != null && !detail.isBlank()) {
-                enhanced.append(Text.literal("\n- " + detail).formatted(Formatting.GRAY));
+                enhanced.append(CommandOutputPresentation.text("\n- " + detail, CommandOutputPresentation.Tone.PRIMARY));
             }
         }
         if (!original.isBlank()) {
-            enhanced.append(Text.literal("\nServer: " + original.replace('\n', ' ').replace('\r', ' ').trim()).formatted(Formatting.DARK_GRAY));
+            enhanced.append(CommandOutputPresentation.text("\nServer: " + original.replace('\n', ' ').replace('\r', ' ').trim(), CommandOutputPresentation.Tone.METADATA));
         }
         return enhanced;
     }

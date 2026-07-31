@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.farming_core_harvest_and_replant
+template_id: farming/core/harvest_and_replant
+semantic_operation: sem.farming.harvest_replant
+params: [target.id, item.id, count.value, state.counter, radius, stop.distance, hand.id]
+metadata:
+  semantic_operations: [sem.farming.harvest_replant]
+  target_kinds: [block, item]
+  required_params: [target.id, item.id]
+  optional_params: [count.value, state.counter, radius, stop.distance, hand.id]
+  tags: [farming, harvest, replant, loop]
+  description: Harvest mature crop blocks and replant with a validated seed item
+  visibility: public
+  model_callable: true
+  resource_locks: [movement, look, input, inventory, world]
+  side_effects: [moves_player, changes_orientation, changes_world_blocks, changes_inventory]
+  timeout_ticks: 12000
+  failure_policy: recover
+  recovery_task: movement/recovery/recover_stuck.ktl
+steps:
+  - type: branch
+    label: need_more_crops
+    condition: counter_lt_target
+    then_input: farming/core/harvest_replant_iteration.ktl target.id=${target.id} item.id=${item.id} count.value=${count.value} state.counter=${state.counter} radius=${radius} stop.distance=${stop.distance} hand.id=${hand.id}
+  - type: return
+    label: done

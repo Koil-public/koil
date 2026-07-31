@@ -14,12 +14,16 @@ public final class RichChatPreviewFormatter {
         Text rewritten = RichChatLatexFormatter.format(message);
         rewritten = RichChatPrivateMessageBridge.observeAndRewrite(rewritten);
         rewritten = RichChatCodeBlockBridge.rewrite(rewritten);
+        rewritten = RichChatTableBridge.rewrite(rewritten);
         if (rewritten != null) {
             RichChatRowType rowType = RichChatRowClassifier.classify(rewritten, null);
-            if (rowType == RichChatRowType.PLAYER_CHAT || rowType == RichChatRowType.PRIVATE_MESSAGE) {
+            if (rowType == RichChatRowType.PLAYER_CHAT
+                    || rowType == RichChatRowType.PRIVATE_MESSAGE
+                    || rowType == RichChatRowType.MODEL_RESPONSE) {
                 rewritten = RichChatBodyWrapFormatter.format(rewritten, rowType);
             }
         }
+        rewritten = RichChatMaskedLinkBridge.rewrite(rewritten);
         return rewritten;
     }
 }

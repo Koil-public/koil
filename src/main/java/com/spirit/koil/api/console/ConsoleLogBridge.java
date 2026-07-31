@@ -19,7 +19,7 @@ public final class ConsoleLogBridge {
 
     private static void appendCliLog(ConsoleLevel level, String timestamp, String thread, String category, String message) {
         try {
-            Path path = Path.of("koil/logs/cli/latest.log");
+            Path path = Path.of("koil/logs/automate/latest.log");
             Files.createDirectories(path.getParent());
             String suffix = category == null || category.isBlank() ? "" : "/" + category;
             String line = level.marker() + " | [" + timestamp + "] [" + thread + suffix + "]: " + message + System.lineSeparator();

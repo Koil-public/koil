@@ -1,5 +1,8 @@
 package com.spirit.mixin.client.gui;
 
+import com.spirit.koil.api.automation.AutomationModeController;
+import com.spirit.koil.api.model.LocalModelService;
+import com.spirit.koil.api.minecraft.MinecraftNbtSuggestionService;
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.context.ParsedArgument;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -11,6 +14,7 @@ import com.spirit.koil.api.chat.RichChatScope;
 import com.spirit.koil.api.chat.RichMessageBuilder;
 import com.spirit.koil.api.chat.ChatSuggestionAnchor;
 import com.spirit.koil.api.chat.ChatHudPanelStack;
+import com.spirit.koil.api.chat.ChatComposerMenuBridge;
 import com.spirit.koil.api.chat.LocalOverflowChatBridge;
 import com.spirit.koil.api.chat.LocalMultilineChatBridge;
 import com.spirit.koil.api.chat.MultilineChatInputLayout;
@@ -20,6 +24,7 @@ import com.spirit.koil.api.chat.RichChatPrivateMessageBridge;
 import com.spirit.koil.api.chat.RichChatPreviewFormatter;
 import com.spirit.koil.api.chat.RichChatMessageStore;
 import com.spirit.koil.api.chat.input.KoilCommandAnalysisService;
+import com.spirit.koil.api.chat.input.CommandSuggestionFuturePoller;
 import com.spirit.koil.api.chat.input.VanillaBackedChatInputController;
 import com.spirit.koil.api.chat.latex.RichChatLatexDetector;
 import com.spirit.koil.api.chat.replace.EditorResult;
@@ -99,6 +104,10 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     @Unique private static final int[] KOIL_VANILLA_HIGHLIGHT_COLORS = new int[] {0xFF55FFFF, 0xFFFFFF55, 0xFF55FF55, 0xFFFF55FF, 0xFFFFAA00};
     @Unique private static final int KOIL_SINGLE_LINE_TEXT_INSET = 1;
     @Unique private static final int KOIL_MULTILINE_TEXT_INSET = 3;
+    @Unique private static final int KOIL_UPLOAD_BUTTON_LEFT = 2;
+    @Unique private static final int KOIL_UPLOAD_BUTTON_WIDTH = 46;
+    @Unique private static final int KOIL_COMPOSER_BUTTON_GAP = 4;
+    @Unique private static final int KOIL_COMPOSER_MENU_BUTTON_WIDTH = 20;
     @Shadow protected TextFieldWidget chatField;
     @Shadow private ChatInputSuggestor chatInputSuggestor;
     @Shadow public abstract String normalize(String chatText);
@@ -113,6 +122,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     @Unique private int koil$draftClickCount;
     @Unique private final PopupMenu koil$pmMenu = new PopupMenu();
     @Unique private final PopupMenu koil$pmTargetMenu = new PopupMenu();
+    @Unique private final PopupMenu koil$pmOptionMenu = new PopupMenu();
     @Unique private CompletableFuture<Suggestions> koil$customSuggestionFuture;
     @Unique private String koil$customSuggestionRequestKey = "";
     @Unique private KoilDraftSuggestionContext koil$customSuggestionContext;
@@ -155,6 +165,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         koil$chatScrollbarDragging = false;
         koil$pmMenu.close();
         koil$pmTargetMenu.close();
+        koil$pmOptionMenu.close();
         koil$clearCustomSuggestions();
     }
 
@@ -305,6 +316,17 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Inject(method = "sendMessage", at = @At("HEAD"), cancellable = true)
     private void koil$sendNetworkSafeMultiline(String chatText, boolean addToHistory, CallbackInfoReturnable<Boolean> cir) {
+        String automationText = chatText == null ? "" : chatText.strip();
+        if (AutomationModeController.isAutomationMode()
+                && ((!automationText.isEmpty() && !automationText.startsWith("/")) || RichChatUploadDraft.hasPending())) {
+            MinecraftClient minecraft = MinecraftClient.getInstance();
+            if (addToHistory && minecraft != null && minecraft.inGameHud != null && !automationText.isEmpty()) {
+                minecraft.inGameHud.getChatHud().addToMessageHistory(chatText);
+            }
+            LocalModelService.automationPrompt(chatText);
+            cir.setReturnValue(true);
+            return;
+        }
         if (!RichChatSettings.enabled()) {
             return;
         }
@@ -888,6 +910,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             RichChatAttachmentRenderer.renderFocused(context, this.width, this.height, mouseX, mouseY);
             koil$pmMenu.render(context, mouseX, mouseY);
             koil$pmTargetMenu.render(context, mouseX, mouseY);
+            koil$pmOptionMenu.render(context, mouseX, mouseY);
             RichChatAttachmentRenderer.renderChatHoverTooltip(context, mouseX, mouseY);
             return;
         }
@@ -945,6 +968,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         RichChatAttachmentRenderer.renderFocused(context, this.width, this.height, mouseX, mouseY);
         koil$pmMenu.render(context, mouseX, mouseY);
         koil$pmTargetMenu.render(context, mouseX, mouseY);
+        koil$pmOptionMenu.render(context, mouseX, mouseY);
         RichChatAttachmentRenderer.renderChatHoverTooltip(context, mouseX, mouseY);
     }
 
@@ -957,10 +981,50 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             }
         }
 
+        if (button == 0 && koil$pmOptionMenu.isOpen()) {
+            if (koil$pmOptionMenu.contains(mouseX, mouseY)) {
+                PopupMenu.MenuEntry selected = koil$pmOptionMenu.click(mouseX, mouseY);
+                if (selected != null) {
+                    koil$applyComposerAction(ChatComposerMenuBridge.handleAction(selected.id()));
+                }
+                koil$pmMenu.close();
+                koil$pmTargetMenu.close();
+                if (chatField != null) {
+                    chatField.setFocused(true);
+                }
+                cir.setReturnValue(true);
+                return;
+            }
+            koil$pmOptionMenu.close();
+            if (!koil$pmTargetMenu.contains(mouseX, mouseY) && !koil$pmMenu.contains(mouseX, mouseY)) {
+                koil$pmTargetMenu.close();
+                koil$pmMenu.close();
+                cir.setReturnValue(true);
+                return;
+            }
+        }
+
         if (button == 0 && koil$pmTargetMenu.isOpen()) {
-            PopupMenu.MenuEntry selected = koil$pmTargetMenu.click(mouseX, mouseY);
-            if (selected != null) {
-                RichChatPrivateMessageBridge.handleMenuAction(selected.id());
+            if (koil$pmTargetMenu.contains(mouseX, mouseY)) {
+                PopupMenu.MenuEntry selected = koil$pmTargetMenu.clickKeepingOpen(mouseX, mouseY);
+                if (selected != null && ChatComposerMenuBridge.isNestedSelector(selected.id())) {
+                    koil$pmOptionMenu.openBeside(
+                            koil$pmTargetMenu,
+                            mouseY,
+                            this.width,
+                            this.height,
+                            ChatComposerMenuBridge.nestedEntries(selected.id(), MinecraftClient.getInstance())
+                    );
+                    if (chatField != null) {
+                        chatField.setFocused(true);
+                    }
+                    cir.setReturnValue(true);
+                    return;
+                }
+                if (selected != null) {
+                    koil$applyComposerAction(ChatComposerMenuBridge.handleAction(selected.id()));
+                }
+                koil$pmTargetMenu.close();
                 koil$pmMenu.close();
                 if (chatField != null) {
                     chatField.setFocused(true);
@@ -968,35 +1032,46 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 cir.setReturnValue(true);
                 return;
             }
-            if (!koil$pmTargetMenu.isOpen()) {
+            koil$pmTargetMenu.close();
+            koil$pmOptionMenu.close();
+            if (!koil$pmMenu.contains(mouseX, mouseY)) {
+                koil$pmMenu.close();
                 cir.setReturnValue(true);
                 return;
             }
         }
 
         if (button == 0 && koil$pmMenu.isOpen()) {
-            PopupMenu.MenuEntry hovered = koil$pmMenu.entryAt(mouseX, mouseY);
-            if (hovered != null && "pm_target_header".equals(hovered.id())) {
-                koil$pmTargetMenu.openNearAnchor((int) mouseX, (int) mouseY - 10, 0, this.width, this.height, RichChatPrivateMessageBridge.targetMenuEntries(MinecraftClient.getInstance()));
+            PopupMenu.MenuEntry selected = koil$pmMenu.clickKeepingOpen(mouseX, mouseY);
+            if (selected != null && ChatComposerMenuBridge.isSection(selected.id())) {
+                koil$pmOptionMenu.close();
+                koil$pmTargetMenu.openBeside(
+                        koil$pmMenu,
+                        mouseY,
+                        this.width,
+                        this.height,
+                        ChatComposerMenuBridge.childEntries(selected.id(), MinecraftClient.getInstance())
+                );
                 if (chatField != null) {
                     chatField.setFocused(true);
                 }
                 cir.setReturnValue(true);
                 return;
             }
-            PopupMenu.MenuEntry selected = koil$pmMenu.click(mouseX, mouseY);
             if (selected != null) {
-                RichChatPrivateMessageBridge.handleMenuAction(selected.id());
+                koil$applyComposerAction(ChatComposerMenuBridge.handleAction(selected.id()));
+                koil$pmMenu.close();
                 if (chatField != null) {
                     chatField.setFocused(true);
                 }
                 cir.setReturnValue(true);
                 return;
             }
-            if (!koil$pmMenu.isOpen()) {
-                cir.setReturnValue(true);
-                return;
-            }
+            koil$pmMenu.close();
+            koil$pmTargetMenu.close();
+            koil$pmOptionMenu.close();
+            cir.setReturnValue(true);
+            return;
         }
 
         if (RichChatAttachmentRenderer.mouseClicked(mouseX, mouseY, button)) {
@@ -1031,7 +1106,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
         if (button == 0 && koil$mouseInsidePrivateMessageButton(mouseX, mouseY)) {
             koil$pmTargetMenu.close();
-            koil$pmMenu.toggleAtPointer(mouseX, mouseY, this.width, this.height, RichChatPrivateMessageBridge.menuEntries(MinecraftClient.getInstance()));
+            koil$pmOptionMenu.close();
+            koil$pmMenu.toggleAtPointer(mouseX, mouseY, this.width, this.height, ChatComposerMenuBridge.rootEntries());
             if (chatField != null) {
                 chatField.setFocused(true);
             }
@@ -1086,6 +1162,11 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     @Inject(method = "mouseScrolled", at = @At("HEAD"), cancellable = true)
     private void koil$scrollMultilineDraft(double mouseX, double mouseY, double amount, CallbackInfoReturnable<Boolean> cir) {
         if (koil$scrollCustomSuggestionPopup(mouseX, mouseY, amount)) {
+            cir.setReturnValue(true);
+            return;
+        }
+
+        if (ChatHudPanelStack.mouseScrolled(MinecraftClient.getInstance(), mouseX, mouseY, amount)) {
             cir.setReturnValue(true);
             return;
         }
@@ -1591,9 +1672,9 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Unique
     private void koil$renderUploadButton(DrawContext context, int mouseX, int mouseY) {
-        int left = 2;
+        int left = KOIL_UPLOAD_BUTTON_LEFT;
         int top = Math.max(2, koil$inputPanelTop() - 16);
-        int width = 46;
+        int width = KOIL_UPLOAD_BUTTON_WIDTH;
         int height = 13;
         int right = left + width;
         int bottom = top + height;
@@ -1614,16 +1695,16 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (!koil$showChatControls()) {
             return false;
         }
-        int left = 2;
+        int left = KOIL_UPLOAD_BUTTON_LEFT;
         int top = Math.max(2, koil$inputPanelTop() - 16);
-        return mouseX >= left && mouseX <= left + 46 && mouseY >= top && mouseY <= top + 13;
+        return mouseX >= left && mouseX <= left + KOIL_UPLOAD_BUTTON_WIDTH && mouseY >= top && mouseY <= top + 13;
     }
 
     @Unique
     private void koil$renderPrivateMessageButton(DrawContext context, int mouseX, int mouseY) {
-        int left = 2 + 46 + 4;
+        int left = KOIL_UPLOAD_BUTTON_LEFT + KOIL_UPLOAD_BUTTON_WIDTH + KOIL_COMPOSER_BUTTON_GAP;
         int top = Math.max(2, koil$inputPanelTop() - 16);
-        int width = 36;
+        int width = KOIL_COMPOSER_MENU_BUTTON_WIDTH;
         int height = 13;
         int right = left + width;
         int bottom = top + height;
@@ -1632,13 +1713,24 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (koil$mouseInsidePrivateMessageButton(mouseX, mouseY)) {
             context.fill(left, top, right, bottom, 0x224A5E74);
         }
-        if (RichChatPrivateMessageBridge.filterEnabled()) {
+        if (RichChatPrivateMessageBridge.filterEnabled() || AutomationModeController.isAutomationMode()) {
             context.fill(left, top, right, bottom, 0x224A785D);
         }
-        String label = "/msg";
+        String label = "…";
         context.drawTextWithShadow(this.textRenderer, Text.literal(label), left + (width - this.textRenderer.getWidth(label)) / 2, top + 3, 0xE0E0E0);
         if (koil$mouseInsidePrivateMessageButton(mouseX, mouseY)) {
-            context.drawTooltip(this.textRenderer, RichChatPrivateMessageBridge.buttonTooltip(), mouseX, mouseY);
+            context.drawTooltip(this.textRenderer, List.of(Text.literal("Chat, automation, and model controls.")), mouseX, mouseY);
+        }
+    }
+
+    @Unique
+    private void koil$applyComposerAction(ChatComposerMenuBridge.ActionResult result) {
+        if (result == null || chatField == null) {
+            return;
+        }
+        if (result == ChatComposerMenuBridge.ActionResult.OPEN_MODEL_SETUP_COMMAND) {
+            chatField.setText("/models setup");
+            chatField.setCursorToEnd();
         }
     }
 
@@ -1647,9 +1739,9 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (!koil$showChatControls()) {
             return false;
         }
-        int left = 2 + 46 + 4;
+        int left = KOIL_UPLOAD_BUTTON_LEFT + KOIL_UPLOAD_BUTTON_WIDTH + KOIL_COMPOSER_BUTTON_GAP;
         int top = Math.max(2, koil$inputPanelTop() - 16);
-        return mouseX >= left && mouseX <= left + 36 && mouseY >= top && mouseY <= top + 13;
+        return mouseX >= left && mouseX <= left + KOIL_COMPOSER_MENU_BUTTON_WIDTH && mouseY >= top && mouseY <= top + 13;
     }
 
     @Unique
@@ -1662,7 +1754,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (primary == null) {
             return;
         }
-        int buttonRight = 2 + 46 + 4 + 36;
+        int buttonRight = KOIL_UPLOAD_BUTTON_LEFT + KOIL_UPLOAD_BUTTON_WIDTH
+                + KOIL_COMPOSER_BUTTON_GAP + KOIL_COMPOSER_MENU_BUTTON_WIDTH;
         int left = buttonRight + 4;
         int right = Math.max(left + 96, this.width - 2);
         int bottom = Math.max(16, koil$inputPanelTop() - 3);
@@ -1722,7 +1815,9 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Unique
     private boolean koil$mouseInsideUploadRemove(double mouseX, double mouseY) {
-        int left = 2 + 46 + 4;
+        int left = KOIL_UPLOAD_BUTTON_LEFT + KOIL_UPLOAD_BUTTON_WIDTH
+                + KOIL_COMPOSER_BUTTON_GAP + KOIL_COMPOSER_MENU_BUTTON_WIDTH
+                + KOIL_COMPOSER_BUTTON_GAP;
         int right = Math.max(left + 96, this.width - 2);
         int bottom = Math.max(16, koil$inputPanelTop() - 3);
         int top = bottom - 13;
@@ -2240,14 +2335,43 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             return;
         }
         Suggestions suggestions;
-        try {
-            suggestions = koil$customSuggestionFuture.join();
-        } catch (Exception ignored) {
-            suggestions = null;
-        }
+        suggestions = CommandSuggestionFuturePoller.readyOrNull(koil$customSuggestionFuture);
         koil$customSuggestionFuture = null;
         List<Suggestion> nextSuggestions = suggestions == null ? List.of() : suggestions.getList();
-        List<Suggestion> completedSuggestions = nextSuggestions == null ? List.of() : List.copyOf(nextSuggestions);
+        List<Suggestion> nbtSuggestions = koil$customSuggestionContext == null
+                ? List.of()
+                : MinecraftNbtSuggestionService.suggest(
+                        koil$customSuggestionContext.commandText(),
+                        koil$customSuggestionContext.commandCursor(),
+                        24
+                );
+        LinkedHashMap<String, Suggestion> mergedSuggestions = new LinkedHashMap<>();
+        // Structural NBT choices are the active grammar at this cursor. Put
+        // them first so registry ids such as minecraft:knockback remain
+        // visible without scrolling past broader Brigadier completions.
+        for (Suggestion suggestion : nbtSuggestions) {
+            if (suggestion != null) {
+                mergedSuggestions.put(
+                        suggestion.getRange().getStart() + ":"
+                                + suggestion.getRange().getEnd() + ":"
+                                + suggestion.getText(),
+                        suggestion
+                );
+            }
+        }
+        if (nextSuggestions != null) {
+            for (Suggestion suggestion : nextSuggestions) {
+                if (suggestion != null) {
+                    mergedSuggestions.putIfAbsent(
+                            suggestion.getRange().getStart() + ":"
+                                    + suggestion.getRange().getEnd() + ":"
+                                    + suggestion.getText(),
+                            suggestion
+                    );
+                }
+            }
+        }
+        List<Suggestion> completedSuggestions = List.copyOf(mergedSuggestions.values());
         if (completedSuggestions.isEmpty()) {
             // Preserve the last non-empty prefix list after a valid value.
             // It is deliberately marked sticky so acceptance replaces the
@@ -2964,7 +3088,13 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             return List.of();
         }
         try {
-            Suggestions suggestions = client.getNetworkHandler().getCommandDispatcher().getCompletionSuggestions(parse).join();
+            CompletableFuture<Suggestions> future = client.getNetworkHandler()
+                    .getCommandDispatcher()
+                    .getCompletionSuggestions(parse);
+            Suggestions suggestions = CommandSuggestionFuturePoller.readyOrNull(future);
+            if (suggestions == null) {
+                return List.of();
+            }
             LinkedHashSet<String> ordered = new LinkedHashSet<>();
             for (Suggestion suggestion : suggestions.getList()) {
                 if (suggestion == null) {

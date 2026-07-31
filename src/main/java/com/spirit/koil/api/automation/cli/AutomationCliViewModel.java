@@ -148,7 +148,10 @@ public final class AutomationCliViewModel {
         upsertDetailed("feedback:good", "feedback", "feedback_button_good", 1, "[ok  ]", "[ \u2713 Good ]", "accepted", true,
                 "", "", "", "no event stored", "", "", "automation feedback");
         hideRow("feedback:bad");
-        publishFeedbackChatResult("Good feedback accepted", "No event stored.", "complete");
+        // Good is a terminal acknowledgement with no follow-up choice. Close
+        // the bottom panel immediately so the shared chat reservation and the
+        // top Automation status panel collapse in the same frame.
+        AutomationChatHudState.hide();
         persist();
     }
 
@@ -156,6 +159,14 @@ public final class AutomationCliViewModel {
         appendDetailed("feedback", "feedback_result", 1, "[fail]", "feedback.recorded", nodeId + " -> " + failureType,
                 "", "selected node + failure type", "", "stored structured event", failureType, "", "automation feedback");
         publishFeedbackChatResult("Bad feedback recorded", nodeId + " -> " + failureType, "failed");
+        persist();
+    }
+
+    public static synchronized void feedbackNoteRecorded(String note) {
+        String clean = note == null ? "" : note.replaceAll("\\s+", " ").strip();
+        appendDetailed("feedback", "feedback_note", 1, "[ok  ]", "feedback.note", clean,
+                "", "user-written feedback", "", "stored bounded feedback note", "", "", "automation feedback");
+        publishFeedbackChatResult("Feedback note recorded", clean, "complete");
         persist();
     }
 
@@ -265,7 +276,8 @@ public final class AutomationCliViewModel {
         MutableText active = Text.literal("click a button, or type /feedback good or /feedback bad").formatted(Formatting.DARK_GRAY);
         List<AutomationChatHudState.Action> actions = List.of(
                 new AutomationChatHudState.Action("feedback.good", "[ ✓ Good ]", "/feedback good", "", "good"),
-                new AutomationChatHudState.Action("feedback.bad", "[ ✗ Bad ]", "/feedback bad", "", "bad")
+                new AutomationChatHudState.Action("feedback.bad", "[ ✗ Bad ]", "/feedback bad", "", "bad"),
+                new AutomationChatHudState.Action("feedback.note", "[ Add Note ]", "/feedback note ", "", "feedback_note")
         );
         AutomationChatHudState.showHeader(header, prompt, active, "feedback_prompt", actions);
     }
@@ -352,6 +364,7 @@ public final class AutomationCliViewModel {
         String detail = detailText == null || detailText.isBlank() ? "" : " - " + detailText;
         MutableText prompt = promptLine(title + detail);
         List<AutomationChatHudState.Action> actions = title.equals("Bad feedback recorded") ? List.of(
+                new AutomationChatHudState.Action("feedback.note", "[ Add Note ]", "/feedback note ", "", "feedback_note"),
                 new AutomationChatHudState.Action("feedback.another", "[ + Another File ]", "/feedback bad", "", "file")
         ) : List.of();
         AutomationChatHudState.showHeader(header, prompt, Text.empty(), state == null || state.isBlank() ? "header" : state, actions);

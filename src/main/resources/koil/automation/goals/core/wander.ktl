@@ -1,0 +1,33 @@
+version: 2
+kind: task_template
+id: template.goals_core_wander
+template_id: goals/core/wander
+semantic_operation: sem.goal.wander
+params: [goal.ticks, sprint]
+metadata:
+  semantic_operations: [sem.goal.wander]
+  target_kinds: []
+  required_params: []
+  optional_params: [goal.ticks, sprint]
+  tags: [goal, movement, wander]
+  description: Execute a bounded wandering goal
+  visibility: public
+  model_callable: true
+  resource_locks: [movement, look, input]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 1200
+  failure_policy: recover
+  recovery_task: movement/recovery/recover_stuck.ktl
+steps:
+  - type: delegate
+    delegate: movement/core/movement_context.ktl
+  - type: run_primitive
+    action: cap.goal.execute_named
+    params:
+      goal.name: wander
+      goal.ticks: ${goal.ticks}
+      sprint: ${sprint}
+  - type: delegate
+    delegate: movement/core/movement_stop.ktl
+  - type: return
+    label: done

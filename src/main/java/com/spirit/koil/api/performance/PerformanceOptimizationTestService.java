@@ -54,7 +54,11 @@ public final class PerformanceOptimizationTestService {
             client.setScreen(null);
             if (automationProbeAvailable()) {
                 automationProbeUsed = true;
-                AutomationRouter.handleInput(new AutomationRequest("walk 100 blocks", false, false), "Koil Performance");
+                AutomationRouter.handleInput(new AutomationRequest(
+                        "movement/navigation/move_relative.ktl direction.id=forward count.value=100 unit.id=blocks",
+                        true,
+                        true
+                ), "Koil Performance");
                 status = "World benchmark running with automation movement probe.";
             }
         }
@@ -97,8 +101,7 @@ public final class PerformanceOptimizationTestService {
     }
 
     public static boolean automationProbeAvailable() {
-        return Files.exists(Path.of("koil/automation/movement/navigation/move_relative.ktl"))
-                && Files.exists(Path.of("koil/automation/movement/language/movement-grammar.ktl"));
+        return Files.exists(Path.of("koil/automation/movement/navigation/move_relative.ktl"));
     }
 
     private static void finish(MinecraftClient client) {

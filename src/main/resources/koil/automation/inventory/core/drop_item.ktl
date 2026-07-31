@@ -1,0 +1,32 @@
+version: 2
+kind: task_template
+id: template.inventory_core_drop_item
+template_id: inventory/core/drop_item
+semantic_operation: sem.inventory.drop
+params: [item.id, drop.all]
+metadata:
+  semantic_operations: [sem.inventory.drop]
+  target_kinds: [item]
+  required_params: [item.id]
+  optional_params: [drop.all]
+  tags: [inventory, drop]
+  description: Select and drop an item after validating it exists
+  visibility: public
+  model_callable: true
+  resource_locks: [inventory, input]
+  side_effects: [changes_inventory, drops_item]
+  timeout_ticks: 200
+  failure_policy: fail
+steps:
+  - type: delegate
+    delegate: inventory/core/require_item.ktl item.id=${item.id} count.value=1 condition.op=gte
+  - type: run_primitive
+    action: cap.inventory.select_hotbar_item
+    params:
+      item.id: ${item.id}
+  - type: run_primitive
+    action: cap.inventory.drop_selected_item
+    params:
+      drop.all: ${drop.all}
+  - type: return
+    label: done

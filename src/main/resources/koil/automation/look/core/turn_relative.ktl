@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.look_core_turn_relative
+template_id: look/core/turn_relative
+semantic_operation: sem.look.turn_relative
+params: [yaw.delta, pitch.delta]
+metadata:
+  semantic_operations: [sem.look.turn_relative]
+  target_kinds: []
+  required_params: []
+  optional_params: [yaw.delta, pitch.delta]
+  tags: [look, relative]
+  description: Turn relative to the player's current rotation
+  visibility: public
+  model_callable: true
+  resource_locks: [look, input]
+  side_effects: [changes_orientation]
+  timeout_ticks: 200
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.look.turn_relative
+    params:
+      yaw.delta: ${yaw.delta}
+      pitch.delta: ${pitch.delta}
+  - type: return
+    label: done

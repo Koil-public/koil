@@ -81,6 +81,7 @@ public abstract class MixinTextFieldWidget {
             koil$selectionAnchor = 0;
             koil$dragSelecting = false;
         } else {
+            koil$selectRange(clickedIndex, clickedIndex);
             koil$selectionAnchor = clickedIndex;
             koil$dragAnchor = clickedIndex;
             koil$dragSelecting = true;

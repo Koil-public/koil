@@ -5,6 +5,7 @@ import com.spirit.koil.api.automation.AutomationRequest;
 import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.automation.AutomationRuntimeStatus;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
+import com.spirit.koil.api.automation.capability.AutomationPrimitiveRegistry;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
@@ -33,6 +34,7 @@ import net.minecraft.util.math.*;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.World;
 
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -53,6 +55,8 @@ public final class AutomationExecutor {
     private static final int NAV_WAYPOINT_VERTICAL_UP = 3;
     private static final int NAV_WAYPOINT_VERTICAL_DOWN = 5;
     private static final int NAV_DECISION_INTERVAL_TICKS = 8;
+    private static final int OBSERVATION_INTERVAL_TICKS = 5;
+    private static final long HOT_STATE_REPORT_INTERVAL_NANOS = 200_000_000L;
     private static final int NAV_AVOID_MEMORY_TICKS = 80;
     private static final int NAV_ROUTE_LOOKAHEAD_SHORT = 3;
     private static final int NAV_ROUTE_LOOKAHEAD_LONG = 5;
@@ -85,6 +89,7 @@ public final class AutomationExecutor {
     private final Deque<ActiveExecution> executionStack = new ArrayDeque<>();
     private final Map<String, HeldInput> heldInputs = new LinkedHashMap<>();
     private final Map<String, CachedEntityRef> cachedEntities = new LinkedHashMap<>();
+    private final Map<String, Long> hotStateReportTimes = new LinkedHashMap<>();
 
     public AutomationExecutor(KtlCompilerService compilerService) {
         this.compilerService = compilerService;
@@ -102,6 +107,7 @@ public final class AutomationExecutor {
     public void cancel(String reason) {
         boolean hadActiveExecution = !this.executionStack.isEmpty();
         String detail = reason == null || reason.isBlank() ? "canceled" : reason;
+        ActiveExecution root = this.executionStack.peekLast();
         this.executionStack.clear();
         releaseAllInputs();
         this.cachedEntities.clear();
@@ -109,6 +115,7 @@ public final class AutomationExecutor {
         AutomationCliViewModel.activeState("failed", "", detail);
         AutomationReporter.fail("[fail]", "automation canceled: " + detail);
         if (hadActiveExecution) {
+            publishExecutionResult(root, "cancelled", "cancelled", detail);
             AutomationCliViewModel.offerFeedbackPrompt("task stopped: " + detail);
         }
     }
@@ -130,14 +137,28 @@ public final class AutomationExecutor {
         }
 
         ActiveExecution current = this.executionStack.peek();
+        current.tickCounter++;
         AutomationCliViewModel.activeState("thinking", current.frameId, "tick");
+
+        KtlCompilerService.CompiledTemplateMetadata currentMetadata = templateMetadata(current);
+        if (current.tickCounter > currentMetadata.timeoutTicks()) {
+            current.state.put("result.failure_code", "task_timeout");
+            current.state.put("result.failure_reason", "task exceeded " + currentMetadata.timeoutTicks() + " ticks");
+            AutomationReporter.block("[block]", current.interpretationResult.selectedTemplateId() + " -> task timeout");
+            AutomationCliViewModel.blocked(current.frameId, "task_timeout", String.valueOf(currentMetadata.timeoutTicks()));
+            releaseAllInputs();
+            finishCurrentExecution("timed_out");
+            return;
+        }
 
         updateActiveConsumption(current);
         updateActiveAttack(current);
         updateActiveMining(current);
         updateRelativeMovement(current, player);
         updateTargetMovement(current, player, world);
-        updateWorldDiagnostics(current, client, player, world);
+        if (shouldSampleObservations(current)) {
+            updateWorldDiagnostics(current, client, player, world);
+        }
         updateActiveContainerTransfer(current, player);
 
         if (Boolean.TRUE.equals(current.state.get("consume.failed"))) {
@@ -146,7 +167,7 @@ public final class AutomationExecutor {
             AutomationCliViewModel.blocked(current.frameId, "consume", reason);
             current.state.remove("consume.failed");
             current.state.remove("consume.failure_reason");
-            finishCurrentExecution("blocked");
+            handleExecutionFailure(current, current.activeNodeId, reason);
             return;
         }
 
@@ -156,7 +177,7 @@ public final class AutomationExecutor {
             AutomationCliViewModel.blocked(current.frameId, "attack", reason);
             current.state.remove("attack.failed");
             current.state.remove("attack.failure_reason");
-            finishCurrentExecution("blocked");
+            handleExecutionFailure(current, current.activeNodeId, reason);
             return;
         }
 
@@ -166,7 +187,7 @@ public final class AutomationExecutor {
             AutomationCliViewModel.blocked(current.frameId, "mine", reason);
             current.state.remove("mine.failed");
             current.state.remove("mine.failure_reason");
-            finishCurrentExecution("blocked");
+            handleExecutionFailure(current, current.activeNodeId, reason);
             return;
         }
 
@@ -176,7 +197,7 @@ public final class AutomationExecutor {
             AutomationCliViewModel.blocked(current.frameId, "container.transfer", reason);
             current.state.remove("container.transfer.failed");
             current.state.remove("container.transfer.failure_reason");
-            finishCurrentExecution("blocked");
+            handleExecutionFailure(current, current.activeNodeId, reason);
             return;
         }
 
@@ -186,7 +207,7 @@ public final class AutomationExecutor {
             AutomationCliViewModel.blocked(current.frameId, "movement", reason);
             current.state.remove("move.failed");
             current.state.remove("move.failure_reason");
-            finishCurrentExecution("blocked");
+            handleExecutionFailure(current, current.activeNodeId, reason);
             return;
         }
 
@@ -247,6 +268,7 @@ public final class AutomationExecutor {
         current.activeNodeId = nodeId;
         current.activeNodeLabel = label;
         current.activeAction = step.action();
+        current.activeNodeIndex = current.index;
 
         switch (step.type()) {
             case "run_primitive" -> {
@@ -259,7 +281,7 @@ public final class AutomationExecutor {
                 if (!primitiveResult.success()) {
                     AutomationReporter.block("[block]", label + " -> " + step.action());
                     AutomationCliViewModel.blocked(current.frameId, nodeId, step.action());
-                    finishCurrentExecution("blocked");
+                    handleExecutionFailure(current, nodeId, step.action());
                     return;
                 }
                 AutomationReporter.ok("[ok  ]", label);
@@ -267,6 +289,7 @@ public final class AutomationExecutor {
                     current.activeNodeId = null;
                     current.activeNodeLabel = null;
                     current.activeAction = null;
+                    current.activeNodeIndex = -1;
                 }
                 current.index++;
             }
@@ -283,7 +306,7 @@ public final class AutomationExecutor {
 
                 if (delegatedInput != null && !delegatedInput.isBlank()) {
                     String resolved = resolveString(delegatedInput, current.state);
-                    InterpretationResult child = this.compilerService.interpret(new AutomationRequest(resolved, false, resolved.endsWith(".ktl") || resolved.contains(".ktl ")));
+                    InterpretationResult child = this.compilerService.interpret(new AutomationRequest(resolved, true, true));
                     String childFrameId = startExecution(child.plan(), child, current.frameId, label, current.state);
                     AutomationCliViewModel.delegate(current.frameId, nodeId, childFrameId, resolved);
                     return;
@@ -311,7 +334,7 @@ public final class AutomationExecutor {
                 String resolved = resolveString(step.delegate(), current.state);
                 AutomationReporter.run("[delegate]", label + " -> " + resolved);
                 current.index++;
-                InterpretationResult child = this.compilerService.interpret(new AutomationRequest(resolved, false, resolved.endsWith(".ktl") || resolved.contains(".ktl ")));
+                InterpretationResult child = this.compilerService.interpret(new AutomationRequest(resolved, true, true));
                 String childFrameId = startExecution(child.plan(), child, current.frameId, label, current.state);
                 AutomationCliViewModel.delegate(current.frameId, nodeId, childFrameId, resolved);
                 return;
@@ -319,6 +342,98 @@ public final class AutomationExecutor {
             case "return" -> finishCurrentExecution("success");
             default -> throw new IllegalStateException("Unsupported step type: " + step.type());
         }
+    }
+
+    private KtlCompilerService.CompiledTemplateMetadata templateMetadata(ActiveExecution execution) {
+        if (execution == null || execution.interpretationResult == null) {
+            return new KtlCompilerService.CompiledTemplateMetadata(
+                    "", List.of(), List.of(), List.of(), List.of(), List.of()
+            );
+        }
+        KtlCompilerService.CompiledTemplateMetadata metadata = this.compilerService.assets().templateMetadata.get(
+                execution.interpretationResult.selectedTemplateId()
+        );
+        return metadata == null
+                ? new KtlCompilerService.CompiledTemplateMetadata(
+                execution.interpretationResult.selectedTemplateId(), List.of(), List.of(), List.of(), List.of(), List.of()
+        )
+                : metadata;
+    }
+
+    /**
+     * Applies the task template's declared failure policy. Recovery is bounded
+     * to one attempt for each failing node so malformed tasks cannot recurse
+     * forever. A successful recovery resumes the parent at the failed node.
+     */
+    private void handleExecutionFailure(ActiveExecution current, String nodeId, String reason) {
+        if (current == null || this.executionStack.isEmpty()) {
+            return;
+        }
+        KtlCompilerService.CompiledTemplateMetadata metadata = templateMetadata(current);
+        int failedIndex = current.activeNodeIndex >= 0 ? current.activeNodeIndex : current.index;
+        String attemptKey = "ktl.failure_attempt." + failedIndex;
+        int attempts = intState(current.state, attemptKey, 0);
+        String policy = metadata.failurePolicy().toLowerCase(Locale.ROOT);
+
+        current.state.put("result.last_failure", reason == null ? "blocked" : reason);
+        current.state.put("result.last_failure_node", nodeId == null ? "" : nodeId);
+        current.activeNodeId = null;
+        current.activeNodeLabel = null;
+        current.activeAction = null;
+        current.activeNodeIndex = -1;
+        releaseAllInputs();
+
+        if ("continue".equals(policy)) {
+            current.index = Math.max(current.index, failedIndex + 1);
+            AutomationReporter.info("[info]", "failure policy continued after " + failedIndex);
+            return;
+        }
+
+        if ("retry".equals(policy) && attempts < 1) {
+            current.state.put(attemptKey, attempts + 1);
+            current.index = failedIndex;
+            AutomationReporter.info("[retry]", current.interpretationResult.selectedTemplateId() + " node=" + failedIndex);
+            return;
+        }
+
+        if ("recover".equals(policy) && attempts < 1 && !metadata.recoveryTask().isBlank()) {
+            current.state.put(attemptKey, attempts + 1);
+            current.index = failedIndex;
+            String recoveryTask = stripKtlSuffix(metadata.recoveryTask());
+            try {
+                InterpretationResult recovery = this.compilerService.interpret(
+                        new AutomationRequest(recoveryTask, true, true)
+                );
+                String recoveryFrame = startExecution(
+                        recovery.plan(),
+                        recovery,
+                        current.frameId,
+                        "recover node " + failedIndex,
+                        current.state
+                );
+                AutomationReporter.run("[recover]", current.interpretationResult.selectedTemplateId()
+                        + " -> " + recoveryTask);
+                AutomationCliViewModel.delegate(
+                        current.frameId,
+                        nodeId == null ? "recovery#" + failedIndex : nodeId,
+                        recoveryFrame,
+                        recoveryTask
+                );
+                return;
+            } catch (RuntimeException exception) {
+                current.state.put("result.recovery_error", exception.getMessage());
+                AutomationReporter.block("[block]", "recovery unavailable: " + exception.getMessage());
+            }
+        }
+
+        finishCurrentExecution("blocked");
+    }
+
+    private static String stripKtlSuffix(String value) {
+        String normalized = value == null ? "" : value.trim().replace('\\', '/');
+        return normalized.endsWith(".ktl")
+                ? normalized.substring(0, normalized.length() - 4)
+                : normalized;
     }
 
     private String startExecution(ExecutionPlan plan, InterpretationResult interpretationResult, String parentFrameId, String resumeLabel, Map<String, Object> inheritedState) {
@@ -377,9 +492,70 @@ public final class AutomationExecutor {
             }
         } else {
             runCompletionCommand(status, finished.state);
+            String failureCode = "success".equalsIgnoreCase(status) ? "" : executionFailureCode(finished.state, status);
+            String detail = "success".equalsIgnoreCase(status)
+                    ? "automation execution completed"
+                    : executionFailureDetail(finished.state, status);
+            // Release the root task before completing its result future.
+            // CompletableFuture callbacks may run inline from publish(), and
+            // model-driven action chains are allowed to start their next task
+            // from that callback.
             AutomationRuntimeStatus.idle(status);
+            publishExecutionResult(finished, status, failureCode, detail);
             AutomationCliViewModel.offerFeedbackPrompt();
         }
+    }
+
+    private void publishExecutionResult(ActiveExecution execution, String status, String failureCode, String detail) {
+        if (execution == null) {
+            return;
+        }
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientWorld world = client == null ? null : client.world;
+        AutomationPositionSnapshot position = player == null
+                ? null
+                : new AutomationPositionSnapshot(
+                        player.getX(),
+                        player.getY(),
+                        player.getZ(),
+                        world == null ? "" : world.getRegistryKey().getValue().toString()
+                );
+        AutomationExecutionResults.publish(new AutomationExecutionResult(
+                execution.interpretationResult.executionId(),
+                status,
+                failureCode,
+                detail,
+                execution.interpretationResult.selectedTemplateId(),
+                new LinkedHashMap<>(execution.state),
+                execution.initialPosition,
+                position,
+                execution.startedAt,
+                Instant.now()
+        ));
+    }
+
+    private static String executionFailureCode(Map<String, Object> state, String fallback) {
+        for (String key : List.of(
+                "move.failure_reason",
+                "attack.failure_reason",
+                "mine.failure_reason",
+                "consume.failure_reason",
+                "container.transfer.failure_reason",
+                "result.reason"
+        )) {
+            Object value = state.get(key);
+            if (value != null && !value.toString().isBlank()) {
+                return value.toString();
+            }
+        }
+        return fallback == null || fallback.isBlank() ? "execution_failed" : fallback;
+    }
+
+    private static String executionFailureDetail(Map<String, Object> state, String fallback) {
+        String code = executionFailureCode(state, fallback);
+        Object summary = state.get("result.debug_summary");
+        return summary == null || summary.toString().isBlank() ? code : summary.toString();
     }
 
     private void runCompletionCommand(String status, Map<String, Object> state) {
@@ -414,6 +590,10 @@ public final class AutomationExecutor {
     private PrimitiveRunResult runPrimitive(String action, Map<String, Object> params, Map<String, Object> state) {
         Map<String, Object> resolvedParams = resolveParams(params, state);
         AutomationReporter.info("[info]", "primitive = " + action);
+        if (!AutomationPrimitiveRegistry.contains(action)) {
+            AutomationReporter.block("[block]", "unregistered primitive = " + action);
+            return new PrimitiveRunResult(false, resolvedParams);
+        }
         MinecraftClient client = MinecraftClient.getInstance();
         ClientPlayerEntity player = client == null ? null : client.player;
         ClientWorld world = client == null ? null : client.world;
@@ -1744,8 +1924,13 @@ public final class AutomationExecutor {
                 boolean dead = entity == null || !entity.isAlive();
                 String resultKey = stringParam(resolvedParams, "result.key", "result.dead");
                 state.put(resultKey, dead);
+                state.put("result.action", dead ? "SUCCESS" : "FAIL");
+                if (!dead) {
+                    state.put("combat.failure_reason", "target_still_alive");
+                }
                 AutomationReporter.mem(resultKey, dead);
-                yield true;
+                AutomationReporter.mem("result.action", dead ? "SUCCESS" : "FAIL");
+                yield dead;
             }
             case "cap.wait.ticks" -> {
                 int ticks = Math.max(0, intParam(resolvedParams, "count.value", 0));
@@ -3202,13 +3387,17 @@ public final class AutomationExecutor {
         boolean sprint = Boolean.TRUE.equals(state.get("move.relative.sprint"));
 
         applyRelativeMotion(player, direction, sprint);
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.relative.phase", "flow_phase", "[run ]", "move.relative.phase", "stepping");
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.relative.direction", "flow_metric", "[info]", "move.relative.direction", direction);
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.relative.remaining", "flow_metric", "[info]", "move.relative.remaining_ticks", remaining);
+        if (shouldSampleObservations(execution)) {
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.relative.phase", "flow_phase", "[run ]", "move.relative.phase", "stepping");
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.relative.direction", "flow_metric", "[info]", "move.relative.direction", direction);
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.relative.remaining", "flow_metric", "[info]", "move.relative.remaining_ticks", remaining);
+        }
 
         remaining--;
         state.put("move.relative.ticks", remaining);
-        AutomationReporter.mem("move.relative.ticks", remaining);
+        if (shouldSampleObservations(execution)) {
+            AutomationReporter.mem("move.relative.ticks", remaining);
+        }
 
         if (remaining <= 0) {
             double startX = doubleState(state, "move.relative.start_x", player.getX());
@@ -3343,17 +3532,19 @@ public final class AutomationExecutor {
         writeStateValue(state, "path.stop_distance", stopDistance);
         incrementStateCounter(state, "path.lookups");
 
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.phase", "flow_phase", "[run ]", "move.target.phase", stringParam(state, "move.nav.phase", "navigating"));
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.distance", "flow_metric", "[info]", "move.target.distance", round(distance));
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.stop", "flow_metric", "[info]", "move.target.stop_distance", stopDistance);
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.use_y", "flow_metric", "[info]", "move.target.use_y", useY);
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.precise", "flow_metric", "[info]", "move.target.precise", precise);
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.lookups", "flow_metric", "[info]", "move.target.lookups", intState(state, "path.lookups", 0));
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.nav.phase", "flow_metric", "[info]", "move.nav.phase", stringParam(state, "move.nav.phase", "navigating"));
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.nav.stall", "flow_metric", "[info]", "move.nav.stall_ticks", intState(state, "move.nav.stall_ticks", 0));
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.nav.escape", "flow_metric", "[info]", "move.nav.escape", stringParam(state, "move.nav.escape_side", "none") + " / " + intState(state, "move.nav.escape_ticks", 0));
-        AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.recovery.mode", "flow_metric", "[info]", "move.recovery.mode", stringParam(state, "move.recovery.mode", "none"));
-        emitMovementDebug(execution, player, target, state, distance);
+        if (shouldSampleObservations(execution)) {
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.phase", "flow_phase", "[run ]", "move.target.phase", stringParam(state, "move.nav.phase", "navigating"));
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.distance", "flow_metric", "[info]", "move.target.distance", round(distance));
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.stop", "flow_metric", "[info]", "move.target.stop_distance", stopDistance);
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.use_y", "flow_metric", "[info]", "move.target.use_y", useY);
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.precise", "flow_metric", "[info]", "move.target.precise", precise);
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.target.lookups", "flow_metric", "[info]", "move.target.lookups", intState(state, "path.lookups", 0));
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.nav.phase", "flow_metric", "[info]", "move.nav.phase", stringParam(state, "move.nav.phase", "navigating"));
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.nav.stall", "flow_metric", "[info]", "move.nav.stall_ticks", intState(state, "move.nav.stall_ticks", 0));
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.nav.escape", "flow_metric", "[info]", "move.nav.escape", stringParam(state, "move.nav.escape_side", "none") + " / " + intState(state, "move.nav.escape_ticks", 0));
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "move.recovery.mode", "flow_metric", "[info]", "move.recovery.mode", stringParam(state, "move.recovery.mode", "none"));
+            emitMovementDebug(execution, player, target, state, distance);
+        }
 
         if (distance <= stopDistance) {
             double startX = doubleState(state, "move.target.start_x", player.getX());
@@ -3979,7 +4170,45 @@ public final class AutomationExecutor {
             return;
         }
         state.put(key, value);
+        if (isHotTelemetryKey(key)) {
+            long now = System.nanoTime();
+            long last = this.hotStateReportTimes.getOrDefault(key, 0L);
+            if (last != 0L && now - last < HOT_STATE_REPORT_INTERVAL_NANOS) {
+                return;
+            }
+            this.hotStateReportTimes.put(key, now);
+        }
         AutomationReporter.mem(key, value);
+    }
+
+    private boolean shouldSampleObservations(ActiveExecution execution) {
+        return execution != null
+                && (execution.tickCounter <= 1
+                || execution.tickCounter % OBSERVATION_INTERVAL_TICKS == 0);
+    }
+
+    private boolean isHotTelemetryKey(String key) {
+        if (key == null || key.isBlank()) {
+            return false;
+        }
+        return key.startsWith("player.")
+                || key.startsWith("world.ray.")
+                || key.startsWith("world.executor.")
+                || key.startsWith("move.debug.")
+                || key.startsWith("move.nav.last_")
+                || key.startsWith("move.nav.decision_")
+                || key.startsWith("move.target.x")
+                || key.startsWith("move.target.y")
+                || key.startsWith("move.target.z")
+                || key.startsWith("current.target.x")
+                || key.startsWith("current.target.y")
+                || key.startsWith("current.target.z")
+                || key.equals("current.target.distance")
+                || key.equals("current.target.visible")
+                || key.equals("current.target.reachable")
+                || key.equals("path.distance")
+                || key.equals("path.lookups")
+                || key.equals("move.relative.ticks");
     }
 
     private double round(double value) {
@@ -5191,10 +5420,14 @@ public final class AutomationExecutor {
         private final InterpretationResult interpretationResult;
         private final List<KtlCompilerService.CompiledStep> steps;
         private final Map<String, Object> state;
+        private final Instant startedAt;
+        private final AutomationPositionSnapshot initialPosition;
         private int index;
         private String activeNodeId;
         private String activeNodeLabel;
         private String activeAction;
+        private int activeNodeIndex;
+        private long tickCounter;
 
         private ActiveExecution(String frameId, String parentFrameId, String resumeLabel, InterpretationResult interpretationResult, List<KtlCompilerService.CompiledStep> steps, Map<String, Object> state) {
             this.frameId = frameId;
@@ -5203,10 +5436,24 @@ public final class AutomationExecutor {
             this.interpretationResult = interpretationResult;
             this.steps = steps;
             this.state = state;
+            this.startedAt = Instant.now();
+            MinecraftClient client = MinecraftClient.getInstance();
+            ClientPlayerEntity player = client == null ? null : client.player;
+            ClientWorld world = client == null ? null : client.world;
+            this.initialPosition = player == null
+                    ? null
+                    : new AutomationPositionSnapshot(
+                            player.getX(),
+                            player.getY(),
+                            player.getZ(),
+                            world == null ? "" : world.getRegistryKey().getValue().toString()
+                    );
             this.index = 0;
             this.activeNodeId = null;
             this.activeNodeLabel = null;
             this.activeAction = null;
+            this.activeNodeIndex = -1;
+            this.tickCounter = 0L;
         }
     }
 

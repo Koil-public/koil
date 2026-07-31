@@ -1,6 +1,7 @@
 package com.spirit.koil.api.chat;
 
 import com.spirit.koil.api.automation.cli.AutomationChatHudRenderer;
+import com.spirit.koil.api.automation.AutomationModeStatusChatPanel;
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.api.stats.global.client.MarketHudRenderer;
 import net.minecraft.client.MinecraftClient;
@@ -27,6 +28,11 @@ public final class ChatHudPanelStack {
         ChatHudPanelRegistry.beginChatFrame(reservedHeight);
     }
 
+    public static int topSafetyReserve() {
+        ensureBuiltInsRegistered();
+        return ChatHudPanelRegistry.topSafetyReserve();
+    }
+
     public static void observeChatLine(DrawContext context, int localY) {
         ChatHudPanelRegistry.observeChatLine(context, localY);
     }
@@ -39,6 +45,11 @@ public final class ChatHudPanelStack {
     public static boolean mouseClicked(MinecraftClient client, double mouseX, double mouseY, int button) {
         ensureBuiltInsRegistered();
         return ChatHudPanelRegistry.mouseClicked(client, mouseX, mouseY, button);
+    }
+
+    public static boolean mouseScrolled(MinecraftClient client, double mouseX, double mouseY, double amount) {
+        ensureBuiltInsRegistered();
+        return ChatHudPanelRegistry.mouseScrolled(client, mouseX, mouseY, amount);
     }
 
     private static synchronized void ensureBuiltInsRegistered() {
@@ -133,6 +144,7 @@ public final class ChatHudPanelStack {
                 RichChatAttachmentRenderer.renderPinnedPanel(drawContext, context.client(), bounds.x(), bounds.y(), bounds.width());
             }
         });
+        ChatHudPanelRegistry.registerIfAbsent(new AutomationModeStatusChatPanel());
         builtInsRegistered = true;
     }
 }

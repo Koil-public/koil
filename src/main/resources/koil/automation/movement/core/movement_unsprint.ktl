@@ -1,0 +1,26 @@
+version: 2
+kind: task_template
+id: template.movement_core_unsprint
+template_id: movement/core/movement_unsprint
+semantic_operation: sem.task.unsprint
+params: []
+metadata:
+  semantic_operations: [sem.task.unsprint]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [movement, core, sprint]
+  description: Movement Unsprint
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 3600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.player.unsprint
+    params: {}
+  - type: return
+    label: done
+

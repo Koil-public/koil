@@ -2,6 +2,7 @@ package com.spirit.koil.api.chat;
 
 import net.minecraft.client.gui.hud.MessageIndicator;
 import net.minecraft.text.Text;
+import com.spirit.koil.api.model.chat.ModelChatIdentity;
 
 import java.util.Locale;
 import java.util.regex.Pattern;
@@ -25,6 +26,12 @@ public final class RichChatRowClassifier {
         if (rawVisible == null || rawVisible.isBlank()) {
             return RichChatRowType.UNKNOWN;
         }
+        if (ModelChatMessageBridge.isModelIndicator(originalIndicator)) {
+            return RichChatRowType.MODEL_RESPONSE;
+        }
+        if (rawVisible.startsWith(ModelChatIdentity.PREFIX)) {
+            return RichChatRowType.MODEL_RESPONSE;
+        }
         if (RichChatPrivateMessageBridge.isAttentionMessage(rawVisible)) {
             return RichChatRowType.ATTENTION;
         }
@@ -37,6 +44,9 @@ public final class RichChatRowClassifier {
         String firstLine = firstVisibleLine(visible);
         if (firstLine.isBlank()) {
             return RichChatRowType.UNKNOWN;
+        }
+        if (firstLine.regionMatches(true, 0, "Command failed:", 0, "Command failed:".length())) {
+            return RichChatRowType.COMMAND_FAILURE;
         }
         if (RichChatPrivateMessageBridge.isPrivateMessageLine(firstLine)) {
             return RichChatRowType.PRIVATE_MESSAGE;

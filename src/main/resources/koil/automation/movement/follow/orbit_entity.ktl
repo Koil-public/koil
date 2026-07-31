@@ -1,0 +1,37 @@
+version: 2
+kind: task_template
+id: template.movement_follow_orbit_entity
+template_id: movement/follow/orbit_entity
+semantic_operation: sem.task.follow_target
+params: [ticks]
+metadata:
+  semantic_operations: [sem.task.follow_target]
+  target_kinds: [entity, player]
+  required_params: []
+  optional_params: [ticks]
+  tags: [movement, follow]
+  description: Orbit Entity
+  visibility: public
+  model_callable: true
+  resource_locks: [movement, look, input]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 3600
+  failure_policy: recover
+  recovery_task: movement/recovery/recover_stuck.ktl
+steps:
+  - type: run_primitive
+    action: cap.look.face_target
+    params: {}
+  - type: run_primitive
+    action: cap.movement.set_left_strafe
+    params:
+      pressed: true
+  - type: run_primitive
+    action: cap.wait.ticks
+    params:
+      ticks: ${ticks}
+  - type: run_primitive
+    action: cap.movement.release_all
+    params: {}
+  - type: return
+    label: done

@@ -1,0 +1,23 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.world
+operations:
+  - id: sem.world.find_block
+    intent: find_block
+    target_kinds: [block]
+    preferred_templates: [world/core/find_block]
+
+  - id: sem.world.find_entity
+    intent: find_entity
+    target_kinds: [entity]
+    preferred_templates: [world/core/find_entity]
+
+  - id: sem.world.find_player
+    intent: find_player
+    target_kinds: [player]
+    preferred_templates: [world/core/find_player]
+
+  - id: sem.world.validate_target
+    intent: validate_target
+    target_kinds: [block, entity, player]
+    preferred_templates: [world/core/validate_target]

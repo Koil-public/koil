@@ -3,7 +3,6 @@ package com.spirit;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 import com.spirit.koil.api.automation.AutomationPresenceServerBridge;
-import com.spirit.koil.api.automation.AutomationRemoteRunServerBridge;
 import com.spirit.koil.api.automation.KoilCommandPauseBridge;
 import com.spirit.koil.api.chat.AttentionCommandBridge;
 import com.spirit.koil.api.console.ConsoleChannel;
@@ -49,6 +48,8 @@ public class Main implements ModInitializer {
   "firstLaunch": true,
   "debug": true,
   "openKoilLogOnStartUp": false,
+  "developmentCommandBridgeEnabled": true,
+  "developmentCommandBridgeMinimumDelayTicks": 2,
   "enableStartupDestination": false,
   "startupDestination": "",
   "isBetaTesting": true,
@@ -356,7 +357,6 @@ public class Main implements ModInitializer {
             SUBLOGGER.logI("Start-up thread", "Skipping Koil package processing until first launch terms are accepted.");
         }
 
-        AutomationRemoteRunServerBridge.registerCommands();
         KoilRemoteScreenServerBridge.registerCommands();
         KoilCommandPauseBridge.register();
         AttentionCommandBridge.register();

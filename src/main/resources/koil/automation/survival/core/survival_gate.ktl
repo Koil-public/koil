@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.survival_core_survival_gate
+template_id: survival/core/survival_gate
+semantic_operation: sem.task.survival_check
+params: [condition.id, condition.threshold, then.input]
+metadata:
+  semantic_operations: [sem.task.survival_check]
+  target_kinds: []
+  required_params: [condition.id, then.input]
+  optional_params: [condition.threshold]
+  tags: [survival, branch, gate]
+  description: Survival Gate
+  visibility: internal
+  model_callable: false
+  resource_locks: [input, inventory]
+  side_effects: [changes_inventory, uses_item]
+  timeout_ticks: 2400
+  failure_policy: fail
+steps:
+  - type: branch
+    label: survival_condition
+    condition: ${condition.id}
+    then_input: ${then.input}
+  - type: return
+    label: done
+

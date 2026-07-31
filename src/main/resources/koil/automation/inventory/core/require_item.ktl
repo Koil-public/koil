@@ -1,0 +1,29 @@
+version: 2
+kind: task_template
+id: template.inventory_core_require_item
+template_id: inventory/core/require_item
+semantic_operation: sem.inventory.require
+params: [item.id, count.value, condition.op, result.key]
+metadata:
+  semantic_operations: [sem.inventory.require]
+  target_kinds: [item]
+  required_params: [item.id]
+  optional_params: [count.value, condition.op, result.key]
+  tags: [inventory, validation]
+  description: Verify that the inventory contains the requested item count
+  visibility: internal
+  model_callable: false
+  resource_locks: [inventory]
+  side_effects: []
+  timeout_ticks: 100
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.inventory.require_count
+    params:
+      item.id: ${item.id}
+      count.value: ${count.value}
+      condition.op: ${condition.op}
+      result.key: ${result.key}
+  - type: return
+    label: done

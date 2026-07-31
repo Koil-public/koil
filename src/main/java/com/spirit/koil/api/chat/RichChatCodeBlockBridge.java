@@ -150,11 +150,15 @@ public final class RichChatCodeBlockBridge {
             String line = lines[i];
             String pmMarker = RichChatPrivateMessageBridge.leadingMarkerPrefix(line);
             String stripped = pmMarker.isEmpty() ? line : line.substring(pmMarker.length());
-            if (stripped.length() == 1 && stripped.charAt(0) == SPACER_MARKER) {
+            String visiblePrefix = RichChatBodyWrapFormatter.detectVisibleBodyPrefix(stripped);
+            String markerBody = visiblePrefix.isEmpty()
+                    ? stripped
+                    : stripped.substring(visiblePrefix.length());
+            if (markerBody.length() == 1 && markerBody.charAt(0) == SPACER_MARKER) {
                 continue;
             }
-            Marker marker = nextMarker(stripped, 0);
-            if (marker == null || marker.start() != 0 || marker.end() != stripped.length()) {
+            Marker marker = nextMarker(markerBody, 0);
+            if (marker == null || marker.start() != 0 || marker.end() != markerBody.length()) {
                 builder.append(line);
                 continue;
             }
@@ -186,11 +190,18 @@ public final class RichChatCodeBlockBridge {
             int strip = Math.min(commonIndent, leadingWhitespace(line));
             normalized.add(line.substring(Math.min(strip, line.length())));
         }
-        List<String> allDisplayLines = wrappedDisplayLines(normalized, commonIndent, safeWidthPrefix(firstPrefix, continuationPrefix));
-        boolean truncated = allDisplayLines.size() > MAX_VISIBLE_DISPLAY_LINES;
-        List<String> displayLines = truncated
-                ? List.copyOf(allDisplayLines.subList(0, MAX_VISIBLE_DISPLAY_LINES))
-                : allDisplayLines;
+        List<DisplayLine> allDisplayRows = wrappedDisplayLines(
+                normalized,
+                commonIndent,
+                safeWidthPrefix(firstPrefix, continuationPrefix)
+        );
+        boolean truncated = allDisplayRows.size() > MAX_VISIBLE_DISPLAY_LINES;
+        List<DisplayLine> displayRows = truncated
+                ? List.copyOf(allDisplayRows.subList(0, MAX_VISIBLE_DISPLAY_LINES))
+                : allDisplayRows;
+        List<String> displayLines = displayRows.stream().map(DisplayLine::text).toList();
+        List<String> displaySourceLines = displayRows.stream().map(DisplayLine::source).toList();
+        List<Integer> displaySourceOffsets = displayRows.stream().map(DisplayLine::sourceOffset).toList();
         String blockId = UUID.randomUUID().toString();
         String safeFirstPrefix = firstPrefix == null ? "" : firstPrefix;
         String safeContinuationPrefix = continuationPrefix == null ? "" : continuationPrefix;
@@ -202,7 +213,9 @@ public final class RichChatCodeBlockBridge {
                             language == null ? "" : language.trim(),
                             normalized,
                             displayLines,
-                            allDisplayLines.size(),
+                            displaySourceLines,
+                            displaySourceOffsets,
+                            allDisplayRows.size(),
                             truncated,
                             repeat(' ', commonIndent),
                             safeFirstPrefix,
@@ -220,36 +233,39 @@ public final class RichChatCodeBlockBridge {
         output.add((markerPrefix == null ? "" : markerPrefix) + safeContinuationPrefix + SPACER_MARKER);
     }
 
-    private static List<String> wrappedDisplayLines(List<String> lines, int commonIndent, String widestPrefix) {
+    private static List<DisplayLine> wrappedDisplayLines(List<String> lines, int commonIndent, String widestPrefix) {
         TextRenderer renderer = MinecraftClient.getInstance() == null ? null : MinecraftClient.getInstance().textRenderer;
         if (renderer == null) {
-            return lines == null || lines.isEmpty() ? List.of("") : List.copyOf(lines);
+            List<String> safeLines = lines == null || lines.isEmpty() ? List.of("") : List.copyOf(lines);
+            return safeLines.stream().map(line -> new DisplayLine(line, 0, line)).toList();
         }
         int prefixWidth = renderer.getWidth(widestPrefix == null ? "" : widestPrefix);
         int indentWidth = renderer.getWidth(repeat(' ', Math.max(0, commonIndent)));
         int width = Math.min(273, Math.max(24, RichChatLatexTextureCache.currentChatContentWidth() - prefixWidth - indentWidth - 3));
         int contentWidth = Math.max(24, width - CODE_BLOCK_HORIZONTAL_PADDING - CODE_BLOCK_MENU_WIDTH);
-        List<String> out = new ArrayList<>();
+        List<DisplayLine> out = new ArrayList<>();
         if (lines == null || lines.isEmpty()) {
-            out.add("");
+            out.add(new DisplayLine("", 0, ""));
             return out;
         }
         for (String line : lines) {
             if (line == null || line.isEmpty()) {
-                out.add("");
+                out.add(new DisplayLine("", 0, ""));
                 continue;
             }
             String remaining = line;
+            int sourceOffset = 0;
             while (!remaining.isEmpty()) {
                 String fitted = renderer.trimToWidth(remaining, contentWidth);
                 if (fitted.isEmpty()) {
                     fitted = remaining.substring(0, 1);
                 }
-                out.add(fitted);
+                out.add(new DisplayLine(line, sourceOffset, fitted));
+                sourceOffset += fitted.length();
                 remaining = remaining.substring(Math.min(remaining.length(), fitted.length()));
             }
         }
-        return out.isEmpty() ? List.of("") : List.copyOf(out);
+        return out.isEmpty() ? List.of(new DisplayLine("", 0, "")) : List.copyOf(out);
     }
 
     private static String safeWidthPrefix(String firstPrefix, String continuationPrefix) {
@@ -349,12 +365,17 @@ public final class RichChatCodeBlockBridge {
             String language,
             List<String> originalLines,
             List<String> displayLines,
+            List<String> displaySourceLines,
+            List<Integer> displaySourceOffsets,
             int totalDisplayLines,
             boolean truncated,
             String chatIndent,
             String firstVisiblePrefix,
             String continuationVisiblePrefix
     ) {
+    }
+
+    private record DisplayLine(String source, int sourceOffset, String text) {
     }
 
     private record PrefixParts(String prefix, String body) {

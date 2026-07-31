@@ -1,0 +1,18 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.goals
+operations:
+  - id: sem.goal.wander
+    intent: wander
+    target_kinds: []
+    preferred_templates: [goals/core/wander]
+
+  - id: sem.goal.follow
+    intent: follow_goal
+    target_kinds: [entity, player]
+    preferred_templates: [goals/core/follow_target]
+
+  - id: sem.goal.attack
+    intent: attack_goal
+    target_kinds: [entity, player]
+    preferred_templates: [goals/core/attack_target]

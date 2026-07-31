@@ -1,0 +1,25 @@
+version: 2
+kind: task_template
+id: template.inventory_core_open_inventory
+template_id: inventory/core/open_inventory
+semantic_operation: sem.inventory.open
+params: []
+metadata:
+  semantic_operations: [sem.inventory.open]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [inventory, screen]
+  description: Open the player's inventory screen
+  visibility: public
+  model_callable: true
+  resource_locks: [screen, input]
+  side_effects: [opens_screen]
+  timeout_ticks: 200
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.inventory.open_inventory_screen
+    params: {}
+  - type: return
+    label: done

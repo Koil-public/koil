@@ -11,5 +11,6 @@ public enum RichChatMessageType {
     AUDIO,
     VIDEO,
     FILE,
+    MODEL_RESPONSE,
     MIXED
 }

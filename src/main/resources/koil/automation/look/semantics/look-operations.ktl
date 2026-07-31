@@ -1,0 +1,23 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.look
+operations:
+  - id: sem.look.face_position
+    intent: look_at_position
+    target_kinds: [location]
+    preferred_templates: [look/core/face_position]
+
+  - id: sem.look.face_target
+    intent: look_at_target
+    target_kinds: [block, entity, player]
+    preferred_templates: [look/core/face_target]
+
+  - id: sem.look.turn_relative
+    intent: turn_relative
+    target_kinds: []
+    preferred_templates: [look/core/turn_relative]
+
+  - id: sem.look.set_rotation
+    intent: set_rotation
+    target_kinds: []
+    preferred_templates: [look/core/set_rotation]

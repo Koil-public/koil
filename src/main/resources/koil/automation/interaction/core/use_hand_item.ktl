@@ -1,0 +1,26 @@
+version: 2
+kind: task_template
+id: template.interaction_core_use_hand_item
+template_id: interaction/core/use_hand_item
+semantic_operation: sem.interaction.use_hand_item
+params: [hand.id]
+metadata:
+  semantic_operations: [sem.interaction.use_hand_item]
+  target_kinds: [item]
+  required_params: []
+  optional_params: [hand.id]
+  tags: [interaction, item]
+  description: Use the item held in the selected hand
+  visibility: public
+  model_callable: true
+  resource_locks: [input, inventory]
+  side_effects: [uses_item]
+  timeout_ticks: 200
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.interaction.use_item
+    params:
+      hand.id: ${hand.id}
+  - type: return
+    label: done

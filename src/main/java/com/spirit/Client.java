@@ -3,13 +3,16 @@ package com.spirit;
 import com.spirit.client.gui.UiSoundHelper;
 import com.spirit.client.gui.pkg.PackageDetectionService;
 import com.spirit.koil.api.automation.AutomationPresenceClientBridge;
-import com.spirit.koil.api.automation.AutomationRemoteRunClientBridge;
 import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.console.ConsoleRequestBridge;
+import com.spirit.koil.api.command.ExitCommandBridge;
+import com.spirit.koil.api.development.command.DevelopmentCommandBridge;
 import com.spirit.koil.api.f3.F3CommandBridge;
 import com.spirit.koil.api.f3.F3SnapshotService;
 import com.spirit.koil.api.multiplayer.ServerCommandBridge;
 import com.spirit.koil.api.macro.MacroRuntime;
+import com.spirit.koil.api.model.LocalModelCommandBridge;
+import com.spirit.koil.api.model.LocalModelService;
 import com.spirit.koil.api.navigation.ClientSessionTransitionCoordinator;
 import com.spirit.koil.api.navigation.StartupDestinationService;
 import com.spirit.koil.api.performance.PerformanceCommandBridge;
@@ -21,9 +24,11 @@ import com.spirit.koil.api.world.WorldCommandBridge;
 import com.spirit.koil.api.world.WorldInstanceResourceProfileService;
 import com.spirit.koil.api.screen.KoilRemoteScreenClientBridge;
 import com.spirit.koil.api.chat.RichChatPrivacyNoticeClient;
+import com.spirit.koil.api.chat.PublicChatCommandBridge;
 import com.spirit.koil.api.chat.sync.RichChatSyncClientBridge;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
@@ -37,6 +42,8 @@ public class Client implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        DevelopmentCommandBridge.initialize();
+        LocalModelService.initialize();
         StartupDestinationService.initialize();
         WorldInstanceResourceProfileService.initialize();
         ActiveWorldContentResourceBridge.initialize();
@@ -57,6 +64,7 @@ public class Client implements ClientModInitializer {
             StartupDestinationService.tick(client);
             WorldInstanceResourceProfileService.tick(client);
             ActiveWorldContentResourceBridge.tick(client);
+            DevelopmentCommandBridge.tick(client);
             boolean focused = client.isWindowFocused();
             if (lastWindowFocused != null && focused && !lastWindowFocused) {
                 UiSoundHelper.playButtonClick();
@@ -64,11 +72,14 @@ public class Client implements ClientModInitializer {
             lastWindowFocused = focused;
         });
         AutomationPresenceClientBridge.registerReceiver();
-        AutomationRemoteRunClientBridge.registerReceiver();
         AutomationRouter.registerClientCommands();
+        ExitCommandBridge.registerClientCommands();
+        PublicChatCommandBridge.registerClientCommands();
+        LocalModelCommandBridge.registerClientCommands();
         PerformanceCommandBridge.registerClientCommands();
         F3CommandBridge.registerClientCommands();
         ServerCommandBridge.registerClientCommands();
         WorldCommandBridge.registerClientCommands();
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> LocalModelService.shutdown());
     }
 }

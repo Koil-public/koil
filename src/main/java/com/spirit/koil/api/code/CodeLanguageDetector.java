@@ -26,6 +26,9 @@ public final class CodeLanguageDetector {
     private static final Pattern LOG_PATTERN = Pattern.compile("\\b(INFO|WARN|ERROR|DEBUG|TRACE|FATAL)\\b|\\b\\d{2}:\\d{2}:\\d{2}\\b");
     private static final Pattern MARKDOWN_PATTERN = Pattern.compile("(?m)^(#{1,6}\\s|[-*+]\\s|>\\s)|```|\\[[^\\]]+\\]\\([^\\)]+\\)");
     private static final Pattern KTL_PATTERN = Pattern.compile("\\b(task_template|grammar_patterns|selector_pack|resolver_rules|cap\\.|sem\\.|minecraft:)\\b");
+    private static final Pattern MINECRAFT_COMMAND_PATTERN = Pattern.compile(
+            "(?m)^\\s*/?(?:advancement|attribute|bossbar|clear|clone|data|datapack|difficulty|effect|enchant|execute|fill|function|gamemode|gamerule|give|item|kill|locate|loot|particle|place|playsound|recipe|return|ride|say|schedule|scoreboard|setblock|setworldspawn|spawnpoint|spreadplayers|stopsound|summon|tag|team|teammsg|teleport|tell|tellraw|time|title|tp|trigger|weather|worldborder|xp)\\b"
+    );
 
     private CodeLanguageDetector() {
     }
@@ -85,6 +88,7 @@ public final class CodeLanguageDetector {
         add(scores, CodeLanguage.LOG, matches(LOG_PATTERN, text) * 2.4, "log markers");
         add(scores, CodeLanguage.MARKDOWN, matches(MARKDOWN_PATTERN, text) * 2.2, "markdown markers");
         add(scores, CodeLanguage.KTL, matches(KTL_PATTERN, text) * 3.0, "ktl domain syntax");
+        add(scores, CodeLanguage.MINECRAFT_COMMAND, matches(MINECRAFT_COMMAND_PATTERN, text) * 3.2, "minecraft commands");
 
         List<LanguageGuess> guesses = scores.values().stream()
                 .map(Score::toGuess)
@@ -112,6 +116,9 @@ public final class CodeLanguageDetector {
                 && (text.contains(";") || text.contains("{")))
                 || text.contains("System.out.")) {
             return new LanguageGuess(CodeLanguage.JAVA, 1.0D, List.of("java structure"));
+        }
+        if (MINECRAFT_COMMAND_PATTERN.matcher(text).find()) {
+            return new LanguageGuess(CodeLanguage.MINECRAFT_COMMAND, 1.0D, List.of("minecraft command structure"));
         }
         return detect(source).guesses().get(0);
     }
@@ -177,6 +184,7 @@ public final class CodeLanguageDetector {
         XML("snippet.xml", "xml", "html", "svg"),
         YAML("snippet.yml", "yaml", "yml"),
         KTL("snippet.ktl", "ktl"),
+        MINECRAFT_COMMAND("snippet.mcfunction", "mcfunction", "minecraft", "command", "commands", "mc"),
         MARKDOWN("snippet.md", "md", "markdown"),
         JAVASCRIPT("snippet.js", "js", "javascript", "ts", "typescript", "jsx", "tsx"),
         TOML("snippet.toml", "toml"),

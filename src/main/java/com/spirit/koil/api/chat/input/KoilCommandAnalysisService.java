@@ -321,7 +321,11 @@ public final class KoilCommandAnalysisService {
             return List.of();
         }
         try {
-            Suggestions suggestions = client.getNetworkHandler().getCommandDispatcher().getCompletionSuggestions(parse).join();
+            var future = client.getNetworkHandler().getCommandDispatcher().getCompletionSuggestions(parse);
+            Suggestions suggestions = CommandSuggestionFuturePoller.readyOrNull(future);
+            if (suggestions == null) {
+                return List.of();
+            }
             LinkedHashSet<String> ordered = new LinkedHashSet<>();
             for (Suggestion suggestion : suggestions.getList()) {
                 if (suggestion == null) {

@@ -32,4 +32,18 @@ public interface ChatHudPanel {
     default boolean mouseClicked(ChatHudPanelContext context, ChatHudPanelBounds bounds, double mouseX, double mouseY, int button) {
         return false;
     }
+
+    /**
+     * Optional mouse-wheel input for scrollable panel content. Returning true
+     * consumes the wheel event before vanilla chat scrolling.
+     */
+    default boolean mouseScrolled(
+            ChatHudPanelContext context,
+            ChatHudPanelBounds bounds,
+            double mouseX,
+            double mouseY,
+            double amount
+    ) {
+        return false;
+    }
 }

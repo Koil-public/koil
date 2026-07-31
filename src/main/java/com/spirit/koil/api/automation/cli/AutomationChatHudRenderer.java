@@ -3,6 +3,7 @@ package com.spirit.koil.api.automation.cli;
 import com.spirit.client.gui.console.ConsoleScreen;
 import com.spirit.koil.api.automation.AutomationModeController;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
+import com.spirit.koil.api.chat.ChatHudPanelVisualStyle;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ChatScreen;
@@ -53,7 +54,7 @@ public final class AutomationChatHudRenderer {
             return;
         }
         int x = 0;
-        int background = chatBackgroundColor(client);
+        int background = ChatHudPanelVisualStyle.background(client);
         int stateColor = withAlpha(AutomationStateColors.color(AutomationChatHudState.state()), Math.min(255, alpha(background) + 48));
         context.fill(x, y, x + block.width, y + block.height, background);
         context.fill(x, y, x + 2, y + block.height, stateColor);
@@ -66,7 +67,6 @@ public final class AutomationChatHudRenderer {
         for (ActionRect rect : rects) {
             int fill = fillFor(rect.action().kind(), background);
             context.fill(rect.x1(), rect.y1(), rect.x2(), rect.y2(), fill);
-            context.fill(rect.x1(), rect.y1(), rect.x2(), rect.y1() + 1, withAlpha(0x00FFFFFF, Math.min(120, alpha(background) + 40)));
             context.drawTextWithShadow(client.textRenderer, Text.literal(rect.action().label()), rect.x1() + 5, rect.y1() + 3, 0xFFFFFF);
         }
     }
@@ -103,6 +103,10 @@ public final class AutomationChatHudRenderer {
             String command = rect.action().command();
             if (command.isBlank()) {
                 return false;
+            }
+            if ("feedback_note".equals(rect.action().kind())) {
+                client.setScreen(new ChatScreen(command));
+                return true;
             }
             AutomationFeedbackService.handleConsoleInput(command.startsWith("/") ? command : "/" + command);
             return true;
@@ -215,12 +219,6 @@ public final class AutomationChatHudRenderer {
             lines.add(wrapped.get(i));
         }
         return lines;
-    }
-
-    private static int chatBackgroundColor(MinecraftClient client) {
-        double opacity = client.options.getTextBackgroundOpacity().getValue();
-        int value = Math.max(0, Math.min(255, (int) (255.0D * opacity)));
-        return value << 24;
     }
 
     private static int fillFor(String kind, int background) {

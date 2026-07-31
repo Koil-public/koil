@@ -57,6 +57,23 @@ public final class AutomationImprovementService {
             String failureType = string(event, "failure_type", "unknown");
             String nodeId = string(event, "node_id", "");
             String key = safeKey(source + "|" + nodeType + "|" + failureType);
+            if ("user_note".equals(string(event, "event_type", ""))) {
+                if (source.equals("unknown") || failureType.equals("unknown")) {
+                    continue;
+                }
+                ImprovementGroup noteGroup = groups.computeIfAbsent(
+                        key,
+                        ignored -> new ImprovementGroup(key, source, nodeType, failureType)
+                );
+                addIfPresent(noteGroup.comments, string(event, "comment", ""));
+                JsonElement keywords = event.get("keywords");
+                if (keywords != null && keywords.isJsonArray()) {
+                    for (JsonElement keyword : keywords.getAsJsonArray()) {
+                        addIfPresent(noteGroup.keywords, keyword.getAsString());
+                    }
+                }
+                continue;
+            }
             ImprovementGroup group = groups.computeIfAbsent(key, ignored -> new ImprovementGroup(key, source, nodeType, failureType));
             group.count++;
             if (!nodeId.isBlank()) {
@@ -282,6 +299,8 @@ public final class AutomationImprovementService {
         entry.addProperty("count", group.count());
         entry.add("nodes", stringArray(group.nodes));
         entry.add("labels", stringArray(group.labels));
+        entry.add("feedback_comments", stringArray(group.comments));
+        entry.add("feedback_keywords", stringArray(group.keywords));
         entry.add("suggested_fix_rules", stringArray(group.rules));
         JsonObject hooks = new JsonObject();
         for (Map.Entry<String, Set<String>> entryValue : group.hooks.entrySet()) {
@@ -344,9 +363,18 @@ public final class AutomationImprovementService {
         target.computeIfAbsent(key, ignored -> new LinkedHashSet<>()).add(value);
     }
 
+    private static void addIfPresent(Set<String> target, String value) {
+        if (target != null && value != null && !value.isBlank()) {
+            target.add(value);
+        }
+    }
+
     private static String sourcePath(JsonObject event) {
         JsonObject context = event.has("execution_context") && event.get("execution_context").isJsonObject() ? event.getAsJsonObject("execution_context") : new JsonObject();
         String source = string(context, "source", "");
+        if (source.isBlank()) {
+            source = string(event, "source", "");
+        }
         if (source.isBlank()) {
             source = string(event, "node_label", "unknown");
         }
@@ -407,6 +435,8 @@ public final class AutomationImprovementService {
         private final String failureType;
         private final Set<String> nodes = new LinkedHashSet<>();
         private final Set<String> labels = new LinkedHashSet<>();
+        private final Set<String> comments = new LinkedHashSet<>();
+        private final Set<String> keywords = new LinkedHashSet<>();
         private final Set<String> rules = new LinkedHashSet<>();
         private final Map<String, Set<String>> hooks = new LinkedHashMap<>();
         private final Map<String, Set<String>> contextValues = new LinkedHashMap<>();

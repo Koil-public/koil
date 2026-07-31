@@ -13,7 +13,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
@@ -25,107 +24,153 @@ public final class AutomationProofSuite {
     private AutomationProofSuite() {
     }
 
+    public static void main(String[] args) {
+        if (!runAll()) {
+            throw new IllegalStateException("KTL automation proof suite failed");
+        }
+        System.out.println("KTL automation proof suite passed.");
+    }
+
     public static boolean runAll() {
-        AutomationReporter.run("[run ]", "proof.suite = start");
+        AutomationReporter.run("[task]", "proof.suite = start");
         KtlCompilerService.getInstance().reload();
         boolean passed = true;
-        passed &= proveInterpret("phrase.move.xyz", new AutomationRequest("go to 10 64 -20", false, false), "sem.task.move_to_target", "movement/navigation/move_to_position", Map.of(
-                "target.kind", "location",
-                "target.x", 10.0,
-                "target.y", 64.0,
-                "target.z", -20.0
-        ));
-        passed &= proveInterpret("phrase.move.xz", new AutomationRequest("go to 10 -20", false, false), "sem.task.move_to_target", "movement/navigation/move_to_position", Map.of(
-                "target.kind", "location",
-                "target.x", 10.0,
-                "target.z", -20.0
-        ));
-        passed &= proveInterpret("phrase.walk.to.xyz", new AutomationRequest("walk to 10 64 -20", false, false), "sem.task.move_to_target", "movement/navigation/move_to_position", Map.of(
-                "target.kind", "location",
-                "target.x", 10.0,
-                "target.y", 64.0,
-                "target.z", -20.0
-        ));
-        passed &= proveInterpret("phrase.walk.to.xz", new AutomationRequest("walk to 10 -20", false, false), "sem.task.move_to_target", "movement/navigation/move_to_position", Map.of(
-                "target.kind", "location",
-                "target.x", 10.0,
-                "target.z", -20.0
-        ));
-        passed &= proveInterpret("phrase.walk.to.live.negative.xyz", new AutomationRequest("walk to 850 -60 -830", false, false), "sem.task.move_to_target", "movement/navigation/move_to_position", Map.of(
-                "target.kind", "location",
-                "target.x", 850.0,
-                "target.y", -60.0,
-                "target.z", -830.0
-        ));
-        passed &= proveInterpret("phrase.walk.bare.negative.xz", new AutomationRequest("walk 850 -830", false, false), "sem.task.move_to_target", "movement/navigation/move_to_position", Map.of(
-                "target.kind", "location",
-                "target.x", 850.0,
-                "target.z", -830.0
-        ));
-        passed &= proveInterpret("phrase.walk.forward", new AutomationRequest("walk forward 5 blocks", false, false), "sem.task.move_relative", "movement/navigation/move_relative", Map.of(
+        passed &= proveInterpret("task.walk.forward", new AutomationRequest(
+                "movement/navigation/move_relative.ktl direction.id=forward count.value=5 unit.id=blocks",
+                true,
+                true
+        ), "sem.task.move_relative", "movement/navigation/move_relative", Map.of(
                 "direction.id", "forward",
                 "count.value", 5
         ));
-        passed &= proveInterpret("phrase.walk.amount.defaults.forward", new AutomationRequest("walk 5 blocks", false, false), "sem.task.move_relative", "movement/navigation/move_relative", Map.of(
-                "direction.id", "forward",
-                "count.value", 5
-        ));
-        passed &= proveInterpret("phrase.walk.left", new AutomationRequest("walk left", false, false), "sem.task.move_relative", "movement/navigation/move_relative", Map.of(
-                "direction.id", "left"
-        ));
-        passed &= proveInterpret("phrase.stop", new AutomationRequest("stop", false, false), "sem.task.stop_movement", "movement/core/movement_stop", Map.of());
-        passed &= proveInterpret("phrase.stop.success.command", new AutomationRequest("stop on success /say done", false, false), "sem.task.stop_movement", "movement/core/movement_stop", Map.of(
-                "completion.success.command", "say done"
-        ));
-        passed &= proveInterpret("phrase.stop.failure.command", new AutomationRequest("stop on fail /kill @s", false, false), "sem.task.stop_movement", "movement/core/movement_stop", Map.of(
-                "completion.failure.command", "kill @s"
-        ));
-        passed &= proveInterpret("phrase.stop.both.commands", new AutomationRequest("stop on success /say done on failure /kill @s", false, false), "sem.task.stop_movement", "movement/core/movement_stop", Map.of(
-                "completion.success.command", "say done",
-                "completion.failure.command", "kill @s"
-        ));
-        passed &= proveInterpret("phrase.jump", new AutomationRequest("jump", false, false), "sem.task.jump_once", "movement/core/movement_jump_once", Map.of());
-        passed &= proveInterpret("phrase.open.chest", new AutomationRequest("open nearest chest", false, false), "sem.task.open_target", "movement/interact/move_to_open_container", Map.of(
-                "target.id", "minecraft:chest"
-        ));
-        passed &= proveInterpret("phrase.follow.zombie", new AutomationRequest("follow nearest zombie", false, false), "sem.task.follow_target", "movement/follow/follow_entity", Map.of(
+        passed &= proveInterpret("task.jump", new AutomationRequest(
+                "movement/core/movement_jump_once.ktl",
+                true,
+                true
+        ), "sem.task.jump_once", "movement/core/movement_jump_once", Map.of());
+        passed &= proveInterpret("task.follow.zombie", new AutomationRequest(
+                "movement/follow/follow_entity.ktl target.id=minecraft:zombie target.selector=nearest",
+                true,
+                true
+        ), "sem.task.follow_target", "movement/follow/follow_entity", Map.of(
                 "target.id", "minecraft:zombie",
                 "target.selector", "nearest"
         ));
-        passed &= proveInterpret("phrase.attack.zombie", new AutomationRequest("attack nearest zombie", false, false), "sem.task.attack_target", "movement/interact/move_to_attack_entity", Map.of(
-                "target.id", "minecraft:zombie",
-                "target.selector", "nearest"
-        ));
-        passed &= proveInterpret("phrase.kill.zombie", new AutomationRequest("kill nearest zombie", false, false), "sem.task.kill_target", "combat/core/kill_entity_until_count", Map.of(
-                "target.id", "minecraft:zombie",
-                "target.selector", "nearest",
-                "count.value", 1
-        ));
-        passed &= proveInterpret("phrase.break.oak.log", new AutomationRequest("break oak log", false, false), "sem.task.break_target", "movement/interact/move_to_break_block", Map.of(
-                "target.id", "minecraft:oak_log"
-        ));
-        passed &= proveInterpret("phrase.mine.iron.ore", new AutomationRequest("mine 3 iron ore", false, false), "sem.task.mine_block_count", "blocks/core/mine_block_until_count", Map.of(
-                "target.id", "minecraft:iron_ore",
-                "count.value", 3
-        ));
-        passed &= proveInterpret("phrase.eat.apples", new AutomationRequest("eat 2 apples", false, false), "sem.task.consume_item", "survival/core/eat_item_until_count", Map.of(
-                "item.id", "minecraft:apple",
-                "count.value", 2
-        ));
-        passed &= proveInterpret("phrase.take.sugar.cane.chest", new AutomationRequest("take sugar cane from nearest chest", false, false), "sem.task.take_item_from_container", "container/core/take_item_from_container", Map.of(
-                "item.id", "minecraft:sugar_cane",
-                "target.id", "minecraft:chest",
-                "target.selector", "nearest"
-        ));
-        passed &= proveInterpret("phrase.sequence", new AutomationRequest("jump then stop", false, false), "sem.task.sequence", "movement/core/sequence_prompt", Map.of());
-        passed &= proveInterpret("direct.run.template", new AutomationRequest("movement/navigation/move_relative.ktl direction.id=forward count.value=3 unit.id=blocks", true, true), "sem.task.move_relative", "movement/navigation/move_relative", Map.of(
-                "direction.id", "forward",
-                "count.value", 3
-        ));
+        passed &= proveRejectedLanguagePrompt();
+        passed &= proveRetiredPromptTemplate();
+        passed &= proveV2LibraryContract();
+        passed &= proveComposedSkillFamilies();
         passed &= proveCacheRoundTrip();
         passed &= proveFeedbackRegistryFlow();
         AutomationReporter.done("[done]", "proof.suite = " + (passed ? "success" : "failed"));
         return passed;
+    }
+
+    private static boolean proveV2LibraryContract() {
+        try {
+            KtlCompilerService.CompiledAssets assets = KtlCompilerService.getInstance().assets();
+            if (assets.templates.size() < 110) {
+                AutomationReporter.fail("[fail]", "ktl.v2 = expected at least 110 task templates, found " + assets.templates.size());
+                return false;
+            }
+            for (KtlCompilerService.CompiledTaskTemplate template : assets.templates.values()) {
+                KtlCompilerService.CompiledTemplateMetadata metadata = assets.templateMetadata.get(template.templateId());
+                if (metadata == null) {
+                    AutomationReporter.fail("[fail]", "ktl.v2 = missing metadata for " + template.templateId());
+                    return false;
+                }
+                if (metadata.timeoutTicks() <= 0 || metadata.visibility().isBlank()) {
+                    AutomationReporter.fail("[fail]", "ktl.v2 = incomplete execution contract for " + template.templateId());
+                    return false;
+                }
+                if (metadata.modelCallable() && !"public".equals(metadata.visibility())) {
+                    AutomationReporter.fail("[fail]", "ktl.v2 = non-public model skill " + template.templateId());
+                    return false;
+                }
+                if (!metadata.recoveryTask().isBlank()) {
+                    String recovery = metadata.recoveryTask().endsWith(".ktl")
+                            ? metadata.recoveryTask().substring(0, metadata.recoveryTask().length() - 4)
+                            : metadata.recoveryTask();
+                    if (!assets.templates.containsKey(recovery)) {
+                        AutomationReporter.fail("[fail]", "ktl.v2 = missing recovery task " + recovery);
+                        return false;
+                    }
+                }
+            }
+            AutomationReporter.done("[done]", "ktl.v2 = contracts " + assets.templates.size());
+            return true;
+        } catch (RuntimeException exception) {
+            AutomationReporter.fail("[fail]", "ktl.v2 threw " + messageOf(exception));
+            return false;
+        }
+    }
+
+    private static boolean proveComposedSkillFamilies() {
+        KtlCompilerService.CompiledAssets assets = KtlCompilerService.getInstance().assets();
+        Map<String, String> requiredDelegates = Map.of(
+                "farming/core/harvest_and_replant", "farming/core/harvest_replant_iteration",
+                "interaction/core/use_item_on_block", "inventory/core/require_item",
+                "goals/core/attack_target", "combat/core/attack_entity_until_dead",
+                "inventory/core/drop_item", "inventory/core/require_item"
+        );
+        for (Map.Entry<String, String> requirement : requiredDelegates.entrySet()) {
+            KtlCompilerService.CompiledTaskTemplate template = assets.templates.get(requirement.getKey());
+            if (template == null) {
+                AutomationReporter.fail("[fail]", "ktl.composition = missing " + requirement.getKey());
+                return false;
+            }
+            boolean delegates = template.steps().stream()
+                    .anyMatch(step -> "delegate".equals(step.type())
+                            && step.delegate().startsWith(requirement.getValue())
+                            || "branch".equals(step.type())
+                            && (step.thenInput().startsWith(requirement.getValue())
+                            || step.elseInput().startsWith(requirement.getValue())));
+            if (!delegates) {
+                AutomationReporter.fail("[fail]", "ktl.composition = " + requirement.getKey()
+                        + " does not delegate " + requirement.getValue());
+                return false;
+            }
+        }
+        for (String internal : List.of(
+                "movement/recovery/recover_stuck",
+                "farming/core/harvest_replant_iteration",
+                "inventory/core/require_item"
+        )) {
+            KtlCompilerService.CompiledTemplateMetadata metadata = assets.templateMetadata.get(internal);
+            if (metadata == null || metadata.modelCallable() || "public".equals(metadata.visibility())) {
+                AutomationReporter.fail("[fail]", "ktl.composition = internal task exposed " + internal);
+                return false;
+            }
+        }
+        AutomationReporter.done("[done]", "ktl.composition = composed families verified");
+        return true;
+    }
+
+    private static boolean proveRejectedLanguagePrompt() {
+        try {
+            KtlCompilerService.getInstance().interpret(new AutomationRequest("walk 5 blocks then jump", false, false));
+            AutomationReporter.fail("[fail]", "language.prompt = unexpectedly accepted");
+            return false;
+        } catch (IllegalArgumentException expected) {
+            boolean passed = expected.getMessage() != null && expected.getMessage().contains("Automation Mode");
+            AutomationReporter.done("[done]", "language.prompt = rejected by task-only compiler");
+            return passed;
+        }
+    }
+
+    private static boolean proveRetiredPromptTemplate() {
+        try {
+            KtlCompilerService.getInstance().interpret(new AutomationRequest(
+                    "movement/core/sequence_prompt.ktl",
+                    true,
+                    true
+            ));
+            AutomationReporter.fail("[fail]", "language.sequence_template = unexpectedly available");
+            return false;
+        } catch (RuntimeException expected) {
+            AutomationReporter.done("[done]", "language.sequence_template = retired");
+            return true;
+        }
     }
 
     public static boolean runCacheOnly() {
@@ -134,16 +179,6 @@ public final class AutomationProofSuite {
         AutomationReporter.done("[done]", "proof.cache = " + (passed ? "success" : "failed"));
         return passed;
     }
-
-    private static AutomationRequest withReferenceMemory(String input) {
-        Map<String, Object> remembered = new LinkedHashMap<>();
-        remembered.put("target.kind", "item");
-        remembered.put("target.id", "minecraft:apple");
-        remembered.put("item.id", "minecraft:apple");
-        KtlCompilerService.SessionMemory.put("them", remembered);
-        return new AutomationRequest(input, false, false);
-    }
-
 
     private static boolean proveFeedbackRegistryFlow() {
         try {
@@ -236,24 +271,52 @@ public final class AutomationProofSuite {
         try {
             Files.createDirectories(PROOF_DIR);
             String sourceOne = """
-                    version: 1
-                    kind: lexicon
-                    id: lexicon.proof_cache_probe
-                    entries:
-                      - id: lex.proof_cache_probe
-                        type: action
-                        phrases: [proof cache probe]
-                        maps_to: sem.task.wait_duration
+                    version: 2
+                    kind: task_template
+                    id: template.proof_cache_probe
+                    template_id: validation/proof_cache_probe
+                    semantic_operation: sem.task.jump_once
+                    params: []
+                    metadata:
+                      semantic_operations: [sem.task.jump_once]
+                      target_kinds: []
+                      required_params: []
+                      optional_params: []
+                      tags: [validation]
+                      description: Cache proof
+                      visibility: internal
+                      model_callable: false
+                      resource_locks: []
+                      side_effects: []
+                      timeout_ticks: 100
+                      failure_policy: fail
+                    steps:
+                      - type: return
+                        label: proof_one
                     """;
             String sourceTwo = """
-                    version: 1
-                    kind: lexicon
-                    id: lexicon.proof_cache_probe
-                    entries:
-                      - id: lex.proof_cache_probe
-                        type: action
-                        phrases: [proof cache probe updated]
-                        maps_to: sem.task.wait_duration
+                    version: 2
+                    kind: task_template
+                    id: template.proof_cache_probe
+                    template_id: validation/proof_cache_probe
+                    semantic_operation: sem.task.jump_once
+                    params: []
+                    metadata:
+                      semantic_operations: [sem.task.jump_once]
+                      target_kinds: []
+                      required_params: []
+                      optional_params: []
+                      tags: [validation, updated]
+                      description: Updated cache proof
+                      visibility: internal
+                      model_callable: false
+                      resource_locks: []
+                      side_effects: []
+                      timeout_ticks: 100
+                      failure_policy: fail
+                    steps:
+                      - type: return
+                        label: proof_two
                     """;
 
             Files.writeString(CACHE_PROOF_FILE, sourceOne, StandardCharsets.UTF_8);

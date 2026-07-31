@@ -1,0 +1,28 @@
+version: 2
+kind: task_template
+id: template.look_core_face_position
+template_id: look/core/face_position
+semantic_operation: sem.look.face_position
+params: [target.x, target.y, target.z]
+metadata:
+  semantic_operations: [sem.look.face_position]
+  target_kinds: [location]
+  required_params: [target.x, target.y, target.z]
+  optional_params: []
+  tags: [look, position]
+  description: Turn the player toward an exact world position
+  visibility: public
+  model_callable: true
+  resource_locks: [look, input]
+  side_effects: [changes_orientation]
+  timeout_ticks: 200
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.look.face_position
+    params:
+      target.x: ${target.x}
+      target.y: ${target.y}
+      target.z: ${target.z}
+  - type: return
+    label: done

@@ -2,7 +2,7 @@ package com.spirit.koil.api.chat;
 
 import com.spirit.client.gui.main.KoilMessageToast;
 import com.spirit.koil.api.automation.AutomationPresenceNetwork;
-import com.spirit.koil.api.automation.AutomationRemoteRunNetwork;
+import com.spirit.koil.api.model.presence.ModelPresenceNetwork;
 import com.spirit.koil.api.stats.global.GlobalActivityApi;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -41,6 +41,6 @@ public final class RichChatPrivacyNoticeClient {
     private static boolean isLikelyKoilServer() {
         return ClientPlayNetworking.canSend(GlobalActivityApi.REQUEST_CHANNEL)
                 || ClientPlayNetworking.canSend(AutomationPresenceNetwork.STATE_SYNC_PACKET)
-                || ClientPlayNetworking.canSend(AutomationRemoteRunNetwork.RUN_AS_PACKET);
+                || ClientPlayNetworking.canSend(ModelPresenceNetwork.STATE_SYNC_V1);
     }
 }

@@ -39,6 +39,7 @@
     "client.gui.MixinChatInputSuggestorSuggestionWindow",
     "client.gui.MixinChatScreen",
     "client.gui.MixinInGameHud",
+    "client.gui.MixinPlayerListHud",
     "client.gui.MixinScreen",
     "client.gui.MixinTextFieldWidget",
     "client.gui.accessor.ChatScreenAccessor",

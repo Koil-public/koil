@@ -147,6 +147,68 @@ tasks.register('runContentRegistryProof', JavaExec) {
 	args layout.buildDirectory.dir('content-registry-proof').get().asFile.absolutePath
 }
 
+tasks.register('runDevelopmentCommandBridgeProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.development.command.DevelopmentCommandBridgeProof'
+	args layout.buildDirectory.dir('development-command-bridge-proof').get().asFile.absolutePath
+}
+
+tasks.register('runLocalModelFoundationProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.testing.LocalModelFoundationProof'
+}
+
+tasks.register('runColibriProviderProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.provider.colibri.ColibriProviderProof'
+}
+
+tasks.register('runLocalModelCatalogProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogProof'
+}
+
+tasks.register('runLocalModelCatalogChatRowProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.chat.LocalModelCatalogChatRowProof'
+}
+
+tasks.register('runLocalModelCatalogRemoteProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogRemoteProof'
+}
+
+tasks.register('runLlamaCppProviderProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.provider.llamacpp.LlamaCppProviderProof'
+}
+
+tasks.register('runAutomationCapabilityProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.automation.capability.AutomationCapabilityProof'
+}
+
+tasks.register('runModelPresencePlanningProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.testing.ModelPresencePlanningProof'
+}
+
+tasks.register('runKtlLibraryProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.automation.AutomationProofSuite'
+	workingDir = file('run')
+}
+
 tasks.register('generateContentRegistryTestDatapack', JavaExec) {
 	dependsOn classes
 	classpath = sourceSets.main.runtimeClasspath

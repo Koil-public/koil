@@ -2,7 +2,6 @@ package com.spirit.mixin.client.gui.revamp;
 
 import com.spirit.koil.api.design.DesignLoader;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.SplashOverlay;
@@ -38,15 +37,13 @@ public abstract class MixinSplashOverlay {
     @Inject(method = "<init>*", at = @At("RETURN"))
     private void onInit(CallbackInfo ci) {
         if (JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
-            ClientTickEvents.END_CLIENT_TICK.register(client -> {
-                if (!titleSet && client != null && client.getWindow() != null) {
-                    Window window = client.getWindow();
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client != null) {
+                Window window = client.getWindow();
+                if (!titleSet && window != null) {
                     window.setTitle("Loading...");
                     titleSet = true;
                 }
-            });
-            MinecraftClient client = MinecraftClient.getInstance();
-            if (client != null) {
                 this.lastUpdateTime = System.currentTimeMillis();
                 this.dotCount = 0;
             }
@@ -109,10 +106,6 @@ public abstract class MixinSplashOverlay {
             int barY = height - 5;
             int barHeight = 5;
             context.fill(barX, barY, barX + filledWidth, barY + barHeight, 255, new Color(uiColorSplashLoadingBar, true).getRGB());
-
-            if (progress >= 1.0f) {
-                this.client.setOverlay(null);
-            }
 
             ci.cancel();
         }

@@ -1,0 +1,18 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.interaction
+operations:
+  - id: sem.interaction.use_item_on_block
+    intent: use_item_on_block
+    target_kinds: [block]
+    preferred_templates: [interaction/core/use_item_on_block]
+
+  - id: sem.interaction.interact_entity
+    intent: interact_entity
+    target_kinds: [entity, player]
+    preferred_templates: [interaction/core/interact_entity]
+
+  - id: sem.interaction.use_hand_item
+    intent: use_hand_item
+    target_kinds: [item]
+    preferred_templates: [interaction/core/use_hand_item]

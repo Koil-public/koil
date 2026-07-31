@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.inventory_core_count_item
+template_id: inventory/core/count_item
+semantic_operation: sem.inventory.inspect
+params: [item.id, result.key]
+metadata:
+  semantic_operations: [sem.inventory.inspect]
+  target_kinds: [item]
+  required_params: [item.id]
+  optional_params: [result.key]
+  tags: [inventory, inspect]
+  description: Count an item in the player inventory
+  visibility: public
+  model_callable: true
+  resource_locks: [inventory]
+  side_effects: []
+  timeout_ticks: 100
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.inventory.count_item
+    params:
+      item.id: ${item.id}
+      result.key: ${result.key}
+  - type: return
+    label: done

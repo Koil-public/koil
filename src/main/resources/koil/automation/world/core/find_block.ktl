@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.world_core_find_block
+template_id: world/core/find_block
+semantic_operation: sem.world.find_block
+params: [target.id, radius]
+metadata:
+  semantic_operations: [sem.world.find_block]
+  target_kinds: [block]
+  required_params: [target.id]
+  optional_params: [radius]
+  tags: [world, scan, block]
+  description: Find the nearest matching block in the bounded scan radius
+  visibility: public
+  model_callable: true
+  resource_locks: [world]
+  side_effects: []
+  timeout_ticks: 300
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.world.scan_blocks
+    params:
+      target.id: ${target.id}
+      radius: ${radius}
+  - type: return
+    label: done

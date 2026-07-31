@@ -1,6 +1,7 @@
 package com.spirit.mixin.client.render;
 
-import com.spirit.koil.api.automation.cli.AutomationPresenceState;
+import com.spirit.koil.api.model.presence.ModelPresenceLineGeometry;
+import com.spirit.koil.api.model.presence.ModelPresenceState;
 import net.minecraft.client.render.entity.EntityRenderer;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
@@ -27,7 +28,9 @@ public abstract class MixinEntityRenderer<T extends Entity> {
 
     @Inject(method = "renderLabelIfPresent", at = @At("TAIL"))
     private void koil$renderAutomationUnderline(T entity, Text text, MatrixStack matrices, VertexConsumerProvider vertexConsumers, int light, CallbackInfo ci) {
-        if (!(entity instanceof PlayerEntity player) || !AutomationPresenceState.automationModeFor(player) || text == null) {
+        if (!(entity instanceof PlayerEntity player)
+                || !ModelPresenceState.visibleFor(player.getUuid())
+                || text == null) {
             return;
         }
         double distance = this.dispatcher.getSquaredDistanceToCamera(entity);
@@ -36,21 +39,34 @@ public abstract class MixinEntityRenderer<T extends Entity> {
         }
 
         TextRenderer textRenderer = getTextRenderer();
-        int color = AutomationPresenceState.colorFor(player);
+        int color = ModelPresenceState.colorFor(player);
         int textWidth = textRenderer.getWidth(text);
         if (textWidth <= 0) {
             return;
         }
         int x = -textWidth / 2;
-        int top = textRenderer.fontHeight;
-        int bottom = top + 1;
+        ModelPresenceLineGeometry.Bounds line = ModelPresenceLineGeometry.beneathName(
+                x,
+                0,
+                textWidth,
+                textRenderer.fontHeight
+        );
 
         matrices.push();
         matrices.translate(0.0F, entity.getHeight() + 0.5F, 0.0F);
         matrices.multiply(this.dispatcher.getRotation());
         matrices.scale(-0.025F, -0.025F, 0.025F);
         matrices.translate(0.0F, 0.0F, 0.01F);
-        drawUnderlineQuad(matrices.peek().getPositionMatrix(), vertexConsumers.getBuffer(RenderLayer.getTextBackgroundSeeThrough()), x - 1, x + textWidth + 1, top, bottom, color, light);
+        drawUnderlineQuad(
+                matrices.peek().getPositionMatrix(),
+                vertexConsumers.getBuffer(RenderLayer.getTextBackgroundSeeThrough()),
+                line.left(),
+                line.right(),
+                line.top(),
+                line.bottom(),
+                color,
+                light
+        );
         matrices.pop();
     }
 

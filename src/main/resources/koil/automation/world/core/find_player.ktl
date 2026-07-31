@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.world_core_find_player
+template_id: world/core/find_player
+semantic_operation: sem.world.find_player
+params: [player.name, radius]
+metadata:
+  semantic_operations: [sem.world.find_player]
+  target_kinds: [player]
+  required_params: [player.name]
+  optional_params: [radius]
+  tags: [world, scan, player]
+  description: Find a live player by name
+  visibility: public
+  model_callable: true
+  resource_locks: [world]
+  side_effects: []
+  timeout_ticks: 300
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.world.scan_players
+    params:
+      player.name: ${player.name}
+      radius: ${radius}
+  - type: return
+    label: done

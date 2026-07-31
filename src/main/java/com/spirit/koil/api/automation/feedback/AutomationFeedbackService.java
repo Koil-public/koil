@@ -18,6 +18,7 @@ public final class AutomationFeedbackService {
     private static final Path EVENTS = Path.of("koil/automation/feedback/events.jsonl");
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
     private static PendingFlow pending = PendingFlow.empty();
+    private static FeedbackContext lastFeedbackContext = FeedbackContext.empty();
 
     private AutomationFeedbackService() {
     }
@@ -37,6 +38,10 @@ public final class AutomationFeedbackService {
             return true;
         }
         String bodyLower = body.toLowerCase(Locale.ROOT);
+        if (bodyLower.startsWith("note ")) {
+            submitNote(body.substring("note ".length()).trim());
+            return true;
+        }
         if (bodyLower.equals("good")) {
             submitGood();
             return true;
@@ -288,15 +293,82 @@ public final class AutomationFeedbackService {
         try {
             Files.createDirectories(EVENTS.getParent());
             Files.writeString(EVENTS, GSON.toJson(event) + System.lineSeparator(), StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            lastFeedbackContext = new FeedbackContext(
+                    node.taskId(),
+                    node.nodeId(),
+                    node.nodeType(),
+                    node.source(),
+                    failureType.id()
+            );
             AutomationCliViewModel.feedbackRecorded(node.nodeId(), failureType.label());
         } catch (IOException exception) {
             AutomationCliViewModel.feedbackRecorded(node.nodeId(), "failed to store feedback: " + exception.getMessage());
         }
     }
 
+    public static synchronized void submitNote(String note) {
+        String clean = note == null ? "" : note.replace('\r', ' ').replace('\n', ' ')
+                .replaceAll("\\s+", " ").strip();
+        if (clean.isBlank()) {
+            AutomationCliViewModel.feedbackError("feedback note cannot be empty");
+            return;
+        }
+        if (clean.length() > 1_024) {
+            clean = clean.substring(0, 1_024);
+        }
+        AutomationCliSnapshot snapshot = AutomationCliViewModel.snapshot();
+        FeedbackContext context = lastFeedbackContext;
+        String taskId = !context.taskId().isBlank()
+                ? context.taskId()
+                : snapshot == null ? "" : snapshot.sessionId();
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("schema_version", 2);
+        event.put("event_type", "user_note");
+        event.put("timestamp", Instant.now().toString());
+        event.put("task_id", taskId);
+        event.put("node_id", context.nodeId());
+        event.put("node_type", context.nodeType());
+        event.put("source", context.source());
+        event.put("failure_type", context.failureType());
+        event.put("comment", clean);
+        event.put("keywords", feedbackKeywords(clean));
+        try {
+            Files.createDirectories(EVENTS.getParent());
+            Files.writeString(
+                    EVENTS,
+                    GSON.toJson(event) + System.lineSeparator(),
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND
+            );
+            AutomationCliViewModel.feedbackNoteRecorded(clean);
+        } catch (IOException exception) {
+            AutomationCliViewModel.feedbackError("failed to store feedback note: " + exception.getMessage());
+        }
+    }
+
     public static synchronized void cancelPending() {
         pending = PendingFlow.empty();
         AutomationCliViewModel.feedbackCanceled();
+    }
+
+    private static List<String> feedbackKeywords(String text) {
+        Set<String> stopWords = Set.of(
+                "a", "an", "and", "are", "as", "at", "be", "but", "by", "for",
+                "from", "had", "has", "have", "i", "in", "is", "it", "of", "on",
+                "or", "that", "the", "this", "to", "was", "were", "with"
+        );
+        LinkedHashSet<String> keywords = new LinkedHashSet<>();
+        for (String token : text.toLowerCase(Locale.ROOT).split("[^a-z0-9_.-]+")) {
+            if (token.length() < 2 || stopWords.contains(token)) {
+                continue;
+            }
+            keywords.add(token);
+            if (keywords.size() >= 16) {
+                break;
+            }
+        }
+        return List.copyOf(keywords);
     }
 
     public static Path eventsPath() {
@@ -477,6 +549,18 @@ public final class AutomationFeedbackService {
 
         private static PendingFlow empty() {
             return new PendingFlow("", List.of(), "", null, List.of());
+        }
+    }
+
+    private record FeedbackContext(
+            String taskId,
+            String nodeId,
+            String nodeType,
+            String source,
+            String failureType
+    ) {
+        private static FeedbackContext empty() {
+            return new FeedbackContext("", "", "", "", "");
         }
     }
 }

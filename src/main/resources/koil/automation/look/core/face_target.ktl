@@ -1,0 +1,33 @@
+version: 2
+kind: task_template
+id: template.look_core_face_target
+template_id: look/core/face_target
+semantic_operation: sem.look.face_target
+params: [target.id, target.kind, target.selector, radius, look.horizontal_only]
+metadata:
+  semantic_operations: [sem.look.face_target]
+  target_kinds: [block, entity, player]
+  required_params: [target.id, target.kind]
+  optional_params: [target.selector, radius, look.horizontal_only]
+  tags: [look, target]
+  description: Resolve a live target and turn the player toward it
+  visibility: public
+  model_callable: true
+  resource_locks: [look, input, world]
+  side_effects: [changes_orientation]
+  timeout_ticks: 300
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.world.scan_target
+    params:
+      target.id: ${target.id}
+      target.kind: ${target.kind}
+      target.selector: ${target.selector}
+      radius: ${radius}
+  - type: run_primitive
+    action: cap.look.face_target
+    params:
+      horizontal.only: ${look.horizontal_only}
+  - type: return
+    label: done

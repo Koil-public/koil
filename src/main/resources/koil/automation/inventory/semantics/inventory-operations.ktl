@@ -1,0 +1,28 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.inventory
+operations:
+  - id: sem.inventory.inspect
+    intent: inspect_inventory
+    target_kinds: [item]
+    preferred_templates: [inventory/core/count_item]
+
+  - id: sem.inventory.require
+    intent: require_inventory_item
+    target_kinds: [item]
+    preferred_templates: [inventory/core/require_item]
+
+  - id: sem.inventory.equip
+    intent: equip_item
+    target_kinds: [item]
+    preferred_templates: [inventory/core/equip_item]
+
+  - id: sem.inventory.drop
+    intent: drop_item
+    target_kinds: [item]
+    preferred_templates: [inventory/core/drop_item]
+
+  - id: sem.inventory.open
+    intent: open_inventory
+    target_kinds: []
+    preferred_templates: [inventory/core/open_inventory]

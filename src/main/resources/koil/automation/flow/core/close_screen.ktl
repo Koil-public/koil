@@ -1,0 +1,26 @@
+version: 2
+kind: task_template
+id: template.flow_core_close_screen
+template_id: flow/core/close_screen
+semantic_operation: sem.task.close_screen
+params: []
+metadata:
+  semantic_operations: [sem.task.close_screen]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [flow, ui]
+  description: Close Screen
+  visibility: internal
+  model_callable: false
+  resource_locks: [input, screen]
+  side_effects: [changes_input_or_screen]
+  timeout_ticks: 600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.interaction.close_screen
+    params: {}
+  - type: return
+    label: done
+

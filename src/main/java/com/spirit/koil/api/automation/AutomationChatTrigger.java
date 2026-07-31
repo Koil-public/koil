@@ -2,9 +2,11 @@ package com.spirit.koil.api.automation;
 
 import com.spirit.koil.api.automation.cli.AutomationChatHudState;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
+import com.spirit.koil.api.model.LocalModelService;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 
@@ -17,7 +19,7 @@ public final class AutomationChatTrigger {
     }
 
     public static void maybeOpenPrompt(Text message) {
-        if (!AutomationModeController.isAutomationMode() && !AutomationSettings.allowChatUsernameTrigger()) {
+        if (!AutomationModeController.isAutomationMode()) {
             return;
         }
         MinecraftClient client = MinecraftClient.getInstance();
@@ -28,6 +30,9 @@ public final class AutomationChatTrigger {
         String username = strip(client.player.getName().getString());
         String payload = chatPayload(clean);
         String actor = chatActor(clean);
+        if (actor.isBlank()) {
+            return;
+        }
         UsernameCommand command = commandForUsername(payload, username);
         if (command == null) {
             return;
@@ -39,10 +44,9 @@ public final class AutomationChatTrigger {
         }
         lastTriggerNanos = now;
         lastMessage = triggerKey;
-        AutomationModeController.setAutomationMode(true);
         if (!command.prompt().isBlank()) {
             AutomationReporter.pipeline("[mode]", "automation chat command from " + (actor.isBlank() ? "chat" : actor));
-            AutomationRouter.handleInput(new AutomationRequest(command.prompt(), false, false), actor);
+            LocalModelService.automationPromptFromObservedChat(command.prompt());
             return;
         }
         AutomationCliViewModel.beginSession("/automate chat", actor);
@@ -50,6 +54,11 @@ public final class AutomationChatTrigger {
         MutableText prompt = AutomationCliViewModel.promptLine("type an automation prompt");
         AutomationChatHudState.showHeader(header, prompt);
         AutomationReporter.pipeline("[mode]", "automation chat prompt opened by username trigger");
+        client.execute(() -> {
+            if (!(client.currentScreen instanceof ChatScreen)) {
+                client.setScreen(new ChatScreen(""));
+            }
+        });
     }
 
     private static String strip(String text) {

@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.world_core_find_entity
+template_id: world/core/find_entity
+semantic_operation: sem.world.find_entity
+params: [target.id, radius]
+metadata:
+  semantic_operations: [sem.world.find_entity]
+  target_kinds: [entity]
+  required_params: [target.id]
+  optional_params: [radius]
+  tags: [world, scan, entity]
+  description: Find the nearest live matching entity
+  visibility: public
+  model_callable: true
+  resource_locks: [world]
+  side_effects: []
+  timeout_ticks: 300
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.world.scan_entities
+    params:
+      target.id: ${target.id}
+      radius: ${radius}
+  - type: return
+    label: done
