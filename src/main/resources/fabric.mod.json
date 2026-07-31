@@ -15,7 +15,6 @@
     "sources": "https://github.com/Koil-public/koil",
     "issues": "https://discord.com/invite/WMSXCtWND7"
   },
-
   "custom": {
     "modmenu": {
       "links": {
@@ -24,7 +23,6 @@
       "update_checker": true
     }
   },
-
   "license": "mit",
   "icon": "assets/icon.png",
   "environment": "*",
@@ -42,6 +40,7 @@
       "com.spirit.koil.api.registry.integration.ContentReiVisibilityPlugin"
     ],
     "preLaunch": [
+      "com.spirit.Prelaunch"
     ]
   },
   "mixins": [
