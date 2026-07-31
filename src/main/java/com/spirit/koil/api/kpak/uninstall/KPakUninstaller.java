@@ -17,11 +17,7 @@ public class KPakUninstaller {
             .getGameDir()
             .normalize();
 
-
-    public static void uninstall(
-        String packageId
-    ) throws Exception {
-
+    public static void uninstall(String packageId) throws Exception {
         Optional<KPakRegistryEntry> optional =
             KPakRegistry.get(packageId);
 
@@ -31,8 +27,7 @@ public class KPakUninstaller {
             );
         }
 
-        KPakRegistryEntry entry =
-            optional.get();
+        KPakRegistryEntry entry = optional.get();
 
         Main.PKG_SUBLOGGER.logI(
             "Package Uninstaller",
@@ -56,13 +51,8 @@ public class KPakUninstaller {
             Files.deleteIfExists(target);
         }
 
-        KPakBackupManager.restore(
-            packageId
-        );
-
-        KPakRegistry.remove(
-            packageId
-        );
+        KPakBackupManager.restore(packageId);
+        KPakRegistry.remove(packageId);
 
         Main.PKG_SUBLOGGER.logI(
             "Package Uninstaller",

@@ -10,16 +10,9 @@ public final class KPakTrustStore {
     private static final Map<String, String> KEYS =
         new ConcurrentHashMap<>();
 
+    private KPakTrustStore() {}
 
-    private KPakTrustStore() {
-    }
-
-
-    public static void register(
-        String authorId,
-        String publicKey
-    ) {
-
+    public static void register(String authorId, String publicKey) {
         KEYS.put(
             authorId,
             publicKey
@@ -27,15 +20,9 @@ public final class KPakTrustStore {
     }
 
 
-    public static String getKey(
-        String authorId
-    ) throws KPakException {
-
-        String key =
-            KEYS.get(authorId);
-
+    public static String getKey(String authorId) throws KPakException {
+        String key = KEYS.get(authorId);
         if (key == null) {
-
             throw new KPakException(
                 "Unknown package author: "
                     + authorId
@@ -45,21 +32,14 @@ public final class KPakTrustStore {
         return key;
     }
 
-
-    public static boolean exists(
-        String authorId
-    ) {
-
+    public static boolean exists(String authorId) {
         return KEYS.containsKey(
             authorId
         );
     }
 
 
-    public static void remove(
-        String authorId
-    ) {
-
+    public static void remove(String authorId) {
         KEYS.remove(
             authorId
         );

@@ -16,14 +16,12 @@ public class KPakZipValidator {
 
 
     public static void validate(ZipFile zip) throws IOException {
-
         long fileCount = 0;
         long totalSize = 0;
 
         var entries = zip.entries();
 
         while (entries.hasMoreElements()) {
-
             ZipEntry entry = entries.nextElement();
 
             if (entry.isDirectory()) {
