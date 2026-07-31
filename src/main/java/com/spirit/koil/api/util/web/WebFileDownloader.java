@@ -196,6 +196,54 @@ public class WebFileDownloader {
         }
     }
 
+    public static Path downloadPackage(String urlString, Path destination) throws IOException {
+        if (!DeviceInfoManager.hasInternetAccess()) {
+            throw new IOException("No internet connection");
+        }
+
+        SUBLOGGER.logI("File-Management thread", "Downloading package: " + urlString);
+
+        Files.createDirectories(destination.getParent());
+
+        URLConnection connection = new URL(urlString).openConnection();
+
+        try (BufferedInputStream in = new BufferedInputStream(connection.getInputStream());
+            FileOutputStream out = new FileOutputStream(destination.toFile())) {
+
+            byte[] buffer = new byte[65536];
+            int read;
+
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+        }
+
+        SUBLOGGER.logI("File-Management thread", "Package downloaded: " + destination);
+
+        return destination;
+    }
+
+    public static String downloadText(String urlString) throws IOException {
+        if (!DeviceInfoManager.hasInternetAccess()) {
+            throw new IOException("No internet connection");
+        }
+
+        URLConnection connection = new URL(urlString).openConnection();
+
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(connection.getInputStream())
+        )) {
+            StringBuilder builder = new StringBuilder();
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                builder.append(line);
+            }
+
+            return builder.toString();
+        }
+    }
+
     private static int bufferSize(int mbValue) {
         return switch (mbValue) {
             case 1 -> 1024;
