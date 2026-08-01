@@ -27,20 +27,20 @@ public class FirstLaunchTermsScreen extends Screen {
     private static final int BUTTON_HEIGHT = 20;
     private static final int NAVIGATION_TOP = HEADER_HEIGHT + 38;
     private static final List<RemoteFile> BOOTSTRAP_FILES = List.of(
-            new RemoteFile("config.json", "runtime configuration", "./koil/sys/config.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/config.json"),
-            new RemoteFile("sys.json", "system metadata", "./koil/sys/sys.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json"),
-            new RemoteFile("koil.json", "Koil metadata", "Koil runtime storage", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/koil.json"),
-            new RemoteFile("key.json", "asset/update index", "./koil/sys/key.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/key.json"),
-            new RemoteFile("catcher.json", "asset/update index", "./koil/sys/catcher.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/catcher.json"),
-            new RemoteFile("design.json", "default UI color and layout data", "./koil/sys/design", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/design.json"),
-            new RemoteFile("data.json", "runtime data", "Koil runtime storage", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data.json"),
-            new RemoteFile("music.json", "design music catalog", "./koil/sys/design", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/music.json"),
-            new RemoteFile("background.json", "design background catalog", "./koil/sys/design", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/background.json"),
-            new RemoteFile("help_book.json", "in-game help content", "./koil/wiki/help_book.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/wiki/help_book.json"),
-            new RemoteFile("membership.json", "funding display metadata", "./koil/store/membership.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/store/membership.json"),
-            new RemoteFile("validDigits.json", "package validation data", "./koil/auth/validDigits.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json"),
-            new RemoteFile("validSerial.json", "package validation data", "./koil/auth/validSerial.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json"),
-            new RemoteFile("verifiedAuthors.json", "package author validation data", "./koil/auth/verifiedAuthors.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json")
+        new RemoteFile("config.json", "runtime configuration", "./koil/sys/config.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/config.json"),
+        new RemoteFile("sys.json", "system metadata", "./koil/sys/sys.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json"),
+        new RemoteFile("koil.json", "Koil metadata", "Koil runtime storage", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/koil.json"),
+        new RemoteFile("key.json", "asset/update index", "./koil/sys/key.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/key.json"),
+        new RemoteFile("catcher.json", "asset/update index", "./koil/sys/catcher.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/catcher.json"),
+        new RemoteFile("design.json", "default UI color and layout data", "./koil/sys/design", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/design.json"),
+        new RemoteFile("data.json", "runtime data", "Koil runtime storage", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data.json"),
+        new RemoteFile("music.json", "design music catalog", "./koil/sys/design", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/music.json"),
+        new RemoteFile("background.json", "design background catalog", "./koil/sys/design", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/background.json"),
+        new RemoteFile("help_book.json", "in-game help content", "./koil/wiki/help_book.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/wiki/help_book.json"),
+        new RemoteFile("membership.json", "funding display metadata", "./koil/store/membership.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/store/membership.json"),
+        new RemoteFile("validDigits.json", "package validation data", "./koil/auth/validDigits.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json"),
+        new RemoteFile("validSerial.json", "package validation data", "./koil/auth/validSerial.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json"),
+        new RemoteFile("verifiedAuthors.json", "package author validation data", "./koil/auth/verifiedAuthors.json", "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json")
     );
 
     private Step step = Step.DISCLOSURE;
@@ -64,33 +64,33 @@ public class FirstLaunchTermsScreen extends Screen {
             int buttonY = NAVIGATION_TOP;
             for (DisclosurePage disclosurePage : DisclosurePage.values()) {
                 ButtonWidget button = addDrawableChild(ButtonWidget.builder(Text.literal(disclosurePage.label), value -> selectPage(disclosurePage))
-                        .dimensions(10, buttonY, SIDEBAR_WIDTH - 20, 18)
-                        .build());
+                    .dimensions(10, buttonY, SIDEBAR_WIDTH - 20, 18)
+                    .build());
                 button.active = disclosurePage != page;
                 buttonY += 20;
             }
 
             int footerY = this.height - 32;
             addDrawableChild(ButtonWidget.builder(Text.literal("Exit Game"), value -> declineAndExit())
-                    .dimensions(12, footerY, 88, BUTTON_HEIGHT)
-                    .build());
+                .dimensions(12, footerY, 88, BUTTON_HEIGHT)
+                .build());
             int acceptWidth = Math.min(190, Math.max(132, this.width - 122));
             addDrawableChild(ButtonWidget.builder(Text.literal("Accept and Choose UI"), value -> {
-                        this.step = Step.UI_PREFERENCE;
-                        this.scrollOffset = 0;
-                        rebuildButtons();
-                    })
-                    .dimensions(this.width - acceptWidth - 12, footerY, acceptWidth, BUTTON_HEIGHT)
-                    .build());
+                    this.step = Step.UI_PREFERENCE;
+                    this.scrollOffset = 0;
+                    rebuildButtons();
+                })
+                .dimensions(this.width - acceptWidth - 12, footerY, acceptWidth, BUTTON_HEIGHT)
+                .build());
         } else {
             int footerY = this.height - 32;
             addDrawableChild(ButtonWidget.builder(Text.literal("Back"), value -> {
-                        this.step = Step.DISCLOSURE;
-                        this.scrollOffset = 0;
-                        rebuildButtons();
-                    })
-                    .dimensions(12, footerY, 72, BUTTON_HEIGHT)
-                    .build());
+                    this.step = Step.DISCLOSURE;
+                    this.scrollOffset = 0;
+                    rebuildButtons();
+                })
+                .dimensions(12, footerY, 72, BUTTON_HEIGHT)
+                .build());
 
             int gap = 8;
             int controlsLeft = 92;
@@ -99,11 +99,11 @@ public class FirstLaunchTermsScreen extends Screen {
             int rightX = this.width - buttonWidth - 12;
             int leftX = Math.max(controlsLeft, rightX - buttonWidth - gap);
             addDrawableChild(ButtonWidget.builder(Text.literal("Keep Vanilla UI"), value -> acceptAndExit(false))
-                    .dimensions(leftX, footerY, buttonWidth, BUTTON_HEIGHT)
-                    .build());
+                .dimensions(leftX, footerY, buttonWidth, BUTTON_HEIGHT)
+                .build());
             addDrawableChild(ButtonWidget.builder(Text.literal("Enable Koil UI"), value -> acceptAndExit(true))
-                    .dimensions(rightX, footerY, buttonWidth, BUTTON_HEIGHT)
-                    .build());
+                .dimensions(rightX, footerY, buttonWidth, BUTTON_HEIGHT)
+                .build());
         }
     }
 
@@ -299,14 +299,23 @@ public class FirstLaunchTermsScreen extends Screen {
         int muted = new Color(uiColorHeaderSubTitleText, true).getRGB();
         int accent = new Color(uiColorIDEFileNameText, true).getRGB();
         int border = new Color(uiColorBackgroundBorder, true).getRGB();
-        String[] systems = {"Core Runtime", "Interface & Diagnostics", "Files & Content", "Automation", "Online & Server", "API & Integration"};
+        String[] systems = {
+            "Core Runtime",
+            "Interface & Diagnostics",
+            "Files, Content & Packages",
+            "Intelligence & Models",
+            "Automation & Macros",
+            "Online, Chat & Server",
+            "API & Integration"
+        };
         String[] subsystems = {
-                "startup, bootstrap, lifecycle, config, design reload",
-                "screens, F3, performance, console, media rendering",
-                "explorer, editor, packages, mods, packs, skins",
-                "CLI, planner, resolver, executor, feedback",
-                "HTTP services, Koil channels, snapshots, markets, HUD",
-                "mixins, hooks, client/server registration, public APIs"
+            "startup, prelaunch, bootstrap, lifecycle, config and design reload",
+            "screens, F3, performance, console, rich media and reports",
+            "explorer, editor, KPak, mods, packs, worlds, shaders and skins",
+            "local models, llama.cpp, Deep Thought, tools, voice and durable task state",
+            "KTL, capability registry, planner, executor, approvals, feedback and macros",
+            "HTTP services, remote media, Koil channels, snapshots, markets and HUD",
+            "mixins, hooks, client/server registration, public APIs and compatibility"
         };
         context.getMatrices().push();
         context.getMatrices().translate(x, y + 3, 0);
@@ -318,7 +327,7 @@ public class FirstLaunchTermsScreen extends Screen {
         context.drawBorder(x, hubY, width, 24, withAlpha(uiColorContentStripeLeft, 150));
         context.drawText(this.textRenderer, "Shared Koil runtime", x + 7, hubY + 5, accent, true);
         if (width >= 430) {
-            context.drawText(this.textRenderer, "Minecraft client state + Koil services + instance storage", x + 122, hubY + 5, muted, false);
+            context.drawText(this.textRenderer, "Minecraft state + instance files + local services + optional server channels", x + 122, hubY + 5, muted, false);
         }
 
         int columns = width >= 500 ? 2 : 1;
@@ -406,9 +415,9 @@ public class FirstLaunchTermsScreen extends Screen {
             drawWrapped(context, koilServer, rightX + 7, boxTop + 21, body, false);
         } else {
             String[] lines = {
-                    "Without Koil server  >  client-side tools + normal Minecraft actions",
-                    "With Koil server     >  Koil channels + synced server-owned features",
-                    "Unavailable channel  >  compatible features fall back or remain unavailable"
+                "Without Koil server  >  client-side tools + normal Minecraft actions",
+                "With Koil server     >  Koil channels + synced server-owned features",
+                "Unavailable channel  >  compatible features fall back or remain unavailable"
             };
             int rowY = boxTop;
             for (String line : lines) {
@@ -422,11 +431,11 @@ public class FirstLaunchTermsScreen extends Screen {
     }
 
     private void renderCapabilityChart(DrawContext context, int x, int y, int width, int height) {
-        String[] labels = {"Local files", "Network", "Vanilla UI", "Game control", "System UI"};
-        String[] values = {"write / replace / delete", "HTTPS and server channels", "mixins and screen replacement", "automation can act for player", "dialogs and external windows"};
-        int[] levels = {4, 3, 4, 4, 2};
+        String[] labels = {"Local files", "Network", "Vanilla UI", "Game control", "Models/processes", "System UI"};
+        String[] values = {"read / write / replace / delete", "HTTPS, remote media and server channels", "mixins and screen replacement", "automation can act for player", "downloads and launches local native runtime", "dialogs, clipboard and external windows"};
+        int[] levels = {4, 4, 4, 4, 4, 2};
         int labelWidth = Math.min(104, Math.max(78, width / 4));
-        int valueWidth = Math.min(164, Math.max(92, width / 3));
+        int valueWidth = Math.min(190, Math.max(104, width / 3));
         int chartLeft = x + labelWidth;
         int chartRight = x + width - valueWidth - 8;
         int chartWidth = Math.max(48, chartRight - chartLeft);
@@ -460,8 +469,8 @@ public class FirstLaunchTermsScreen extends Screen {
         if (width >= 470) {
             int gap = 14;
             int boxWidth = (width - gap * 3) / 4;
-            String[] headings = {"Remote source", "Koil request", "Local state", "Visible result"};
-            String[] values = {"GitHub, Modrinth, Mojang, NameMC", "HTTP(S) or Koil network channel", "runtime file, cache, temp file, memory", "screen, install, skin, stats, HUD"};
+            String[] headings = {"Remote or server source", "Koil request", "Local state", "Visible or active result"};
+            String[] values = {"GitHub, Hugging Face, Modrinth, Mojang, media hosts, eeverest.dev or current server", "HTTPS, localhost model API or Koil packet channel", "runtime file, model, cache, temp file, checkpoint or memory", "screen, install, model answer, tool action, skin, stats or HUD"};
             int boxY = y + 22;
             for (int index = 0; index < 4; index++) {
                 int boxX = x + index * (boxWidth + gap);
@@ -478,9 +487,9 @@ public class FirstLaunchTermsScreen extends Screen {
             }
         } else {
             String[] lines = {
-                    "Remote source  >  HTTPS or server channel",
-                    "Koil request   >  parsed memory / local cache / temp file",
-                    "Local state    >  screen, install, skin, stats, or HUD result"
+                "Remote/server source  >  HTTPS, localhost API or Koil channel",
+                "Koil request          >  parsed memory, cache, model file, checkpoint or temp file",
+                "Local state           >  screen, install, answer, tool action, skin, stats or HUD"
             };
             int rowY = y + 22;
             for (String line : lines) {
@@ -490,7 +499,7 @@ public class FirstLaunchTermsScreen extends Screen {
                 rowY += 22;
             }
         }
-        context.drawText(this.textRenderer, "A feature can have more than one path. The source code remains the final authority.", x, y + height - 13, muted, false);
+        context.drawText(this.textRenderer, "Different features use different paths. The exact released code remains the final authority.", x, y + height - 13, muted, false);
     }
 
     private List<LayoutRow> layoutRows(int width) {
@@ -530,10 +539,10 @@ public class FirstLaunchTermsScreen extends Screen {
                     int lineCount = Math.max(first.size(), second.size());
                     rows.add(new LayoutRow(row.kind, row.primary, row.secondary, first, second, lineCount * LINE_HEIGHT + 8));
                 }
-                case SYSTEM_MAP -> rows.add(new LayoutRow(row.kind, row.primary, row.secondary, List.of(), List.of(), width >= 500 ? 222 : 482));
+                case SYSTEM_MAP -> rows.add(new LayoutRow(row.kind, row.primary, row.secondary, List.of(), List.of(), width >= 500 ? 282 : 552));
                 case RISK -> rows.add(new LayoutRow(row.kind, row.primary, row.secondary, List.of(), List.of(), width >= 520 ? 119 : 254));
                 case SERVER -> rows.add(new LayoutRow(row.kind, row.primary, row.secondary, List.of(), List.of(), width >= 470 ? 104 : 118));
-                case CHART -> rows.add(new LayoutRow(row.kind, row.primary, row.secondary, List.of(), List.of(), 111));
+                case CHART -> rows.add(new LayoutRow(row.kind, row.primary, row.secondary, List.of(), List.of(), 128));
                 case FLOW -> rows.add(new LayoutRow(row.kind, row.primary, row.secondary, List.of(), List.of(), width >= 470 ? 92 : 108));
                 case SPACER -> rows.add(new LayoutRow(row.kind, "", "", List.of(), List.of(), 8));
             }
@@ -548,6 +557,7 @@ public class FirstLaunchTermsScreen extends Screen {
         return switch (page) {
             case SYSTEMS -> systemsRows();
             case CAPABILITIES -> capabilitiesRows();
+            case MODELS -> modelRows();
             case DATA -> dataRows();
             case NETWORK -> networkRows();
             case FILES -> fileRows();
@@ -558,217 +568,316 @@ public class FirstLaunchTermsScreen extends Screen {
 
     private List<ContentRow> systemsRows() {
         return List.of(
-                ContentRow.section("How Koil is structured"),
-                ContentRow.text("Koil runs as a group of connected systems inside the Minecraft client. The systems share the current game state, the instance filesystem, Koil runtime services, and supported Minecraft integration points."),
-                ContentRow.systemMap(),
-                ContentRow.section("Main systems and their subsystems"),
-                ContentRow.tableHeader("Main system", "Subsystems demonstrated by the reviewed source"),
-                ContentRow.tableRow("Core Runtime", "startup, first launch, bootstrap downloads, lifecycle, configuration, theme and design reload"),
-                ContentRow.tableRow("Interface & Diagnostics", "screen redesigns, widgets, F3 diagnostics, performance monitoring, console, media and reports"),
-                ContentRow.tableRow("Files & Content", "file explorer/editor, config tools, package manager, mods, resource packs, datapacks, shaders and skins"),
-                ContentRow.tableRow("Automation", "console routing, KTL compiler, planner, resolver, executor, runtime state, proof and feedback"),
-                ContentRow.tableRow("Online & Server", "remote metadata, bootstrap files, skin services, Koil packet channels, snapshots, markets and HUD"),
-                ContentRow.tableRow("API & Integration", "mixins, screen hooks, client/server registration, Java APIs and compatibility adapters"),
-                ContentRow.section("What this means in practice"),
-                ContentRow.bullet("A screen is often only the visible front end. Its work may be performed by file, network, automation, rendering or server subsystems."),
-                ContentRow.bullet("A subsystem can retain local state, caches or generated files after its screen closes."),
-                ContentRow.bullet("Changing the interface preference does not uninstall or sandbox the other Koil systems."),
-                ContentRow.note("Koil should be treated as an instance-management, diagnostics, integration and automation platform rather than a cosmetic-only mod.")
+            ContentRow.section("How Koil is structured"),
+            ContentRow.text("Koil is a research-oriented middleware and operating layer implemented inside Minecraft. It combines client UI, diagnostics, instance management, rich chat, local model inference, automation, server integration, and public APIs. These systems share Minecraft state, the active instance filesystem, local services, downloaded content, and optional Koil server channels."),
+            ContentRow.systemMap(),
+            ContentRow.section("Main systems and current subsystems"),
+            ContentRow.tableHeader("Main system", "Subsystems demonstrated by current executable source"),
+            ContentRow.tableRow("Core Runtime", "prelaunch key generation, first launch, bootstrap downloads, lifecycle, configuration, design reload and command registration"),
+            ContentRow.tableRow("Interface & Diagnostics", "screen redesigns, widgets, F3 diagnostics, performance monitoring, console, rich chat formatting, attachments, media and reports"),
+            ContentRow.tableRow("Files, Content & Packages", "file explorer/editor, config tools, KPak, older package paths, mods, resource packs, datapacks, shaders, worlds and skins"),
+            ContentRow.tableRow("Intelligence & Models", "local model catalog, model/runtime installer, llama.cpp and Colibri providers, conversations, Deep Thought, voice, tool calling and durable task state"),
+            ContentRow.tableRow("Automation & Macros", "KTL compiler, capability registry, model planner, resolver, executor, approvals, feedback, improvement data and macro definitions"),
+            ContentRow.tableRow("Online, Chat & Server", "bootstrap and update data, content APIs, arbitrary HTTP(S) chat media, skins, Koil packets, snapshots, markets, HUD and rich-chat synchronization"),
+            ContentRow.tableRow("API & Integration", "mixins, access widening, client/server registration, Java APIs, other-mod entry points and compatibility adapters"),
+            ContentRow.section("Activation and persistence"),
+            ContentRow.bullet("Some systems initialize automatically during prelaunch or client startup. Others run only when a screen, command, server channel, model, package, media link, or API caller activates them."),
+            ContentRow.bullet("A screen is often only the visible front end. Its work may be performed by filesystem, network, model, automation, rendering, native-process or server subsystems."),
+            ContentRow.bullet("Closing a screen does not necessarily remove files, caches, logs, model downloads, Deep Thought checkpoints, activity history, package backups or generated configuration."),
+            ContentRow.bullet("Choosing Vanilla UI changes presentation where supported. It does not uninstall, disable, permission-bound or sandbox Koil's other systems."),
+            ContentRow.note("Treat Koil as an experimental instance-management, integration, local-intelligence and automation platform, not as a cosmetic-only mod.")
         );
     }
 
     private List<ContentRow> capabilitiesRows() {
         return List.of(
-                ContentRow.section("What people can do with Koil"),
-                ContentRow.text("The following examples are based on executable paths in the reviewed source. They describe what a person using Koil, a task/template author, a package author, a selected remote source, or a compatible Koil server can cause Koil to process or attempt."),
-                ContentRow.risk(),
-                ContentRow.section("From routine use to potentially harmful use"),
-                ContentRow.tableHeader("Impact", "Real examples demonstrated by code"),
-                ContentRow.tableRow("Routine inspection", "view mod and pack metadata, read logs, inspect configs, view files, render F3 diagnostics, search content and look up skins"),
-                ContentRow.tableRow("Customization", "change supported interface presentation, edit typed config values, choose themes, manage skins and open Koil tools"),
-                ContentRow.tableRow("Instance management", "download, create, edit, move, rename, install, disable, replace or delete files, mods, packs and package entries"),
-                ContentRow.tableRow("Player automation", "move, sprint, jump, look, navigate, use items or blocks, mine, attack, interact, select slots and transfer container items"),
-                ContentRow.tableRow("Communication and commands", "send chat messages and submit raw Minecraft commands through the normal client network handler"),
-                ContentRow.tableRow("High-impact package actions", "a reviewed package can declare add, replace and remove operations against paths inside the Minecraft instance"),
-                ContentRow.section("Examples of possible harm"),
-                ContentRow.bullet("An incorrect file or package action could overwrite configs, remove mods or packs, damage an instance, or remove world files located inside the instance root."),
-                ContentRow.bullet("An automation task could walk into danger, consume or move resources through normal game behavior, mine or attack the wrong target, alter containers, expose chat text, or execute a command with the player's existing permission level."),
-                ContentRow.bullet("On multiplayer servers, automation may trigger anti-cheat, violate rules, cause griefing-like effects, lose items, expose the account to moderation, or perform actions the user did not carefully review."),
-                ContentRow.bullet("A malicious or compromised package or remote file source could provide harmful content. Identity metadata and a successful download do not prove that content is safe."),
-                ContentRow.section("Code-backed safeguards that exist"),
-                ContentRow.tableHeader("Safeguard", "What it actually limits"),
-                ContentRow.tableRow("User start and stop controls", "automation is entered through user-facing routes; /automate off or exit cancels execution, clears queued work and releases held inputs"),
-                ContentRow.tableRow("Package review and identity checks", "packages are listed as pending approval, checked against author/serial data, and re-inspected before application"),
-                ContentRow.tableRow("Path containment", "ZIP extraction and declared remove operations normalize targets and block paths that resolve outside the instance root"),
-                ContentRow.tableRow("Optional SHA-256 verification", "package files are hash-checked only when the manifest supplies a nonblank sha256 value"),
-                ContentRow.tableRow("Network bounds", "the activity client checks whether the server channel is available, rate-limits requests, caps row counts and limits decoded string lengths"),
-                ContentRow.tableRow("Protocol-specific receivers", "the reviewed Koil activity receivers decode defined snapshot and market-HUD packet structures; those reviewed paths are not arbitrary automation or code-execution receivers"),
-                ContentRow.tableRow("Minecraft server authority", "commands and interactions still travel through normal Minecraft client/server paths, so server permissions, protections and rejection rules still apply"),
-                ContentRow.section("Important limits of those safeguards"),
-                ContentRow.note("The reviewed code does not create a general sandbox or granular permission system around Koil's local file, network, mixin or automation capabilities."),
-                ContentRow.bullet("Verified author and serial data establish package identity under Koil's scheme; they do not establish that every operation is safe, and the trusted lists are themselves loaded from Koil auth-data files."),
-                ContentRow.bullet("The package root check still permits broad changes anywhere inside the Minecraft instance, including saves, configs and mods."),
-                ContentRow.bullet("A manifest-provided hash detects mismatch against that manifest; it is not an independent trust decision when the manifest and payload come from the same untrusted source."),
-                ContentRow.bullet("The reviewed automation path does not show a separate confirmation prompt before every primitive such as attack, mine, transfer, chat or raw command."),
-                ContentRow.bullet("Server permissions can reject unauthorized commands, but they do not prevent every harmful action that a normally permitted player can perform."),
-                ContentRow.bullet("The reviewed snapshot and HUD receivers are narrowly structured, but that finding does not prove that every receiver in every future build has the same limits."),
-                ContentRow.section("Server support"),
-                ContentRow.server(),
-                ContentRow.text("Koil is not intended to provide identical behavior on every server. It is built to try to operate through client-side integrations and normal Minecraft actions, but it works best when the connected server also runs Koil and exposes the matching Koil channels and server APIs.")
+            ContentRow.section("What people can do with Koil"),
+            ContentRow.text("These examples describe executable capability, not a promise that every feature is complete, safe, permitted on every server, or enabled by default. A user, model, KTL task, macro, package, remote source, compatible server, or another mod using Koil APIs can reach different parts of this capability surface."),
+            ContentRow.risk(),
+            ContentRow.section("From routine use to consequential use"),
+            ContentRow.tableHeader("Impact", "Current examples demonstrated by code"),
+            ContentRow.tableRow("Inspect and diagnose", "view mods, packs, configs, files, logs, registries, worlds, F3 data, performance state, activity rows, model status and hardware guidance"),
+            ContentRow.tableRow("Customize and communicate", "change supported UI and design data, edit typed configs, manage skins, use multiline and formatted chat, render LaTeX, tables, links, images, audio, video, GIFs and files"),
+            ContentRow.tableRow("Manage the instance", "download, create, edit, move, rename, install, disable, replace, restore or delete files, models, mods, packs, KPak content and generated state"),
+            ContentRow.tableRow("Use local intelligence", "download and run local language models, ask questions, retain bounded conversations, perform Deep Thought investigations, inspect workspaces and produce model-selected tool calls"),
+            ContentRow.tableRow("Control game or project state", "move, look, sprint, jump, use, mine, attack, interact, transfer items, send chat or commands, edit bounded workspaces and run registered Gradle validation operations"),
+            ContentRow.tableRow("High-impact modes", "Unrestricted Automation skips Koil approval for registered model capabilities; packages and file tools can replace content; native runtimes and remote media are downloaded and processed"),
+            ContentRow.section("Credible harm and failure modes"),
+            ContentRow.bullet("File, model-tool or package mistakes can overwrite configuration or source, remove content, consume storage, break an instance, expose local text to a model process, or alter files under a writable Koil or development workspace."),
+            ContentRow.bullet("Automation can move into danger, use or transfer the wrong item, mine or attack the wrong target, send unintended chat or commands, lose resources, die, affect other players, or trigger moderation and anti-cheat."),
+            ContentRow.bullet("Language models can misunderstand prompts, hallucinate facts, select an incorrect tool, repeat work, produce malformed arguments, or reach a bounded-round failure. A larger model or confidence estimate is not proof of correctness."),
+            ContentRow.bullet("Remote repositories, package hash services, media URLs, model hosts and compatible servers can be unavailable, compromised, changed, malicious, or inconsistent with the code that originally referenced them."),
+            ContentRow.bullet("Downloaded native runtimes, models, archives, packages and media consume disk and processing resources. Media decoding and local inference can also consume substantial memory, CPU or GPU time."),
+            ContentRow.section("Code-backed safeguards currently present"),
+            ContentRow.tableHeader("Safeguard", "Scope and limitation"),
+            ContentRow.tableRow("User stop and cancellation", "/automate off or exit, /model cancel, model-install cancellation and runtime shutdown can stop pending work; completed game, file or network effects are not generally undone"),
+            ContentRow.tableRow("Model eligibility and bounded rounds", "catalog eligibility, tool support checks, queue limits, repeated-call limits and provider-round budgets reduce unsupported or looping agent work; experimental compact-agent mode can relax normal model eligibility"),
+            ContentRow.tableRow("Contextual model approvals", "mutating workspace and registered project-validation tools request approval in Standard mode; preapproved plans and Unrestricted mode can bypass those prompts"),
+            ContentRow.tableRow("Named workspace containment", "model file tools accept only registered instance, automation and development-project roots, reject absolute traversal and selected sensitive names, limit text sizes and use stale-file hashes"),
+            ContentRow.tableRow("Recoverable model deletion", "workspace.delete moves individual regular files to koil/sys/model/file-trash and returns a recovery token; this does not cover every deletion path elsewhere in Koil"),
+            ContentRow.tableRow("Verified model installation", "runtime and GGUF artifacts have fixed URLs, expected sizes and SHA-256 values; archive paths are contained and model uninstall is restricted to the model root"),
+            ContentRow.tableRow("KPak transaction controls", "the current installer uses a lock, normalized game-root containment, ZIP validation, backup, transaction state, remote package hash, Ed25519 signature, version check and installed-file hashes"),
+            ContentRow.tableRow("Minecraft and protocol authority", "normal commands and actions remain subject to server permissions and protocol handling; that does not mean the server permits automation or prevents all harmful player-authorized actions"),
+            ContentRow.section("Important limits and unfinished areas"),
+            ContentRow.note("Koil does not provide one general sandbox or one universal per-action permission system across all local files, networking, mixins, packages, media, model tools, automation and public APIs."),
+            ContentRow.bullet("Unrestricted mode explicitly removes Koil approval prompts for registered model capabilities during that Automation session. Minecraft permissions remain unchanged, but Koil-side approval is skipped."),
+            ContentRow.bullet("The current KPak trust store is an in-memory author-key registry. Unknown authors fail, but key enrollment and distribution remain separate trust decisions. Private package-signing keys are stored as unencrypted Base64 files under the user's home directory."),
+            ContentRow.bullet("The KPak manifest carries an operation field, but the current installer path treats operations as ZIP-backed file writes. Do not rely on add, replace or remove labels as a complete implemented permission model without reviewing the exact build."),
+            ContentRow.bullet("The prelaunch entry point generates a new KPak key identity before this first-launch acceptance screen. Declining the disclosure does not reverse files already created by prelaunch code."),
+            ContentRow.bullet("Checksums prove downloaded bytes match values trusted by the current code or service. They do not prove that the referenced content, model behavior or author is benign."),
+            ContentRow.section("Server support"),
+            ContentRow.server(),
+            ContentRow.text("Koil is not intended to provide identical behavior on every server. It is built to try to operate through client-side integrations and ordinary Minecraft behavior where possible, but it works best when the connected server also runs Koil and exposes matching channels and APIs.")
+        );
+    }
+
+    private List<ContentRow> modelRows() {
+        return List.of(
+            ContentRow.section("Real local AI and model behavior"),
+            ContentRow.text("Current Koil includes genuine neural language-model inference in addition to deterministic planners, KTL, heuristics, pathfinding, recommendations and rule-based systems. The selected GGUF model runs through a local provider such as Koil-managed llama.cpp or a configured Colibri-compatible service."),
+            ContentRow.tableHeader("Component", "What it actually does"),
+            ContentRow.tableRow("/ask", "sends the current prompt and bounded local conversation context to the selected local provider; the normal ask path exposes no Koil tools and cannot directly perform Minecraft or file actions"),
+            ContentRow.tableRow("/ask deep", "runs a phased Deep Thought investigation with read-only Minecraft-knowledge and workspace list/read/search tools, then saves resumable checkpoints scoped to a hashed server address or single-player world identity"),
+            ContentRow.tableRow("Automation Mode", "allows an eligible tool-calling model to select registered automation, workspace and validation tools; outputs can affect Minecraft, KTL, Koil files and a detected Koil development checkout"),
+            ContentRow.tableRow("Deterministic support", "eligibility rules, model capability estimates, prompt routing, KTL compilation, plan validation, objective ledgers, repeated-call detection and bounded execution are code-driven controls, not learned intelligence"),
+            ContentRow.tableRow("Voice", "optional model speech enumerates configured local voices and can speak streamed model output; voice settings and implementation availability control use"),
+            ContentRow.section("Model installation and local process"),
+            ContentRow.path("github.com/ggml-org/llama.cpp/releases", "pinned platform-specific llama.cpp runtime archive b10173 with expected byte size and SHA-256"),
+            ContentRow.path("huggingface.co/<repository>/resolve/main/<model>", "catalog-selected GGUF model artifacts with code-defined sizes and SHA-256 values"),
+            ContentRow.path("./koil/sys/model/runtime/**", "downloaded and extracted native llama-server runtime plus verification marker"),
+            ContentRow.path("./koil/sys/model/models/<catalog-id>/**", "downloaded GGUF model files and temporary .part files while installing"),
+            ContentRow.text("The managed llama.cpp provider requires localhost binding and a generated API key, starts a native llama-server process when needed, sends OpenAI-style chat-completion requests to localhost, streams responses and tool calls, and stops owned processes during shutdown."),
+            ContentRow.note("Model downloads are optional and user-triggered through /model or the Local Model Setup screen. LocalModelService itself initializes at client startup, creates local configuration when missing, registers providers and may enumerate voices, but a selected model runtime is started when a request or explicit start action needs it."),
+            ContentRow.section("Data given to the model"),
+            ContentRow.bullet("Prompts, bounded conversation history, system instructions, registered tool schemas, selected tool results, planning summaries and task state can be sent to the selected local provider process."),
+            ContentRow.bullet("Read-only Deep Thought can inspect bounded text from named workspaces. Automation can inspect and, after applicable approval or bypass, modify bounded workspace files and run registered Gradle tasks."),
+            ContentRow.bullet("Koil's default managed llama.cpp path is localhost-only. A manually configured provider still needs review; do not assume a custom executable, host or service has the same privacy boundary."),
+            ContentRow.section("Persistence, limits and controls"),
+            ContentRow.tableHeader("Stored item", "Current behavior"),
+            ContentRow.tableRow("Configuration and API key", "koil/sys/model/local-model.json; generated key is stored in plaintext JSON and POSIX owner-only permissions are attempted where supported"),
+            ContentRow.tableRow("Model selection", "selected provider, model and local runtime/model paths are persisted for later sessions"),
+            ContentRow.tableRow("Runtime log", "koil/sys/model/logs/local-model-runtime.log stores event summaries such as startup, request completion and context-size metadata"),
+            ContentRow.tableRow("Deep Thought", "up to 64 JSON session files per scope are loaded; each checkpoint may be up to 64 MB and remains until explicitly deleted or otherwise cleaned"),
+            ContentRow.tableRow("Conversation memory", "current general and automation conversations are bounded in process memory; the generated config records persistentConversationHistory and persistentAssociativeMemory as false"),
+            ContentRow.tableRow("Controls", "/model cancel, stop, restart, reset, uninstall, queue editing, Answer Now, Deep Thought pause/resume and Automation off/exit provide different cancellation or clearing actions"),
+            ContentRow.section("Agent approvals and elevated modes"),
+            ContentRow.bullet("Standard Automation asks through the model HUD before mutating workspace files or running registered project validation, unless a tool call is already authorized by a reviewed plan."),
+            ContentRow.bullet("Planning Mode requires a reviewed exact-step plan before side effects according to the current routing contract. This is a Koil control, not a mathematical proof that the plan is safe or complete."),
+            ContentRow.bullet("Unrestricted mode skips Koil approval for registered model capabilities for the current Automation session."),
+            ContentRow.bullet("Experimental compact-agent mode permits selected tool-capable models below the normal automation complexity requirement. Smaller models may have weaker planning and tool reliability."),
+            ContentRow.note("Model-generated conclusions, confidence scores, catalog reasoning estimates and tool choices can be wrong. Review consequential actions and outputs independently.")
         );
     }
 
     private List<ContentRow> dataRows() {
         return List.of(
-                ContentRow.section("Game and player data processed locally"),
-                ContentRow.tableHeader("Observed value", "Demonstrated use"),
-                ContentRow.tableRow("Local player name and UUID", "Context keys, activity ownership, local display and cache records"),
-                ContentRow.tableRow("Visible player names and UUIDs", "Visible-player activity and held-item observations"),
-                ContentRow.tableRow("Main-hand and off-hand item IDs", "Client-observed activity rows and local history"),
-                ContentRow.tableRow("World/server context", "Separates cached observations by current world or server"),
-                ContentRow.tableRow("Player position, inventory, targets, blocks and entities", "Automation resolution, movement, interaction and diagnostics"),
-                ContentRow.spacer(),
-                ContentRow.text("The reviewed GlobalActivityClient code samples the local player and visible players every 100 client ticks, records held-item and presence observations, maintains short histories, and saves local context data."),
-                ContentRow.note("The reviewed client path requests server snapshots and receives Koil snapshot/HUD packets. That code does not show client-observed held-item history being uploaded. This statement applies only to that reviewed path, not to code that has not been audited."),
-                ContentRow.section("Files derived from use"),
-                ContentRow.bullet("Logs can contain command text, task state, errors, file paths, selected IDs, and runtime diagnostics."),
-                ContentRow.bullet("Automation feedback and proof systems can persist structured task results and failure details."),
-                ContentRow.bullet("Skin lookup can use a typed username to request public Mojang and NameMC data, download PNG files, normalize them, and add them to the local skin library."),
-                ContentRow.bullet("Config, file-preview, package, F3, performance, content, and editor systems parse local files to generate controls, metadata, warnings, charts, previews, and reports."),
-                ContentRow.section("Not an AI privacy shortcut"),
-                ContentRow.text("Local deterministic parsing is not the same as sending a file to an AI service. However, that does not make every Koil feature offline. Network-backed content, metadata, skin, bootstrap, update, and compatible-server features still make requests when used or initialized by their code paths.")
+            ContentRow.section("Game and player data processed"),
+            ContentRow.tableHeader("Observed or supplied value", "Current demonstrated use"),
+            ContentRow.tableRow("Local player name and UUID", "context keys, activity ownership, local display, cache records and server participation"),
+            ContentRow.tableRow("Visible player names and UUIDs", "visible-player activity, presence and held-item observations"),
+            ContentRow.tableRow("Main-hand and off-hand item IDs", "client-observed activity rows and local history"),
+            ContentRow.tableRow("Server address or world identity", "activity context and hashed Deep Thought scope; the raw identity is hashed before use as the Deep Thought directory name"),
+            ContentRow.tableRow("Position, view, inventory, containers, targets, blocks and entities", "automation resolution, Minecraft knowledge, movement, interaction, diagnostics and model tool results"),
+            ContentRow.tableRow("Chat, commands and automation prompts", "normal chat, rich chat, local model requests, model conversations, KTL compilation, feedback and execution logs"),
+            ContentRow.tableRow("Local files and source text", "config/editor tools, diagnostics, package systems, read-only Deep Thought and approved or unrestricted model workspace tools"),
+            ContentRow.tableRow("Hardware and storage facts", "local model compatibility, memory guidance, storage checks and model setup diagnostics"),
+            ContentRow.spacer(),
+            ContentRow.text("Global activity code samples the local player and visible players periodically, records presence and held-item observations, keeps bounded histories, and saves local context data. Model and automation systems separately inspect game state when resolving prompts or tasks."),
+            ContentRow.note("The reviewed activity-client path requests structured server snapshots and receives Koil snapshot/HUD packets. It does not by itself prove that every other Koil API, chat feature, future packet or compatible mod avoids transmitting observed data."),
+            ContentRow.section("Local persistence and retention"),
+            ContentRow.bullet("Logs can contain command text, task state, errors, file paths, selected IDs, provider events, context sizes, output summaries and runtime diagnostics."),
+            ContentRow.bullet("Automation feedback, improvement and proof systems can persist task results, selected files or nodes, classifications and failure details."),
+            ContentRow.bullet("Deep Thought stores questions, investigation phases, evidence, conclusions and lifecycle state under koil/sys/model/deep-thought until deleted or cleaned."),
+            ContentRow.bullet("Remote chat media is downloaded into koil/cache/chat_media, including a persistent remote-image cache and clipboard-image cache. Current code does not show a universal expiration policy for those files."),
+            ContentRow.bullet("Skin lookup can send a typed or current username to Mojang and NameMC, download public texture data, normalize PNG files and add them to the local skin library."),
+            ContentRow.bullet("Config, file-preview, package, F3, performance, content, rich-chat, model and editor systems parse local files to generate controls, metadata, warnings, charts, previews and reports."),
+            ContentRow.section("Privacy boundaries"),
+            ContentRow.text("Local processing is not the same as anonymous processing. Names, UUIDs, server identities, world context, prompts and file contents can remain identifying even when stored only on the user's computer."),
+            ContentRow.text("The default managed language-model request is sent to a localhost service. Network-backed bootstrap, content, model installation, package hash, skin, rich-media and compatible-server features still contact outside hosts or the connected server when their paths run."),
+            ContentRow.note("There is no single global retention, export, deletion or privacy-control panel covering every Koil log, cache, model checkpoint, activity record, package backup and third-party request. Controls are currently subsystem-specific.")
         );
     }
 
     private List<ContentRow> networkRows() {
         return List.of(
-                ContentRow.section("Known network destinations and purposes"),
-                ContentRow.tableHeader("Destination", "Purpose demonstrated by code or bootstrap inventory"),
-                ContentRow.tableRow("raw.githubusercontent.com", "Koil bootstrap JSON, design catalogs, help content, funding data, package-validation data, and asset indexes"),
-                ContentRow.tableRow("api.modrinth.com", "Project search, metadata, versions, compatibility checks, and content discovery"),
-                ContentRow.tableRow("CurseForge endpoints", "Optional metadata/content path when API access is configured"),
-                ContentRow.tableRow("api.mojang.com", "Minecraft username to profile lookup for skin tools"),
-                ContentRow.tableRow("sessionserver.mojang.com", "Signed profile texture metadata for skin tools"),
-                ContentRow.tableRow("textures.minecraft.net", "Skin texture download"),
-                ContentRow.tableRow("namemc.com", "Best-effort public skin/profile-history lookup"),
-                ContentRow.tableRow("Current Minecraft server", "Koil custom packet channels for snapshots, market/HUD data, and compatible server features"),
-                ContentRow.spacer(),
-                ContentRow.server(),
-                ContentRow.flow(),
-                ContentRow.section("Request contents"),
-                ContentRow.bullet("Content searches can include project names, mod IDs, Minecraft version, loader filters, and selected project/version identifiers."),
-                ContentRow.bullet("Skin searches include the username entered or the current session username when the skin tool is used."),
-                ContentRow.bullet("Bootstrap requests reveal the normal network metadata associated with an HTTPS request, including IP address and request headers, to the hosting service."),
-                ContentRow.bullet("Koil server-channel requests identify the connected client as a participant in that Minecraft connection and use protocol-defined packet content."),
-                ContentRow.section("What changes when the server also runs Koil"),
-                ContentRow.text("GlobalActivityClient checks ClientPlayNetworking.canSend before requesting a Koil snapshot. When the channel is unavailable, the reviewed activity view falls back to client-observed rows. When the server registers Koil's server API and channels, it can provide server-owned snapshots, market values, HUD state and other compatible features."),
-                ContentRow.note("Koil attempts to remain useful on servers that do not run Koil, but server rules, protocol support, installed mods, anti-cheat and permissions can limit or block features. Koil-on-server is the intended environment for the fullest integration."),
-                ContentRow.note("Do not claim 'zero telemetry' or 'nothing leaves the computer' unless an automated build audit verifies every network call in the exact released JAR.")
+            ContentRow.section("Known network destinations and purposes"),
+            ContentRow.tableHeader("Destination", "Purpose demonstrated by current code or bootstrap inventory"),
+            ContentRow.tableRow("raw.githubusercontent.com", "Koil bootstrap JSON, design catalogs, help content, funding data, validation data and asset indexes that can change independently of the mod JAR"),
+            ContentRow.tableRow("github.com/ggml-org/llama.cpp", "pinned release archives for the optional native llama.cpp runtime"),
+            ContentRow.tableRow("huggingface.co", "optional GGUF model downloads from catalog-defined repositories and main-branch artifact paths"),
+            ContentRow.tableRow("eeverest.dev", "current KPak installer lookup for an expected package SHA-256 by package file name"),
+            ContentRow.tableRow("api.modrinth.com", "project search, metadata, versions, compatibility checks and content discovery"),
+            ContentRow.tableRow("CurseForge endpoints", "optional metadata or content path when API access is configured"),
+            ContentRow.tableRow("api.mojang.com / sessionserver.mojang.com / textures.minecraft.net", "username lookup, signed profile texture metadata and skin texture downloads"),
+            ContentRow.tableRow("namemc.com", "best-effort public skin and profile-history lookup"),
+            ContentRow.tableRow("Any HTTP(S) media URL shown to rich chat", "remote images, GIFs, audio, video, generic files and HTML-discovered media previews, subject to type-specific limits"),
+            ContentRow.tableRow("127.0.0.1 local model service", "authenticated health, model-list and streaming chat-completion requests to the selected local inference runtime"),
+            ContentRow.tableRow("Current Minecraft server", "normal chat, commands and interaction packets plus Koil channels for presence, rich-chat sync, snapshots, market/HUD data and compatible features"),
+            ContentRow.spacer(),
+            ContentRow.server(),
+            ContentRow.flow(),
+            ContentRow.section("Request contents and remote behavior"),
+            ContentRow.bullet("Content searches can include project names, mod IDs, Minecraft version, loader filters and selected project or version identifiers."),
+            ContentRow.bullet("Skin searches include the username entered or current session username when the skin tool is used."),
+            ContentRow.bullet("Model and runtime downloads reveal normal HTTPS metadata to GitHub or Hugging Face and request exact catalog artifact paths. Model prompts are not sent to those download hosts by the installer."),
+            ContentRow.bullet("KPak hash verification reveals the package file name to eeverest.dev and trusts the returned expected hash as one part of installation verification."),
+            ContentRow.bullet("Rich-chat media fetching accepts arbitrary http or https URLs, follows normal redirects, may send browser-like User-Agent, Accept-Language, Referer and Origin headers, inspects up to 2 MB of HTML and can follow discovered media links to a bounded depth."),
+            ContentRow.bullet("Current rich-media limits are approximately 25 MB for image/GIF, 64 MB for audio or generic files, 128 MB for video and 2 MB for HTML discovery. These are download limits, not proof that decoders are safe."),
+            ContentRow.bullet("Bootstrap and other HTTPS requests reveal normal connection metadata such as IP address and request headers to the hosting service."),
+            ContentRow.bullet("Koil server-channel traffic identifies the client as part of that Minecraft connection and carries protocol-defined content. A non-Koil server accepting ordinary packets has not thereby approved Koil automation."),
+            ContentRow.section("Server distinction"),
+            ContentRow.text("Without Koil on the server, client-side UI, local models, file tools and ordinary Minecraft actions may still work, but Koil-specific synchronized systems and channels are unavailable. With Koil on the server, registered snapshots, presence, rich-chat synchronization, markets, HUD state and server APIs can become available."),
+            ContentRow.note("No disclosure can make externally hosted runtime files part of a platform's reviewed mod artifact. If a distribution platform requires necessary JSON, theme or functional files to be bundled, the implementation must change rather than relying on this notice."),
+            ContentRow.note("Do not claim zero telemetry, fully offline operation or that nothing leaves the computer unless an automated audit verifies every network call and configurable provider in the exact released JAR.")
         );
     }
 
     private List<ContentRow> fileRows() {
         return List.of(
-                ContentRow.section("Instance paths Koil can access"),
-                ContentRow.path("./koil/**", "runtime configuration, design data, logs, packages, automation, caches, reports, wiki, skins and other Koil-owned state"),
-                ContentRow.path("./config/**", "config discovery and editing for Koil and supported mods"),
-                ContentRow.path("./mods/**", "mod discovery, import, install, disable, delete, package detection and local JAR inspection"),
-                ContentRow.path("./resourcepacks/**", "resource-pack discovery, install, enable/disable and removal"),
-                ContentRow.path("./shaderpacks/**", "shader-pack discovery, metadata, selection and management where supported"),
-                ContentRow.path("./saves/<world>/datapacks/**", "world-specific datapack discovery, install and management"),
-                ContentRow.path("./logs/latest.log", "Minecraft log reading in Koil's console"),
-                ContentRow.path("System temporary directory", "downloaded skin images and media-processing intermediates"),
-                ContentRow.section("Operations available through Koil tools"),
-                ContentRow.tableHeader("Operation", "Effect"),
-                ContentRow.tableRow("Read and inspect", "Open files, parse configs, inspect JAR metadata, preview media, scan folders, read logs"),
-                ContentRow.tableRow("Create and write", "Save edits, generate configs, caches, reports, packages, skins, automation state and downloaded content"),
-                ContentRow.tableRow("Replace and overwrite", "Config saves, downloads, package application and selected management operations can replace existing files"),
-                ContentRow.tableRow("Move and rename", "File-manager and content-management operations can change paths"),
-                ContentRow.tableRow("Delete", "User-invoked file, mod, pack, package and cleanup actions can remove files"),
-                ContentRow.section("Koil package authority"),
-                ContentRow.text("Package code searches for koil-package-* folders and ZIP files in the mods folder and instance root, reads package.json, classifies entries as add, replace, or remove, and holds valid packages for user review."),
-                ContentRow.note("A valid author or serial is not a safety guarantee. Review every path and operation. A package that is allowed to apply at the instance root can materially change the game installation and worlds."),
-                ContentRow.code("PackageEntry(relativePath, directory, size, existsInInstance, operation, sha256)"),
-                ContentRow.code("operations: add | replace | remove")
+            ContentRow.section("Paths Koil can access or create"),
+            ContentRow.path("./koil/**", "configuration, design data, logs, packages, automation, models, caches, reports, wiki, skins, chat media and other Koil-owned state"),
+            ContentRow.path("./koil/sys/model/local-model.json", "local model provider configuration and generated API key"),
+            ContentRow.path("./koil/sys/model/runtime/**", "downloaded native llama.cpp archives, extracted executable and verification marker"),
+            ContentRow.path("./koil/sys/model/models/**", "downloaded GGUF model files, temporary parts and model selection paths"),
+            ContentRow.path("./koil/sys/model/deep-thought/**", "persistent Deep Thought checkpoints separated by hashed world or server scope"),
+            ContentRow.path("./koil/sys/model/file-trash/**", "recoverable files removed by the model workspace delete tool"),
+            ContentRow.path("./koil/cache/chat_media/**", "downloaded remote chat media and clipboard URL images"),
+            ContentRow.path("~/.koil/kpak/keys/**", "KPak Ed25519 identity, public key and unencrypted private-key files generated by prelaunch or package-building code"),
+            ContentRow.path("./.koil/backups/** and KPak transaction/registry state", "package backup, rollback metadata and installed-package records"),
+            ContentRow.path("./config/**", "config discovery and editing for Koil and supported mods"),
+            ContentRow.path("./mods/**", "mod discovery, import, install, disable, delete, package detection and local JAR inspection"),
+            ContentRow.path("./resourcepacks/** / ./shaderpacks/**", "pack discovery, installation, selection, metadata and removal"),
+            ContentRow.path("./saves/<world>/datapacks/**", "world-specific datapack discovery, active-world content integration and management"),
+            ContentRow.path("./logs/latest.log", "Minecraft log reading in Koil's console"),
+            ContentRow.path("Detected Koil source checkout", "development-only model workspace access and registered Gradle compile, proof and validation tasks"),
+            ContentRow.path("System temporary directory", "skin, media, package-building and other processing intermediates"),
+            ContentRow.section("Operations available through Koil"),
+            ContentRow.tableHeader("Operation", "Current effect"),
+            ContentRow.tableRow("Read and inspect", "open files, parse configs, inspect JAR metadata, preview media, scan folders, read logs and expose bounded workspace text to local model tools"),
+            ContentRow.tableRow("Create and write", "save edits, generate configs, keys, caches, reports, checkpoints, packages, skins, automation state, model selections and downloaded content"),
+            ContentRow.tableRow("Replace and overwrite", "config saves, bootstrap downloads, KPak writes, model workspace writes and selected management operations can replace existing files"),
+            ContentRow.tableRow("Move, rename and restore", "file tools, atomic-save fallbacks, model trash recovery and package rollback can change paths or restore backups"),
+            ContentRow.tableRow("Delete and uninstall", "user-invoked file, mod, pack, model, package and cleanup actions can remove files; containment differs by subsystem"),
+            ContentRow.tableRow("Execute", "the model subsystem can launch a downloaded native llama-server; development validation can launch the repository's registered Gradle wrapper tasks"),
+            ContentRow.section("Current KPak authority and verification"),
+            ContentRow.text("KPak installation validates a fixed serial, requires operations, acquires an install lock, records transaction state, obtains an expected package hash from eeverest.dev, verifies an Ed25519 signature with a registered author key, checks Koil version compatibility, validates the ZIP, backs up targets, writes normalized game-directory paths, verifies installed hashes and restores the backup on failure."),
+            ContentRow.note("These controls do not establish that a package is desirable or safe. The remote expected-hash service and author-key enrollment are trust dependencies. The current installer can write broadly inside the normalized Minecraft game directory, including sensitive instance content, when a manifest names those paths."),
+            ContentRow.note("The operation string exists in PackageOperation, but the reviewed installer currently resolves each operation as a ZIP entry and writes it. The disclosure therefore does not promise that declared remove semantics are currently implemented correctly."),
+            ContentRow.section("Model workspace boundaries"),
+            ContentRow.bullet("Model file tools use named roots for Koil instance files, automation files and, only in a detected development run directory, the Koil project checkout."),
+            ContentRow.bullet("They reject absolute paths, normalized traversal, existing symlink escapes and selected sensitive names such as .git, .gradle, .env, servers.dat, key, credential, password and secret paths."),
+            ContentRow.bullet("Mutating model tools are limited to text files up to 256 KB, use expected hashes for existing files, use atomic replacement when possible and require Standard-mode approval unless preapproved or Unrestricted mode is active."),
+            ContentRow.note("Those model-workspace restrictions do not automatically apply to every older file explorer, downloader, package manager, content installer or public Koil API.")
         );
     }
 
     private List<ContentRow> controlRows() {
         return List.of(
-                ContentRow.section("Automation authority"),
-                ContentRow.text("Koil's KTL automation runtime is capable of acting through the Minecraft client. Its executor holds and releases key inputs, changes view direction, resolves nearby entities and blocks, interacts through the client interaction manager, and can delegate nested tasks."),
-                ContentRow.tableHeader("Capability", "Examples demonstrated by executor code"),
-                ContentRow.tableRow("Movement and camera", "forward/back/strafe, sprint, jump, target movement, mouse look, navigation recovery"),
-                ContentRow.tableRow("World interaction", "use item, use block, interact with entity, mine block, attack entity"),
-                ContentRow.tableRow("Inventory and containers", "select inventory slots, inspect counts, transfer items through screen-handler slots"),
-                ContentRow.tableRow("Communication", "send chat messages and execute raw Minecraft commands"),
-                ContentRow.tableRow("Observation and memory", "read player position, inventory, stats, targets, blocks, entities and task state"),
-                ContentRow.tableRow("Task control", "branch, delegate, return, wait, retry, hold input and cancel active execution"),
-                ContentRow.section("Execution defenses and limits"),
-                ContentRow.bullet("AutomationExecutor.cancel clears the execution stack, releases every held input, clears cached entities and reports the cancellation state."),
-                ContentRow.bullet("AutomationRouter discards superseded planner outcomes and exposes /automate off and /automate exit to stop current work."),
-                ContentRow.bullet("Raw commands are sent through Minecraft's normal network handler, so Koil does not grant command permissions the player does not already have."),
-                ContentRow.note("These controls reduce runaway execution after a stop request. They do not preview or approve every primitive, reverse completed actions, recover lost items, undo world changes, or guarantee compliance with a server's rules."),
-                ContentRow.note("Automation can cause normal in-game consequences, including movement, combat, block changes, item use, container changes, command execution, server-rule violations, or loss of items. Review tasks before running them."),
-                ContentRow.section("Vanilla integration and rendering"),
-                ContentRow.bullet("Mixin configuration allows Koil to inject into or replace supported vanilla screens, widgets, input handling, stats hooks, rendering paths and player-skin behavior."),
-                ContentRow.bullet("The redesigned F3 system reads extensive client/world/target information and can render diagnostics, charts, timelines, target details and reports."),
-                ContentRow.bullet("Content, config, file, media, console, skin, performance and package screens can open system dialogs or external windows where their code requests it."),
-                ContentRow.section("Code proof"),
-                ContentRow.code("updateHeldInputs(); updateTapInputs(); updateMouseLook(player);"),
-                ContentRow.code("case \"cap.command.execute_raw\" -> AutomationRouter.sendRawCommand(rawCommand);"),
-                ContentRow.code("case \"cap.report.say\" -> AutomationRouter.sendChatMessage(message);")
+            ContentRow.section("Automation and agent authority"),
+            ContentRow.text("Koil's KTL runtime and local-model agent layer can act through the Minecraft client and selected local workspaces. The deterministic executor holds and releases inputs, changes view direction, resolves entities and blocks, interacts through Minecraft's client interaction manager, and can execute compiled or model-planned tasks."),
+            ContentRow.tableHeader("Capability", "Examples demonstrated by current executor or model tools"),
+            ContentRow.tableRow("Movement and camera", "forward, back, strafe, sprint, jump, target movement, mouse look, navigation and recovery"),
+            ContentRow.tableRow("World interaction", "use item, use block, interact with entity, mine block and attack entity"),
+            ContentRow.tableRow("Inventory and containers", "select slots, inspect counts and transfer items through screen-handler slots"),
+            ContentRow.tableRow("Communication", "send chat messages, rich-chat content and raw Minecraft commands through normal client paths"),
+            ContentRow.tableRow("Observation and task memory", "read position, inventory, stats, targets, blocks, entities, workspace text, plan state, objectives and prior tool results"),
+            ContentRow.tableRow("File and development work", "list, read, search, create, write, replace, delete or restore bounded workspace files and run registered Gradle operations"),
+            ContentRow.tableRow("Task control", "plan, branch, delegate, return, wait, retry, pause Deep Thought, request Answer Now, edit queued prompts and cancel active work"),
+            ContentRow.section("Modes and approval behavior"),
+            ContentRow.tableHeader("Mode", "Current meaning"),
+            ContentRow.tableRow("Standard Automation", "requires an eligible selected model and uses Koil approval surfaces for registered mutating model tools unless an approved plan preauthorizes them"),
+            ContentRow.tableRow("Planning Mode", "requires a reviewed exact-step plan before side effects according to the model routing contract"),
+            ContentRow.tableRow("Deep Thinking", "uses additional bounded model rounds and may create persistent Deep Thought checkpoints for complex work"),
+            ContentRow.tableRow("Experimental compact agent", "allows tool-capable smaller models below the normal complexity threshold and may reduce planning or tool reliability"),
+            ContentRow.tableRow("Unrestricted", "skips Koil approval for registered model capabilities during the session; it does not expand the registry or bypass Minecraft permissions"),
+            ContentRow.section("Execution defenses and limits"),
+            ContentRow.bullet("Automation cancellation clears execution state, releases held inputs and stops current work where the active subsystem exposes cancellation."),
+            ContentRow.bullet("Model requests use queue limits, timeouts, provider-round limits, repeated-call and repeated-response detection, required-tool tracking, durable state summaries and explicit finalization paths."),
+            ContentRow.bullet("Model workspace mutations use contextual approvals, bounded roots, file-size limits, expected hashes and recoverable deletion. Registered project validation rejects arbitrary command strings and runs only listed Gradle operations."),
+            ContentRow.bullet("Raw commands still use Minecraft's normal network handler, so Koil does not grant command permission the player lacks."),
+            ContentRow.note("Approval and planning reduce accidental actions but do not make model reasoning correct, preview every primitive, reverse completed game actions, restore lost items, undo chat or commands, or guarantee compliance with server rules."),
+            ContentRow.section("Multiplayer and survival risk"),
+            ContentRow.bullet("A server accepting ordinary player packets does not signal permission for automation. Koil does not prove that a server's rules allow movement assistance, combat, mining, inventory automation, macros or model-directed behavior."),
+            ContentRow.bullet("Automation can resemble botting, aim assistance, automated PvP, inventory assistance or griefing. Anti-cheat may detect it, and server staff may warn, kick or ban the account."),
+            ContentRow.bullet("Actions can cause death, resource loss, unintended block or container changes, attacks on the wrong entity, unwanted messages, command effects or harm to other players."),
+            ContentRow.bullet("Koil-enabled servers can provide additional synchronized state and APIs, but running Koil on the server does not automatically authorize every Automation action unless a specific server-side policy enforces that permission."),
+            ContentRow.section("Rich chat, input and UI integration"),
+            ContentRow.bullet("Koil injects into vanilla chat to support multiline input, formatting, masked links, tables, LaTeX, local model panels, private-message handling, attachments and synchronized rich-chat features."),
+            ContentRow.bullet("Remote media URLs can cause background HTTP requests and persistent cache writes when rendered. Opening or interacting with links and attachments can expose network metadata to third-party hosts."),
+            ContentRow.bullet("Mixin configuration allows Koil to inject into or replace supported vanilla screens, widgets, input handling, stats hooks, rendering paths and player-skin behavior."),
+            ContentRow.bullet("File, content, media, console, skin, model, performance and package screens may use clipboard, drag-and-drop, system dialogs, media decoders or external windows where implemented."),
+            ContentRow.section("Representative code proof"),
+            ContentRow.code("approvalPolicy = enabled && automationMode ? ApprovalPolicy.YOLO : ApprovalPolicy.STANDARD;"),
+            ContentRow.code("case \"workspace.write\" -> write(call); case \"workspace.delete\" -> delete(call);"),
+            ContentRow.code("new ProcessBuilder(command(this.selectedPort)).start();"),
+            ContentRow.code("case \"cap.command.execute_raw\" -> AutomationRouter.sendRawCommand(rawCommand);")
         );
     }
 
     private List<ContentRow> sourceRows() {
         ArrayList<ContentRow> rows = new ArrayList<>();
         rows.add(ContentRow.section("Source-first trust model"));
-        rows.add(ContentRow.note("The code and bundled resources in the exact released build are the truth. Documentation, marketing text, generated descriptions, comments, changelogs, and this screen can be incomplete or stale."));
-        rows.add(ContentRow.text("Users should be able to inspect the repository, released source tag, build configuration, mixin list, network call sites, file-operation call sites, and the exact JAR hash before relying on a trust claim."));
+        rows.add(ContentRow.note("The executable code, bundled resources, runtime configuration and downloaded content used by the exact released build are the truth. Documentation, marketing, comments, changelogs, model-generated text and this screen can be incomplete or stale."));
+        rows.add(ContentRow.text("Users and reviewers should inspect the exact source revision, build configuration, Fabric metadata, prelaunch and startup entry points, mixin list, network call sites, native-process launches, model tools, file operations, package trust paths and the exact JAR hash before relying on a trust claim."));
         rows.add(ContentRow.section("High-value files to inspect"));
         rows.add(ContentRow.tableHeader("File", "Why it matters"));
-        rows.add(ContentRow.tableRow("Main.java / Client.java", "startup, registration, bootstrap, lifecycle, commands and top-level services"));
-        rows.add(ContentRow.tableRow("FirstLaunchTermsScreen.java", "this disclosure and acceptance behavior"));
-        rows.add(ContentRow.tableRow("FirstLaunchDownloadScreen.java", "bootstrap download execution and destination handling"));
-        rows.add(ContentRow.tableRow("GlobalActivityClient.java / KoilGlobalActivityServer.java", "local observation, cache format and Koil network snapshots"));
-        rows.add(ContentRow.tableRow("KoilPackageManager.java", "package discovery, validation, add/replace/remove planning and application"));
-        rows.add(ContentRow.tableRow("AutomationExecutor.java / AutomationRouter.java", "player-control authority, commands, chat and task execution"));
-        rows.add(ContentRow.tableRow("AbstractModrinthContentScreen.java", "remote content queries, metadata and downloads"));
-        rows.add(ContentRow.tableRow("SkinOnlineFetcher.java", "Mojang/NameMC username requests and skin downloads"));
-        rows.add(ContentRow.tableRow("FileExplorerScreen.java / ModConfigScreen.java", "local file browsing, edits, deletion, preview and typed config controls"));
-        rows.add(ContentRow.tableRow("koil.mixins.json / access widener", "vanilla classes and behavior Koil modifies or accesses"));
+        rows.add(ContentRow.tableRow("Main.java / Client.java / Prelaunch.java", "startup, first-launch gating, automatic initialization, prelaunch key generation, commands and top-level services"));
+        rows.add(ContentRow.tableRow("FirstLaunchTermsScreen.java / FirstLaunchDownloadScreen.java", "this disclosure, acceptance behavior, bootstrap execution, exact URLs and destinations"));
+        rows.add(ContentRow.tableRow("LocalModelService.java / LocalModelCommandBridge.java", "ask, Deep Thought, Automation agent routing, conversations, tools, cancellation and model controls"));
+        rows.add(ContentRow.tableRow("LocalModelCatalog.java / LocalModelInstallationService.java", "Hugging Face artifacts, runtime/model hashes, disk use, extraction, selection and uninstall"));
+        rows.add(ContentRow.tableRow("LlamaCppLocalModelProvider.java / ColibriLocalModelProvider.java", "native process startup, localhost API, prompts, streaming responses, tool calls and provider boundaries"));
+        rows.add(ContentRow.tableRow("ModelWorkspaceToolRegistry.java / ProjectValidationModelToolRegistry.java", "model file reads and writes, approvals, trash recovery and registered process execution"));
+        rows.add(ContentRow.tableRow("DeepThoughtSessionStore.java / LocalModelRuntimeLog.java", "persistent investigations, scope identity, retention and runtime logging"));
+        rows.add(ContentRow.tableRow("AutomationModeController.java / AutomationRouter.java / AutomationExecutor.java", "Standard, Planning, Deep, Experimental and Unrestricted modes plus game-control authority"));
+        rows.add(ContentRow.tableRow("KPakInstaller.java / KPakPrivateKeyStore.java / KPakTrustStore.java", "package hash, signatures, key storage, backups, containment, transaction and trust limitations"));
+        rows.add(ContentRow.tableRow("RichChatRemoteImageCache.java / RichChatRemoteMediaResolver.java", "arbitrary HTTP(S) media requests, redirects, headers, limits, HTML discovery and persistent cache"));
+        rows.add(ContentRow.tableRow("GlobalActivityClient.java / KoilGlobalActivityServer.java", "visible-player observation, local history and Koil network snapshots"));
+        rows.add(ContentRow.tableRow("AbstractModrinthContentScreen.java / SkinOnlineFetcher.java", "third-party content queries, metadata, downloads, usernames and skins"));
+        rows.add(ContentRow.tableRow("FileExplorerScreen.java / ModConfigScreen.java / koil.mixins.json", "local file authority and vanilla behavior modified by Koil"));
         rows.add(ContentRow.section("Bootstrap file inventory"));
         for (RemoteFile file : BOOTSTRAP_FILES) {
             rows.add(ContentRow.path(file.name + "  ->  " + file.destination, file.purpose));
             rows.add(ContentRow.code(file.url));
         }
-        rows.add(ContentRow.section("Representative code excerpts"));
-        rows.add(ContentRow.code("ClientPlayNetworking.send(GlobalActivityApi.REQUEST_CHANNEL, PacketByteBufs.create());"));
-        rows.add(ContentRow.code("Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING);"));
-        rows.add(ContentRow.code("HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();"));
-        rows.add(ContentRow.code("collectPendingPackages(new File(\"./mods\"), packages); collectPendingPackages(new File(\".\"), packages);"));
+        rows.add(ContentRow.section("Additional runtime download sources"));
+        rows.add(ContentRow.path("github.com/ggml-org/llama.cpp/releases/download/b10173", "verified optional native llama.cpp runtime for the current platform"));
+        rows.add(ContentRow.path("huggingface.co/<catalog repository>/resolve/main", "verified optional GGUF model files"));
+        rows.add(ContentRow.path("eeverest.dev/koil/hash/<package-name>", "expected KPak package hash lookup"));
+        rows.add(ContentRow.path("arbitrary http(s) chat-media URL", "bounded remote attachment and preview fetching"));
+        rows.add(ContentRow.section("Representative current code excerpts"));
+        rows.add(ContentRow.code("KPakPrivateKeyStore.generate();  // registered preLaunch entry point"));
+        rows.add(ContentRow.code("URI.create(\"https://huggingface.co/\" + repository + \"/resolve/main/\" + fileName)"));
+        rows.add(ContentRow.code("ProcessBuilder builder = new ProcessBuilder(command(this.selectedPort));"));
+        rows.add(ContentRow.code("approvalPolicy = enabled && automationMode ? ApprovalPolicy.YOLO : ApprovalPolicy.STANDARD;"));
+        rows.add(ContentRow.code("Files.move(resolved.path(), trashed, StandardCopyOption.ATOMIC_MOVE);"));
+        rows.add(ContentRow.code("URI uri = URI.create(clean); return http || https ? clean : \"\";"));
         rows.add(ContentRow.section("Reviewed public source revision"));
-        rows.add(ContentRow.code("Koil-public/koil @ 68f22b55965756ae3c0e6d243c94ddc50138b2f9"));
-        rows.add(ContentRow.text("This screen must be revised if the released JAR contains behavior that differs from that reviewed source revision."));
+        rows.add(ContentRow.code("Koil-public/koil main @ a12510f88a2d56f11eae751629d82a730ffdd91d"));
+        rows.add(ContentRow.text("Revision message: (pre) unfinished 13, adding /model and a new Automation intelligence layer. This disclosure also reconciles the preceding July 31 KPak key, signing and installer commits visible in main."));
+        rows.add(ContentRow.note("This is an unfinished development revision. The screen must be updated again when executable behavior, provider configuration, server channels, remote sources, package trust, model tools or platform packaging changes."));
         rows.add(ContentRow.section("Public source locations"));
-        rows.add(ContentRow.path("github.com/Koil-public/koil", "source repository containing this screen when reviewed"));
-        rows.add(ContentRow.path("github.com/Koil-public/koil-online-data", "remote bootstrap and design data repository"));
-        rows.add(ContentRow.note("A release should pin this screen to the exact source tag or commit used to build the JAR. A moving main branch is not sufficient provenance."));
+        rows.add(ContentRow.path("github.com/Koil-public/koil", "current public source repository"));
+        rows.add(ContentRow.path("github.com/Koil-public/koil-online-data", "mutable remote bootstrap and design-data repository"));
+        rows.add(ContentRow.path("github.com/ggml-org/llama.cpp", "upstream native local-model runtime source and releases"));
+        rows.add(ContentRow.path("huggingface.co", "third-party model artifact hosting selected by the built-in catalog"));
+        rows.add(ContentRow.note("A release should pin this screen and public description to the exact source tag or commit used to build the JAR. A moving main branch, public repository or checksum alone is not complete provenance or a safety guarantee."));
         return rows;
     }
 
     private List<ContentRow> uiPreferenceRows() {
         return List.of(
-                ContentRow.section("Choose how supported Minecraft screens should look"),
-                ContentRow.text("Koil includes mixin-based redesigns and additional controls for supported vanilla screens. This setting selects the preferred presentation where Koil provides a fallback."),
-                ContentRow.tableHeader("Choice", "Result"),
-                ContentRow.tableRow("Enable Koil UI", "Use Koil's redesigned layouts, integrated actions, panels, charts, metadata and theme-backed presentation where implemented"),
-                ContentRow.tableRow("Keep Vanilla UI", "Prefer Minecraft's default presentation where Koil supports a vanilla-style fallback; Koil remains installed and its non-UI systems are not uninstalled"),
-                ContentRow.note("This is a presentation preference, not a permission sandbox. Individual Koil features still retain the capabilities described on the previous pages when their code paths run."),
-                ContentRow.section("Acceptance record"),
-                ContentRow.text("Selecting either option records first-launch completion, applies the UI preference, and opens the bootstrap download screen."),
-                ContentRow.text("Use Back to review the capability disclosure before making the final choice.")
+            ContentRow.section("Choose how supported Minecraft screens should look"),
+            ContentRow.text("Koil includes mixin-based redesigns, rich-chat additions and integrated controls for supported vanilla screens. This setting selects the preferred presentation where Koil implements a fallback."),
+            ContentRow.tableHeader("Choice", "Result"),
+            ContentRow.tableRow("Enable Koil UI", "use Koil's redesigned layouts, integrated actions, panels, charts, metadata and theme-backed presentation where implemented"),
+            ContentRow.tableRow("Keep Vanilla UI", "prefer Minecraft's default presentation where Koil supports a vanilla-style fallback; Koil remains installed and non-UI systems remain available"),
+            ContentRow.note("This is a presentation preference, not a permission sandbox. Models, downloads, packages, networking, automation, APIs, caches and file systems keep the capabilities described on the previous pages when their activation paths run."),
+            ContentRow.section("What acceptance does"),
+            ContentRow.text("Selecting either option records first-launch completion, applies the UI preference and opens the bootstrap download screen. That screen calls Main.refreshBootstrapFiles, displays requested URLs and destinations, reloads design data and allows continuation after completion or reported errors."),
+            ContentRow.text("Acceptance does not authorize undisclosed future capabilities. Materially changed model, network, package, data-processing or automation behavior should be disclosed again in a future build."),
+            ContentRow.section("What declining does"),
+            ContentRow.text("Exit Game closes the client without intentionally deleting Koil or instance files. Files already created by Fabric loading or Koil's registered prelaunch entry point, including KPak key material, are not rolled back by declining."),
+            ContentRow.text("Use Back to review every capability page before making the final choice.")
         );
     }
 
@@ -834,10 +943,10 @@ public class FirstLaunchTermsScreen extends Screen {
 
     private boolean isOverScrollbar(double mouseX, double mouseY) {
         return contentHeight() > viewportHeight()
-                && mouseX >= this.width - 25
-                && mouseX <= this.width - 4
-                && mouseY >= contentTop()
-                && mouseY <= contentBottom();
+            && mouseX >= this.width - 25
+            && mouseX <= this.width - 4
+            && mouseY >= contentTop()
+            && mouseY <= contentBottom();
     }
 
     private int scrollbarGrabOffset(double mouseY) {
@@ -887,6 +996,7 @@ public class FirstLaunchTermsScreen extends Screen {
     private enum DisclosurePage {
         SYSTEMS("Koil Systems"),
         CAPABILITIES("What People Can Do"),
+        MODELS("Models & Agent"),
         DATA("Data Processed"),
         NETWORK("Servers & Network"),
         FILES("Files & Packages"),
