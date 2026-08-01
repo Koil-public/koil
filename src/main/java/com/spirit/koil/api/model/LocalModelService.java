@@ -10,6 +10,7 @@ import com.spirit.koil.api.command.MinecraftCommandInspector;
 import com.spirit.koil.api.minecraft.MinecraftNbtSuggestionService;
 import com.spirit.koil.api.model.chat.ModelGenerationChatPanel;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
+import com.spirit.koil.api.model.chat.LocalModelControlChatFeedback;
 import com.spirit.koil.api.model.format.RichChatModelOutputSanitizer;
 import com.spirit.koil.api.model.format.RichChatModelFormattingContract;
 import com.spirit.koil.api.model.hardware.HardwareCapabilityReport;
@@ -18,6 +19,7 @@ import com.spirit.koil.api.model.catalog.LocalModelSelection;
 import com.spirit.koil.api.model.catalog.LocalModelSelectionStore;
 import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
+import com.spirit.koil.api.model.catalog.LocalModelAutomationEligibility;
 import com.spirit.koil.api.model.install.LocalModelInstallationService;
 import com.spirit.koil.api.model.provider.colibri.ColibriConfiguration;
 import com.spirit.koil.api.model.provider.colibri.ColibriConfigurationStore;
@@ -27,10 +29,17 @@ import com.spirit.koil.api.model.provider.llamacpp.LlamaCppLocalModelProvider;
 import com.spirit.koil.api.model.voice.ModelVoiceService;
 import com.spirit.koil.api.model.tool.LocalModelToolCatalog;
 import com.spirit.koil.api.model.planning.AutomationThinkingPolicy;
+import com.spirit.koil.api.model.planning.ConversationalReasoningPolicy;
 import com.spirit.koil.api.model.planning.ValidatedAutomationPlan;
 import com.spirit.koil.api.model.planning.ReviewedPlanAuthorization;
 import com.spirit.koil.api.model.prompt.LocalModelAutomationPrompt;
 import com.spirit.koil.api.model.tool.AutomationPlanModelToolRegistry;
+import com.spirit.koil.api.model.tool.DeepThoughtReadOnlyToolCoordinator;
+import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
+import com.spirit.koil.api.model.tool.ProjectValidationModelToolRegistry;
+import com.spirit.koil.api.model.deepthought.DeepThoughtInvestigationController;
+import com.spirit.koil.api.model.deepthought.DeepThoughtSession;
+import com.spirit.koil.api.model.deepthought.DeepThoughtSessionStore;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 
@@ -44,8 +53,12 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 public final class LocalModelService {
     private static final AtomicBoolean INITIALIZED = new AtomicBoolean();
@@ -57,6 +70,8 @@ public final class LocalModelService {
     private static volatile ColibriConfiguration configuration;
     private static volatile LocalModelSelection selection = LocalModelSelection.none();
     private static volatile CompletableFuture<HardwareCapabilityReport> hardwareScan;
+    private static final Map<UUID, GenerationSession> SESSIONS = new ConcurrentHashMap<>();
+    private static final AtomicReference<String> RESTORED_DEEP_THOUGHT_IDENTITY = new AtomicReference<>("");
 
     private LocalModelService() {
     }
@@ -79,10 +94,79 @@ public final class LocalModelService {
         }
         ChatHudPanelRegistry.registerIfAbsent(new ModelGenerationChatPanel());
         CompletableFuture.runAsync(ModelVoiceService::voices);
+        LocalModelAutomationEligibility.Evaluation eligibility = currentAutomationEligibility();
+        if (AutomationModeController.isAutomationMode() && !eligibility.eligible()) {
+            revokeIneligibleAutomation(eligibility, false);
+        }
     }
 
     public static boolean ask(String prompt) {
         return submitPrompt(prompt, RequestMode.ASK, true);
+    }
+
+    public static boolean askDeep(String prompt) {
+        return submitPrompt(prompt, RequestMode.ASK_DEEP, true);
+    }
+
+    public static boolean resumeDeepThought(String sessionId) {
+        initialize();
+        DeepThoughtSession saved = DeepThoughtSessionStore.load(deepThoughtScope()).stream()
+                .filter(session -> session.deepThoughtSessionId.equals(sessionId))
+                .findFirst().orElse(null);
+        if (saved == null) return false;
+        UUID requestId = UUID.randomUUID();
+        ModelGenerationHudState.begin(requestId, saved.originalQuestion, false);
+        if (saved.lifecycle == DeepThoughtSession.Lifecycle.COMPLETED) {
+            ModelGenerationHudState.replaceText(requestId, saved.finalConclusion);
+            ModelGenerationHudState.state(requestId, ModelRequestState.COMPLETED, "restored Deep Thought result");
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client != null && saved.finalConclusion != null && !saved.finalConclusion.isBlank()) {
+                client.execute(() -> {
+                    ModelChatMessageBridge.addToChat(client, saved.finalConclusion);
+                    ModelGenerationHudState.messagePresented(requestId);
+                    CompletableFuture.runAsync(() -> DeepThoughtSessionStore.markFinalPresented(deepThoughtScope(), saved));
+                });
+            }
+            return true;
+        }
+        ModelConversation conversation = CONVERSATIONS.conversation(ModelConversationRegistry.GENERAL);
+        GenerationSession session = new GenerationSession(requestId, saved.originalQuestion, RequestMode.ASK_DEEP, conversation, saved);
+        SESSIONS.put(requestId, session);
+        ModelGenerationHudState.bindCancellation(requestId, session.cancellation);
+        if (saved.lifecycle == DeepThoughtSession.Lifecycle.PAUSED) session.deepThought.resume();
+        session.submitGeneration();
+        return true;
+    }
+
+    public static void restoreDeepThoughtForCurrentScope() {
+        initialize();
+        String scope = deepThoughtScope();
+        DeepThoughtSession saved = DeepThoughtSessionStore.newestRestorable(scope);
+        if (saved == null) return;
+        String restoreIdentity = scope + ":" + saved.deepThoughtSessionId + ":" + saved.updatedAtMillis;
+        if (restoreIdentity.equals(RESTORED_DEEP_THOUGHT_IDENTITY.getAndSet(restoreIdentity))) return;
+        if (saved.lifecycle == DeepThoughtSession.Lifecycle.COMPLETED) {
+            UUID requestId = UUID.randomUUID();
+            ModelGenerationHudState.begin(requestId, saved.originalQuestion, false);
+            ModelGenerationHudState.replaceText(requestId, saved.finalConclusion);
+            ModelGenerationHudState.state(requestId, ModelRequestState.COMPLETED, "restored Deep Thought result");
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client != null && saved.finalConclusion != null && !saved.finalConclusion.isBlank()) {
+                client.execute(() -> {
+                    ModelChatMessageBridge.addToChat(client, saved.finalConclusion);
+                    ModelGenerationHudState.messagePresented(requestId);
+                    CompletableFuture.runAsync(() -> DeepThoughtSessionStore.markFinalPresented(scope, saved));
+                });
+            }
+            return;
+        }
+        if (!resumeDeepThought(saved.deepThoughtSessionId)) {
+            RESTORED_DEEP_THOUGHT_IDENTITY.compareAndSet(restoreIdentity, "");
+        }
+    }
+
+    public static void clearDeepThoughtLifecycleRestoreIdentity() {
+        RESTORED_DEEP_THOUGHT_IDENTITY.set("");
     }
 
     public static boolean automationPrompt(String prompt) {
@@ -97,11 +181,21 @@ public final class LocalModelService {
         if (!AutomationModeController.isAutomationMode()) {
             return false;
         }
+        LocalModelAutomationEligibility.Evaluation eligibility = selectedAutomationEligibility();
+        if (!eligibility.eligible() && !experimentalAutomationAllowed()) {
+            revokeIneligibleAutomation(eligibility, true);
+            return false;
+        }
         return submitPrompt(prompt, RequestMode.AUTOMATION, echoLocalPrompt);
     }
 
     public static void prepareAutomationMode() {
         initialize();
+        LocalModelAutomationEligibility.Evaluation eligibility = currentAutomationEligibility();
+        if (!eligibility.eligible() && !experimentalAutomationAllowed()) {
+            revokeIneligibleAutomation(eligibility, true);
+            return;
+        }
         MinecraftClient client = MinecraftClient.getInstance();
         runtime.prepareSelectedProvider().whenComplete((health, failure) -> {
             MinecraftClient current = MinecraftClient.getInstance();
@@ -135,20 +229,20 @@ public final class LocalModelService {
             return false;
         }
         ModelVoiceService.stopSpeaking("new model prompt accepted");
-        String conversationId = mode == RequestMode.ASK
+        String conversationId = mode != RequestMode.AUTOMATION
                 ? ModelConversationRegistry.GENERAL
                 : ModelConversationRegistry.AUTOMATION;
         if (echoLocalPrompt) {
             LocalModelPromptChatBridge.addLocalPrompt(client, normalized);
         }
         ModelConversation conversation = CONVERSATIONS.conversation(conversationId);
-        conversation.add(ModelMessage.user(normalized));
         UUID requestId = UUID.randomUUID();
         if (mode == RequestMode.AUTOMATION) {
             AutomationModeController.executing("model generation");
         }
         ModelGenerationHudState.begin(requestId, normalized, mode == RequestMode.AUTOMATION);
         GenerationSession session = new GenerationSession(requestId, normalized, mode, conversation);
+        SESSIONS.put(requestId, session);
         ModelGenerationHudState.bindCancellation(requestId, session.cancellation);
         session.submitGeneration();
         return true;
@@ -220,9 +314,66 @@ public final class LocalModelService {
         return runtime.queueDepth();
     }
 
+    public static List<QueuedPrompt> queuedPrompts() {
+        return SESSIONS.values().stream()
+                .filter(session -> !session.dispatched.get() && !session.terminal.get())
+                .sorted(java.util.Comparator.comparingLong(session -> session.createdAtMillis))
+                .map(session -> new QueuedPrompt(
+                        session.displayId, session.mode.name().toLowerCase(java.util.Locale.ROOT),
+                        session.prompt, session.promptRevision
+                ))
+                .toList();
+    }
+
+    public static boolean editQueuedPrompt(UUID displayId, long expectedRevision, String prompt) {
+        GenerationSession session = displayId == null ? null : SESSIONS.get(displayId);
+        return session != null && session.editQueuedPrompt(expectedRevision, prompt);
+    }
+
+    public record QueuedPrompt(UUID requestId, String mode, String prompt, long revision) {}
+
     public static int configuredContextWindowTokens() {
         initialize();
         return runtime.selectedMaximumContextTokens();
+    }
+
+    public static boolean experimentalAutomationAllowed() {
+        initialize();
+        LocalModelCatalogEntry entry = LocalModelCatalog.find(selectedCatalogId()).orElse(null);
+        ModelCapabilityDescriptor provider = runtime.selectedCapabilities();
+        return AutomationModeController.isExperimentalCompactAgentEnabled()
+                && entry != null
+                && entry.toolCalling()
+                && provider != null
+                && provider.toolCalling();
+    }
+
+    public static ModelAgentCapabilityProfile selectedAgentProfile() {
+        initialize();
+        LocalModelCatalogEntry entry = LocalModelCatalog.find(selectedCatalogId()).orElse(null);
+        ModelCapabilityDescriptor provider = runtime.selectedCapabilities();
+        int estimate = entry == null ? 0 : entry.complexReasoningEstimatePercent();
+        double parameters = selectedModelParametersBillions();
+        boolean toolCalling = entry != null && entry.toolCalling() && provider != null && provider.toolCalling();
+        boolean staged = parameters <= 4.0D || estimate <= 50;
+        ModelAgentCapabilityProfile.ToolReliability reliability = !toolCalling
+                ? ModelAgentCapabilityProfile.ToolReliability.NONE
+                : estimate >= 65 && parameters > 3.5D
+                ? ModelAgentCapabilityProfile.ToolReliability.RELIABLE
+                : ModelAgentCapabilityProfile.ToolReliability.WEAK;
+        return new ModelAgentCapabilityProfile(
+                configuredModelId(), selectedProviderId(), reliability,
+                estimate >= 55, estimate >= 70 && parameters >= 7.0D,
+                staged ? 6 : 16,
+                estimate >= 70 ? ModelAgentCapabilityProfile.PlanningReliability.RELIABLE
+                        : estimate >= 45 ? ModelAgentCapabilityProfile.PlanningReliability.NORMAL
+                        : ModelAgentCapabilityProfile.PlanningReliability.WEAK,
+                provider == null ? 0 : provider.maximumContextTokens(),
+                parameters >= 7.0D, true, estimate >= 75,
+                staged ? 2 : 4,
+                "colibri".equals(selectedProviderId()) ? "anthropic_tool_use" : "openai_tool_calls",
+                staged
+        );
     }
 
     public static String selectedProviderId() {
@@ -238,6 +389,37 @@ public final class LocalModelService {
     public static String selectedCatalogId() {
         initialize();
         return selection.catalogId();
+    }
+
+    public static LocalModelAutomationEligibility.Evaluation selectedAutomationEligibility() {
+        initialize();
+        return currentAutomationEligibility();
+    }
+
+    private static LocalModelAutomationEligibility.Evaluation currentAutomationEligibility() {
+        LocalModelCatalogEntry entry = LocalModelCatalog.find(selection.catalogId()).orElse(null);
+        return LocalModelAutomationEligibility.evaluate(entry);
+    }
+
+    public static void revokeIneligibleAutomation(
+            LocalModelAutomationEligibility.Evaluation eligibility,
+            boolean showFeedback
+    ) {
+        if (eligibility == null || eligibility.eligible()) {
+            return;
+        }
+        AutomationModeController.unavailable(eligibility.detail());
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null) {
+            client.execute(() -> {
+                if (AutomationRouter.isTaskRunning()) {
+                    AutomationRouter.cancelCurrentTask("selected model is below the Automation complexity requirement");
+                }
+            });
+        }
+        if (showFeedback && client != null) {
+            client.execute(() -> LocalModelControlChatFeedback.error(eligibility.detail()));
+        }
     }
 
     public static CompletableFuture<Boolean> selectInstalledCatalogModel(String catalogId) {
@@ -302,7 +484,7 @@ public final class LocalModelService {
         String languageContract = """
                 Reply only in the language used by the latest user message. For English input, use English only; never switch languages unless explicitly asked.
                 """;
-        if (mode == RequestMode.ASK) {
+        if (mode == RequestMode.ASK || mode == RequestMode.ASK_DEEP) {
             return LocalModelSystemPrompt.load() + """
 
                     /ask is conversational and has no tools. Never claim to run code, commands, KTL, automation, or Minecraft actions. Command links are suggestions only.
@@ -338,40 +520,105 @@ public final class LocalModelService {
         }
     }
 
-    private static final class GenerationSession {
+    private static List<ModelToolDefinition> readOnlyDeepThoughtTools(String prompt) {
+        List<ModelToolDefinition> available = new ArrayList<>();
+        available.addAll(com.spirit.koil.api.model.tool.MinecraftKnowledgeModelToolRegistry.modelTools());
+        ModelWorkspaceToolRegistry.modelTools().stream()
+                .filter(tool -> Set.of("workspace.roots", "workspace.list", "workspace.read", "workspace.search").contains(tool.id()))
+                .forEach(available::add);
+        return List.copyOf(available);
+    }
+
+    private static String deepThoughtScope() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        String identity = "global";
+        if (client != null && client.getCurrentServerEntry() != null) {
+            identity = "server:" + client.getCurrentServerEntry().address;
+        } else if (client != null && client.isInSingleplayer()) {
+            String worldName = client.getServer() == null
+                    ? "current"
+                    : client.getServer().getSaveProperties().getLevelName();
+            identity = "singleplayer:" + worldName;
+        }
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(identity.getBytes(StandardCharsets.UTF_8))).substring(0, 24);
+        } catch (Exception ignored) {
+            return "global";
+        }
+    }
+
+    public static List<DeepThoughtSession> persistedDeepThoughtSessions() {
+        return DeepThoughtSessionStore.load(deepThoughtScope());
+    }
+
+    private static ModelRequestState deepThoughtRequestState(DeepThoughtSession.Phase phase) {
+        return switch (phase) {
+            case DEFINE, DECOMPOSE -> ModelRequestState.THINKING;
+            case DISCOVER, COLLECT -> ModelRequestState.INSPECTING;
+            case HYPOTHESIZE, CHALLENGE -> ModelRequestState.THINKING;
+            case TEST, VERIFY -> ModelRequestState.VALIDATING;
+            case RECONCILE -> ModelRequestState.OBSERVING_RESULT;
+            case SCORE, DECIDE -> ModelRequestState.THINKING;
+            case FINALIZE -> ModelRequestState.FINALIZING;
+        };
+    }
+
+    private static final class GenerationSession implements ModelFinalizationHandle, ModelDeepThoughtControl {
         private static final int MAXIMUM_IDENTICAL_CALLS = 2;
         private static final int MAXIMUM_IDENTICAL_RESPONSES = 2;
 
         private final UUID displayId;
-        private final String prompt;
+        private volatile String prompt;
         private final RequestMode mode;
         private final ModelConversation conversation;
         private final List<ModelToolDefinition> tools;
         private final AutomationThinkingPolicy.Decision thinking;
+        private final ConversationalReasoningPolicy.Decision conversationalThinking;
+        private final ModelAgentCapabilityProfile capabilityProfile;
+        private final DeepThoughtInvestigationController deepThought;
         private final boolean forcedPlanning;
         private final long startedAtMillis = System.currentTimeMillis();
         private final Map<String, Integer> repeatedCalls = new LinkedHashMap<>();
         private final Map<String, Integer> repeatedResponses = new LinkedHashMap<>();
         private final Set<String> completedToolIds = new LinkedHashSet<>();
         private final Set<String> requiredToolIds;
-        private final SessionCancellation cancellation = new SessionCancellation();
+        private final ModelDurableTaskState durableState;
+        private final ModelObjectiveLedger objectiveLedger;
+        private final SessionCancellation cancellation;
         private final AtomicBoolean terminal = new AtomicBoolean();
+        private final AtomicBoolean finalizationRequested = new AtomicBoolean();
+        private final AtomicBoolean dispatched = new AtomicBoolean();
+        private final long createdAtMillis = System.currentTimeMillis();
+        private volatile long promptRevision = 1L;
+        private final AtomicReference<ModelCancellationHandle> activeProviderRound = new AtomicReference<>();
+        private final AtomicReference<UUID> activeProviderRoundId = new AtomicReference<>();
+        private final AtomicReference<String> streamedVoiceResponse = new AtomicReference<>("");
         private int toolCallCount;
         private int toolResultsReceived;
         private int continuationCorrectionCount;
         private int askFormattingCorrectionCount;
         private int providerRoundCount;
+        private int emptyResponseCorrections;
         private boolean groundedAskCommandAttempted;
         private ValidatedAutomationPlan validatedPlan;
         private ReviewedPlanAuthorization planAuthorization;
         private PlanPhase planPhase = PlanPhase.NONE;
         private int planRevisionCount;
+        private String lastReplanEvidenceFingerprint = "";
 
         private GenerationSession(UUID displayId, String prompt, RequestMode mode, ModelConversation conversation) {
+            this(displayId, prompt, mode, conversation, null);
+        }
+
+        private GenerationSession(UUID displayId, String prompt, RequestMode mode, ModelConversation conversation,
+                                  DeepThoughtSession restoredDeepThought) {
             this.displayId = displayId;
+            this.cancellation = new SessionCancellation(displayId);
             this.prompt = prompt;
             this.mode = mode;
             this.conversation = conversation;
+            this.capabilityProfile = selectedAgentProfile();
             this.forcedPlanning = mode == RequestMode.AUTOMATION
                     && AutomationModeController.isPlanningModeEnabled();
             this.thinking = AutomationThinkingPolicy.evaluate(
@@ -380,15 +627,48 @@ public final class LocalModelService {
                             && AutomationModeController.isDeepThinkingEnabled(),
                     this.forcedPlanning
             );
+            int currentConversationCharacters = conversation.snapshot().stream()
+                    .mapToInt(message -> message.content().length()).sum();
+            this.conversationalThinking = mode == RequestMode.AUTOMATION
+                    ? null
+                    : ConversationalReasoningPolicy.evaluate(
+                            prompt,
+                            currentConversationCharacters,
+                            this.capabilityProfile,
+                            mode == RequestMode.ASK_DEEP
+                    );
             this.tools = mode == RequestMode.AUTOMATION
                     ? LocalModelToolCatalog.toolsForPrompt(prompt, this.thinking.includePlanTool())
+                    : mode == RequestMode.ASK_DEEP
+                    ? readOnlyDeepThoughtTools(prompt)
                     : List.of();
             this.requiredToolIds = mode == RequestMode.AUTOMATION
                     ? LocalModelToolCatalog.requiredToolIdsForPrompt(prompt)
                     : Set.of();
+            this.durableState = new ModelDurableTaskState(prompt, this.requiredToolIds);
+            this.objectiveLedger = mode == RequestMode.AUTOMATION
+                    ? ModelObjectiveLedger.parse(prompt)
+                    : ModelObjectiveLedger.parse("");
             if (mode == RequestMode.AUTOMATION) {
                 AutomationModeController.setDeepThinkingActive(this.thinking.deepActive());
             }
+            this.deepThought = mode == RequestMode.ASK_DEEP
+                    || mode == RequestMode.AUTOMATION && this.thinking.deepActive()
+                    ? new DeepThoughtInvestigationController(
+                            deepThoughtScope(),
+                            restoredDeepThought == null
+                                    ? new DeepThoughtSession(displayId.toString(), conversation.id(), prompt)
+                                    : restoredDeepThought
+                    )
+                    : null;
+            if (this.deepThought != null) {
+                ModelGenerationHudState.bindDeepThought(displayId, this);
+            }
+            ModelGenerationHudState.bindFinalization(displayId, this);
+            ModelGenerationHudState.setAnswerNowVisible(
+                    displayId,
+                    this.conversationalThinking != null && this.conversationalThinking.answerNowAvailable()
+            );
         }
 
         private void submitGeneration() {
@@ -396,12 +676,11 @@ public final class LocalModelService {
                 fail("cancelled", this.cancellation.cancellationReason(), null);
                 return;
             }
-            if (System.currentTimeMillis() - this.startedAtMillis > 10L * 60L * 1000L) {
-                fail("automation_budget_exceeded", "The model and automation request exceeded its ten-minute budget.", null);
-                return;
-            }
             this.providerRoundCount++;
-            if (this.providerRoundCount > this.thinking.maximumProviderRounds()) {
+            int maximumRounds = this.mode == RequestMode.AUTOMATION
+                    ? this.thinking.maximumProviderRounds()
+                    : this.conversationalThinking.maximumProviderRounds();
+            if (this.providerRoundCount > maximumRounds && !this.finalizationRequested.get()) {
                 fail(
                         "model_reasoning_loop",
                         "The model exceeded the bounded planning-round budget without reaching a final result.",
@@ -410,13 +689,52 @@ public final class LocalModelService {
                 return;
             }
             UUID providerRequestId = UUID.randomUUID();
-            ModelVoiceService.StreamingSpeech streamingSpeech = ModelVoiceService.beginStreaming();
+            this.activeProviderRoundId.set(providerRequestId);
+            boolean streamUserFacingVoice = this.mode == RequestMode.ASK
+                    || this.mode == RequestMode.ASK_DEEP
+                    && (this.finalizationRequested.get()
+                    || this.deepThought != null
+                    && this.deepThought.session().phase == DeepThoughtSession.Phase.FINALIZE);
+            ModelVoiceService.StreamingSpeech streamingSpeech = streamUserFacingVoice
+                    && ModelVoiceService.settings().enabled()
+                    ? ModelVoiceService.beginStreaming()
+                    : null;
             ModelGenerationHudState.replaceText(this.displayId, "");
-            String promptContract = systemPrompt(this.mode, !this.tools.isEmpty(), this.thinking);
-            List<ModelMessage> requestMessages = this.conversation.snapshotWithin(
+            List<ModelToolDefinition> requestTools = this.mode == RequestMode.AUTOMATION
+                    ? LocalModelToolCatalog.toolsForRound(
+                            this.prompt,
+                            this.thinking.includePlanTool(),
+                            this.capabilityProfile.stagedExecution(),
+                            this.toolResultsReceived > 0
+                    )
+                    : this.mode == RequestMode.ASK_DEEP && !this.finalizationRequested.get()
+                    ? this.tools
+                    : List.of();
+            if (this.mode == RequestMode.AUTOMATION && this.capabilityProfile.stagedExecution()) {
+                requestTools = limitToolsForProfile(requestTools, remainingRequiredToolIds(),
+                        this.capabilityProfile.maximumRecommendedToolsPerRound());
+            }
+            String promptContract = systemPrompt(this.mode, !requestTools.isEmpty(), this.thinking);
+            if (this.finalizationRequested.get()) {
+                promptContract += "\nAnswer Now is active. Produce one complete user-facing answer from the verified work already available. Do not begin optional analysis or a new tool action.";
+            }
+            if (this.deepThought != null) {
+                promptContract += "\n\nDeep Thought session " + this.deepThought.session().deepThoughtSessionId
+                        + " is in phase " + this.deepThought.session().phase.name().toLowerCase(java.util.Locale.ROOT)
+                        + ". Narrow task: " + this.deepThought.instruction()
+                        + "\nNever expose private chain-of-thought. Return only an intentional concise reasoning artifact or a registered read-only tool call.";
+                ModelGenerationHudState.state(this.displayId, deepThoughtRequestState(this.deepThought.session().phase),
+                        this.deepThought.session().phase.name().toLowerCase(java.util.Locale.ROOT));
+            }
+            if (this.mode == RequestMode.AUTOMATION && (this.toolResultsReceived > 0 || this.validatedPlan != null)) {
+                promptContract += "\n\n" + this.durableState.promptSummary();
+            }
+            List<ModelMessage> requestMessages = new ArrayList<>(this.conversation.snapshotWithin(
                     conversationMessageBudget(this.mode),
                     conversationCharacterBudget(this.mode)
-            );
+            ));
+            if (!this.dispatched.get()) requestMessages.add(ModelMessage.user(this.prompt));
+            requestMessages = List.copyOf(requestMessages);
             int requestContextCharacters = requestMessages.stream()
                     .mapToInt(message -> message.content().length())
                     .sum();
@@ -425,59 +743,173 @@ public final class LocalModelService {
                     this.mode.name().toLowerCase(java.util.Locale.ROOT)
                             + " | system_chars=" + promptContract.length()
                             + " | history_chars=" + requestContextCharacters
-                            + " | tools=" + this.tools.size()
+                            + " | tools=" + requestTools.size()
             );
             StreamingModelRequest request = new StreamingModelRequest(
                     providerRequestId,
                     this.conversation.id(),
                     promptContract,
                     requestMessages,
-                    this.tools,
-                    1024,
+                    this.finalizationRequested.get() ? List.of() : requestTools,
+                    this.mode == RequestMode.AUTOMATION
+                            ? (this.capabilityProfile.stagedExecution() ? 768 : 1280)
+                            : this.conversationalThinking.maximumOutputTokens(),
                     configuration.requestTimeout(),
                     Map.of(
                             "cache_slot", this.mode == RequestMode.AUTOMATION && configuration.kvSlots() > 1 ? "1" : "0",
-                            "mode", this.mode == RequestMode.ASK ? "ask" : "automation",
+                            "mode", this.mode == RequestMode.AUTOMATION ? "automation"
+                                    : this.mode == RequestMode.ASK_DEEP ? "ask_deep" : "ask",
                             "tool_registry_version", this.mode == RequestMode.AUTOMATION
                                     ? LocalModelToolCatalog.version()
                                     : "",
-                            "tool_count", Integer.toString(this.tools.size()),
+                            "tool_count", Integer.toString(requestTools.size()),
                             "context_characters", Integer.toString(requestContextCharacters),
-                            "system_prompt_characters", Integer.toString(promptContract.length())
+                            "system_prompt_characters", Integer.toString(promptContract.length()),
+                            "display_request_id", this.displayId.toString(),
+                            "reasoning_depth", this.mode == RequestMode.AUTOMATION
+                                    ? this.thinking.depth().name().toLowerCase(java.util.Locale.ROOT)
+                                    : this.conversationalThinking.depth().name().toLowerCase(java.util.Locale.ROOT),
+                            "staged_execution", Boolean.toString(this.capabilityProfile.stagedExecution())
                     )
             );
             ManagedModelRequest managed = runtime.submit(request, new StreamingModelObserver() {
                 @Override
                 public void onState(UUID id, ModelRequestState state, String detail) {
-                    if (!state.terminal()) {
+                    if (providerRequestId.equals(activeProviderRoundId.get()) && !state.terminal()) {
+                        if (state != ModelRequestState.QUEUED && dispatched.compareAndSet(false, true)) {
+                            conversation.add(ModelMessage.user(prompt));
+                        }
                         ModelGenerationHudState.state(displayId, state, detail);
                     }
                 }
 
                 @Override
                 public void onTextDelta(UUID id, String delta) {
-                    ModelGenerationHudState.append(displayId, delta);
-                    streamingSpeech.accept(delta);
+                    if (providerRequestId.equals(activeProviderRoundId.get())) {
+                        ModelGenerationHudState.append(displayId, delta);
+                        if (streamingSpeech != null) {
+                            streamingSpeech.accept(delta);
+                        }
+                    }
                 }
 
                 @Override
                 public void onUsage(UUID id, ModelUsage usage) {
-                    ModelGenerationHudState.usage(displayId, usage);
+                    if (providerRequestId.equals(activeProviderRoundId.get())) {
+                        ModelGenerationHudState.usage(displayId, usage);
+                    }
                 }
 
                 @Override
                 public void onComplete(StreamingModelResponse response) {
-                    streamingSpeech.finish();
-                    handleResponse(response);
+                    if (providerRequestId.equals(activeProviderRoundId.get())) {
+                        if (streamingSpeech != null) {
+                            streamingSpeech.finish();
+                            streamedVoiceResponse.set(response == null ? "" : response.text());
+                        }
+                        handleResponse(response);
+                    } else if (streamingSpeech != null) {
+                        streamingSpeech.discard();
+                    }
                 }
 
                 @Override
                 public void onFailure(UUID id, String code, String detail, Throwable cause) {
-                    streamingSpeech.finish();
+                    if (streamingSpeech != null) {
+                        streamingSpeech.discard();
+                    }
+                    if (!providerRequestId.equals(activeProviderRoundId.get())) {
+                        return;
+                    }
+                    if (finalizationRequested.get() && !terminal.get()
+                            && ("cancelled".equals(code) || "request_cancelled".equals(code))) {
+                        submitGeneration();
+                        return;
+                    }
                     fail(code, detail, cause);
                 }
             });
+            this.activeProviderRound.set(managed.cancellation());
             this.cancellation.bind(managed.cancellation());
+        }
+
+        private synchronized boolean editQueuedPrompt(long expectedRevision, String replacement) {
+            String normalized = replacement == null ? "" : replacement.strip();
+            UUID providerId = this.activeProviderRoundId.get();
+            if (this.dispatched.get() || this.terminal.get() || normalized.isBlank()
+                    || expectedRevision != this.promptRevision || providerId == null
+                    || !runtime.replaceQueuedPrompt(providerId, expectedRevision, normalized)) {
+                return false;
+            }
+            this.prompt = normalized;
+            this.promptRevision++;
+            ModelGenerationHudState.replacePrompt(this.displayId, normalized);
+            return true;
+        }
+
+        @Override
+        public boolean requestAnswerNow() {
+            if (this.mode == RequestMode.AUTOMATION || this.terminal.get()
+                    || !this.finalizationRequested.compareAndSet(false, true)) {
+                return false;
+            }
+            ModelVoiceService.stopSpeaking("answer now requested");
+            if (this.deepThought != null) this.deepThought.answerNow();
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.FINALIZING, "answer now requested");
+            this.conversation.add(ModelMessage.user(
+                    "Answer now from the useful work already completed. Do not perform more optional analysis. "
+                            + "State limitations and unresolved uncertainty truthfully."
+            ));
+            ModelCancellationHandle round = this.activeProviderRound.get();
+            if (round != null) {
+                round.cancel("answer now requested");
+            }
+            submitGeneration();
+            return true;
+        }
+
+        @Override
+        public boolean isFinalizationRequested() {
+            return this.finalizationRequested.get();
+        }
+
+        @Override
+        public boolean pause() {
+            if (this.deepThought == null || this.terminal.get()
+                    || this.deepThought.session().lifecycle == DeepThoughtSession.Lifecycle.PAUSED) return false;
+            this.deepThought.pause();
+            ModelCancellationHandle round = this.activeProviderRound.get();
+            this.activeProviderRoundId.set(null);
+            if (round != null) round.cancel("deep thought paused");
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.PAUSED, "deep thought paused");
+            return true;
+        }
+
+        @Override
+        public boolean resume() {
+            if (this.deepThought == null || this.terminal.get()
+                    || this.deepThought.session().lifecycle != DeepThoughtSession.Lifecycle.PAUSED) return false;
+            this.deepThought.resume();
+            submitGeneration();
+            return true;
+        }
+
+        @Override
+        public ModelDeepThoughtControl.Status status() {
+            if (this.deepThought == null) return null;
+            DeepThoughtSession session = this.deepThought.session();
+            return new ModelDeepThoughtControl.Status(
+                    session.deepThoughtSessionId, session.phase.name().toLowerCase(java.util.Locale.ROOT),
+                    session.activeMillis, session.evidence.size(),
+                    (int) session.claims.stream().filter(claim -> "supported".equals(claim.state()) || "independently_verified".equals(claim.state())).count(),
+                    (int) session.claims.stream().filter(claim -> !"supported".equals(claim.state()) && !"independently_verified".equals(claim.state())).count(),
+                    session.hypotheses.size(),
+                    (int) session.contradictions.stream().filter(value -> !"resolved".equals(value.state())).count(),
+                    (int) session.tests.stream().filter(value -> "passed".equals(value.state())).count(),
+                    (int) session.tests.stream().filter(value -> "failed".equals(value.state())).count(),
+                    session.confidence, session.lastMeaningfulDiscovery,
+                    session.lifecycle == DeepThoughtSession.Lifecycle.PAUSED
+            );
         }
 
         private int conversationMessageBudget(RequestMode requestMode) {
@@ -485,6 +917,25 @@ public final class LocalModelService {
                 return 20;
             }
             return selectedModelParametersBillions() <= 3.5D ? 16 : 24;
+        }
+
+        private static List<ModelToolDefinition> limitToolsForProfile(
+                List<ModelToolDefinition> tools,
+                Set<String> required,
+                int maximum
+        ) {
+            if (tools.size() <= maximum || maximum <= 0) return tools;
+            LinkedHashMap<String, ModelToolDefinition> selected = new LinkedHashMap<>();
+            for (ModelToolDefinition tool : tools) if (required.contains(tool.id())) selected.put(tool.id(), tool);
+            for (String id : List.of(AutomationPlanModelToolRegistry.TOOL_ID, "workspace.read", "workspace.search",
+                    "minecraft.knowledge", "automation.cancel")) {
+                tools.stream().filter(tool -> id.equals(tool.id())).findFirst().ifPresent(tool -> selected.put(tool.id(), tool));
+            }
+            for (ModelToolDefinition tool : tools) {
+                if (selected.size() >= maximum) break;
+                selected.putIfAbsent(tool.id(), tool);
+            }
+            return selected.values().stream().limit(maximum).toList();
         }
 
         private int conversationCharacterBudget(RequestMode requestMode) {
@@ -500,6 +951,19 @@ public final class LocalModelService {
 
         private void handleResponse(StreamingModelResponse response) {
             if (this.terminal.get()) {
+                return;
+            }
+            if (response != null && response.text().isBlank() && response.toolCalls().isEmpty()) {
+                if (this.emptyResponseCorrections++ < 2) {
+                    this.conversation.add(ModelMessage.user(
+                            "The provider returned no visible answer or tool call. Return one concise non-empty answer, "
+                                    + "or one valid supported tool call if this mode permits tools."
+                    ));
+                    ModelGenerationHudState.state(this.displayId, ModelRequestState.RETRYING, "repairing empty response");
+                    submitGeneration();
+                } else {
+                    fail("empty_response", "The provider repeatedly returned no visible answer or tool call.", null);
+                }
                 return;
             }
             String responseFingerprint = responseFingerprint(response);
@@ -519,6 +983,10 @@ public final class LocalModelService {
                             + " | tools=" + response.toolCalls().size()
                             + " | finish=" + response.providerFinishReason()
             );
+            if (this.mode == RequestMode.ASK_DEEP) {
+                handleDeepThoughtResponse(response);
+                return;
+            }
             if (this.mode != RequestMode.AUTOMATION) {
                 validateAskCommandResponse(this.prompt, response.text()).whenComplete((validation, failure) -> {
                     if (this.terminal.get()) {
@@ -594,6 +1062,61 @@ public final class LocalModelService {
             handleToolCalls(response.text(), response.toolCalls(), 0, false);
         }
 
+        private void handleDeepThoughtResponse(StreamingModelResponse response) {
+            if (!response.toolCalls().isEmpty()) {
+                archiveVisibleSummary(response.text());
+                handleDeepThoughtToolCalls(response.text(), response.toolCalls(), 0);
+                return;
+            }
+            if (this.finalizationRequested.get()
+                    || this.deepThought.session().phase == DeepThoughtSession.Phase.FINALIZE) {
+                this.deepThought.complete(response.text());
+                complete(response.text());
+                return;
+            }
+            archiveVisibleSummary(response.text());
+            this.conversation.add(ModelMessage.assistant(response.text()));
+            boolean finalize = this.deepThought.acceptRoundSummary(visiblePlanSummary(response.text()));
+            if (finalize) {
+                this.conversation.add(ModelMessage.user(this.deepThought.instruction()));
+            } else {
+                this.conversation.add(ModelMessage.user(
+                        "Continue the evidence-driven investigation with only this next bounded task: "
+                                + this.deepThought.instruction()
+                ));
+            }
+            submitGeneration();
+        }
+
+        private void handleDeepThoughtToolCalls(String assistantText, List<ModelToolCall> calls, int index) {
+            if (index >= calls.size()) {
+                this.conversation.add(ModelMessage.user(
+                        "Interpret the returned read-only evidence without claiming any side effect. "
+                                + this.deepThought.instruction()
+                ));
+                submitGeneration();
+                return;
+            }
+            ModelToolCall call = calls.get(index);
+            this.conversation.add(ModelMessage.assistantToolCall(index == 0 ? assistantText : "", call));
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.INSPECTING, call.toolId());
+            DeepThoughtReadOnlyToolCoordinator.execute(call).whenComplete((result, failure) -> {
+                ModelToolResult resolved = failure == null ? result : new ModelToolResult(
+                        call.id(), call.toolId(), "failed", new com.google.gson.JsonObject(),
+                        "deep_thought_tool_failed", message(failure)
+                );
+                recordToolResult(resolved);
+                ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
+                        this.displayId, this.deepThought.session().deepThoughtSessionId,
+                        "event-" + UUID.randomUUID(), ModelExecutionEvent.Type.TOOL_RESULT,
+                        ModelRequestState.OBSERVING_RESULT,
+                        resolved.status() + " — " + abbreviate(resolved.detail(), 300),
+                        resolved.output(), System.currentTimeMillis()
+                ));
+                handleDeepThoughtToolCalls("", calls, index + 1);
+            });
+        }
+
         private void validateAndReviewPlan(String assistantText, ModelToolCall planCall) {
             if (this.toolCallCount >= this.thinking.maximumToolCalls()) {
                 fail("tool_call_budget_exceeded", "The model exceeded the tool-call budget while planning.", null);
@@ -602,7 +1125,7 @@ public final class LocalModelService {
             this.toolCallCount++;
             ModelGenerationHudState.toolCallCount(this.displayId, this.toolCallCount);
             this.conversation.add(ModelMessage.assistantToolCall(assistantText, planCall));
-            ModelGenerationHudState.state(this.displayId, ModelRequestState.EXECUTING_TOOL, "validating plan");
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.VALIDATING_PLAN, "validating plan");
             AutomationModeController.setPlanningActive(true);
             AutomationToolCoordinator.execute(this.displayId, planCall, false)
                     .whenComplete((result, failure) -> {
@@ -610,7 +1133,7 @@ public final class LocalModelService {
                             fail("plan_validation_failed", message(failure), failure);
                             return;
                         }
-                        this.conversation.add(ModelMessage.toolResult(result));
+                        recordToolResult(result);
                         if (!"completed".equals(result.status())) {
                             requestPlanRevision(
                                     result.detail().isBlank()
@@ -623,6 +1146,7 @@ public final class LocalModelService {
                         }
                         try {
                             this.validatedPlan = ValidatedAutomationPlan.from(result);
+                            this.durableState.plan(this.validatedPlan.id());
                         } catch (RuntimeException invalid) {
                             fail("invalid_plan_result", message(invalid), invalid);
                             return;
@@ -662,7 +1186,12 @@ public final class LocalModelService {
             }
             message.append("\nApproval authorizes only these exact validated steps. "
                     + "Changed or additional side effects require another reviewed plan.");
-            ModelGenerationHudState.state(this.displayId, ModelRequestState.EXECUTING_TOOL, "plan review");
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.WAITING_FOR_PLAN_APPROVAL, "plan review");
+            ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
+                    this.displayId, plan.id(), "approval-" + UUID.randomUUID(),
+                    ModelExecutionEvent.Type.APPROVAL_REQUESTED, ModelRequestState.WAITING_FOR_PLAN_APPROVAL,
+                    "Review exact validated plan " + plan.id(), new com.google.gson.JsonObject(), System.currentTimeMillis()
+            ));
             ModelGenerationHudState.requestApproval(
                             this.displayId,
                             "Review automation plan",
@@ -709,6 +1238,11 @@ public final class LocalModelService {
                         this.planPhase = PlanPhase.APPROVED;
                         this.planAuthorization = new ReviewedPlanAuthorization(plan);
                         this.planAuthorization.approve();
+                        ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
+                                this.displayId, plan.id(), "approval-" + UUID.randomUUID(),
+                                ModelExecutionEvent.Type.APPROVAL_ACCEPTED, ModelRequestState.PLANNING,
+                                "Approved exact steps in " + plan.id(), new com.google.gson.JsonObject(), System.currentTimeMillis()
+                        ));
                         ModelGenerationHudState.appendEvent(
                                 this.displayId,
                                 ModelGenerationHudState.ActivityEventType.RESULT,
@@ -784,9 +1318,8 @@ public final class LocalModelService {
                             return;
                         }
                         this.toolResultsReceived++;
-                        this.conversation.add(ModelMessage.toolResult(result));
-                        boolean successful = "completed".equals(result.status())
-                                || "submitted".equals(result.status());
+                        recordToolResult(result);
+                        boolean successful = result.completedAndValidated();
                         if (successful) {
                             this.completedToolIds.add(step.toolId());
                             ModelGenerationHudState.updatePlanStep(
@@ -817,12 +1350,28 @@ public final class LocalModelService {
             String safeDetail = detail == null || detail.isBlank()
                     ? result == null ? "step failed" : result.status()
                     : detail;
+            String evidenceFingerprint = step.id() + "|" + (result == null ? "exception" : result.status()
+                    + "|" + result.failureCode() + "|" + result.output());
+            if (evidenceFingerprint.equals(this.lastReplanEvidenceFingerprint)) {
+                AutomationModeController.setPlanningActive(false);
+                complete("The plan stopped because the same failure produced no new evidence. No replacement action was executed.");
+                return;
+            }
+            this.lastReplanEvidenceFingerprint = evidenceFingerprint;
             ModelGenerationHudState.updatePlanStep(
                     this.displayId,
                     step.index(),
                     ModelGenerationHudState.PlanStepStatus.FAILED,
                     safeDetail
             );
+            if (this.validatedPlan != null) {
+                for (ValidatedAutomationPlan.Step remaining : this.validatedPlan.steps()) {
+                    if (remaining.index() > step.index()) {
+                        ModelGenerationHudState.updatePlanStep(this.displayId, remaining.index(),
+                                ModelGenerationHudState.PlanStepStatus.REVISED, "invalidated by changed observation");
+                    }
+                }
+            }
             ModelGenerationHudState.appendEvent(
                     this.displayId,
                     ModelGenerationHudState.ActivityEventType.FAILURE,
@@ -870,14 +1419,14 @@ public final class LocalModelService {
             if (rejectedCalls != null) {
                 for (ModelToolCall call : rejectedCalls) {
                     this.conversation.add(ModelMessage.assistantToolCall("", call));
-                    this.conversation.add(ModelMessage.toolResult(new ModelToolResult(
+                    recordToolResult(new ModelToolResult(
                             call.id(),
                             call.toolId(),
                             "rejected",
                             new com.google.gson.JsonObject(),
                             "plan_review_required",
                             reason
-                    )));
+                    ));
                 }
             }
             ModelGenerationHudState.markPlanRevised(this.displayId);
@@ -892,7 +1441,7 @@ public final class LocalModelService {
                     reason + " Submit automation.plan alone with all intended ordered side effects. "
                             + "The revised plan must be reviewed before execution."
             ));
-            ModelGenerationHudState.state(this.displayId, ModelRequestState.PREPARING_CONTEXT, "replanning");
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.REPLANNING, "replanning");
             submitGeneration();
         }
 
@@ -915,7 +1464,7 @@ public final class LocalModelService {
                 message.append('\n');
             }
             message.append("\nThis approval applies only to this request. Later actions ask again.");
-            ModelGenerationHudState.state(this.displayId, ModelRequestState.EXECUTING_TOOL, "approval");
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.WAITING_FOR_ACTION_APPROVAL, "approval");
             ModelGenerationHudState.requestApproval(
                             this.displayId,
                             calls.size() == 1 ? "Automation action" : "Automation actions",
@@ -943,14 +1492,14 @@ public final class LocalModelService {
                 this.toolCallCount++;
                 this.repeatedCalls.merge(call.toolId() + ":" + call.arguments(), 1, Integer::sum);
                 this.conversation.add(ModelMessage.assistantToolCall(index == 0 ? assistantText : "", call));
-                this.conversation.add(ModelMessage.toolResult(new ModelToolResult(
+                recordToolResult(new ModelToolResult(
                         call.id(),
                         call.toolId(),
                         "rejected",
                         new com.google.gson.JsonObject(),
                         "user_declined_batch",
                         "The player declined the requested group of automation actions."
-                )));
+                ));
             }
             ModelGenerationHudState.toolCallCount(this.displayId, this.toolCallCount);
             ModelGenerationHudState.state(this.displayId, ModelRequestState.WAITING_FOR_TOOL_RESULT, "denied");
@@ -1009,10 +1558,10 @@ public final class LocalModelService {
                     return;
                 }
                 this.toolResultsReceived++;
-                if ("completed".equals(toolResult.status()) || "submitted".equals(toolResult.status())) {
+                if (toolResult.completedAndValidated()) {
                     this.completedToolIds.add(call.toolId());
                 }
-                this.conversation.add(ModelMessage.toolResult(toolResult));
+                recordToolResult(toolResult);
                 String resultDetail = toolResult.status();
                 if (!toolResult.failureCode().isBlank()) {
                     resultDetail += " | " + toolResult.failureCode();
@@ -1045,7 +1594,18 @@ public final class LocalModelService {
                                 ? ""
                                 : " | failure=" + toolResult.failureCode())
                 );
-                handleToolCalls("", calls, index + 1, preapproved);
+                if (toolResult.completedAndValidated()) {
+                    handleToolCalls("", calls, index + 1, preapproved);
+                } else {
+                    this.conversation.add(ModelMessage.user(
+                            "The previous tool did not produce validated completion. Status: "
+                                    + toolResult.status() + "; failure: " + toolResult.failureCode()
+                                    + "; detail: " + abbreviate(toolResult.detail(), 500)
+                                    + ". Inspect the observation and choose a changed retry, a supported replan, or report the limitation."
+                    ));
+                    ModelGenerationHudState.state(this.displayId, ModelRequestState.OBSERVING_RESULT, "result requires recovery");
+                    submitGeneration();
+                }
             });
         }
 
@@ -1210,12 +1770,27 @@ public final class LocalModelService {
         }
 
         private Set<String> remainingRequiredToolIds() {
-            if (this.requiredToolIds.isEmpty()) {
-                return Set.of();
-            }
-            LinkedHashSet<String> remaining = new LinkedHashSet<>(this.requiredToolIds);
-            remaining.removeAll(this.completedToolIds);
-            return Set.copyOf(remaining);
+            return this.objectiveLedger.pendingToolIds();
+        }
+
+        private void recordToolResult(ModelToolResult result) {
+            this.conversation.add(ModelMessage.toolResult(result));
+            this.durableState.record(result);
+            this.objectiveLedger.record(result);
+            if (this.deepThought != null) this.deepThought.recordToolResult(result);
+            ModelExecutionEvent.Type type = result.toolId().startsWith("workspace.")
+                    ? result.output().has("diffHunks") ? ModelExecutionEvent.Type.DIFF_PRODUCED : ModelExecutionEvent.Type.FILE_READ
+                    : result.toolId().startsWith("development.") ? ModelExecutionEvent.Type.COMMAND_COMPLETED
+                    : ModelExecutionEvent.Type.TOOL_RESULT;
+            ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
+                    this.displayId,
+                    this.validatedPlan == null ? this.displayId.toString() : this.validatedPlan.id(),
+                    "event-" + UUID.randomUUID(), type,
+                    result.completedAndValidated() ? ModelRequestState.OBSERVING_RESULT : ModelRequestState.RETRYING,
+                    result.toolId() + " — " + result.status()
+                            + (result.detail().isBlank() ? "" : ": " + abbreviate(result.detail(), 260)),
+                    result.output(), System.currentTimeMillis()
+            ));
         }
 
         private static boolean asksForMinecraftCommand(String prompt) {
@@ -1261,6 +1836,7 @@ public final class LocalModelService {
         }
 
         private void complete(String text) {
+            boolean voiceAlreadyStreamed = text != null && text.equals(this.streamedVoiceResponse.getAndSet(""));
             RichChatModelOutputSanitizer.Result sanitized = RichChatModelOutputSanitizer.sanitize(text);
             if (sanitized.text().isBlank()) {
                 fail("empty_response", "The model generated no visible text.", null);
@@ -1269,26 +1845,28 @@ public final class LocalModelService {
             if (!this.terminal.compareAndSet(false, true)) {
                 return;
             }
+            SESSIONS.remove(this.displayId, this);
             if (this.mode == RequestMode.AUTOMATION) {
                 AutomationModeController.setDeepThinkingActive(false);
                 AutomationModeController.setPlanningActive(false);
             }
-            String visibleActivity = this.mode == RequestMode.AUTOMATION
-                    ? ModelGenerationHudState.activity(this.displayId).strip()
-                    : "";
-            String finalized = visibleActivity.isBlank()
-                    ? sanitized.text()
-                    : "**Activity**\n" + visibleActivity + "\n\n**Result**\n" + sanitized.text();
-            RichChatModelOutputSanitizer.Result finalSanitized =
-                    RichChatModelOutputSanitizer.sanitize(finalized);
+            if (this.deepThought != null && this.deepThought.session().lifecycle != DeepThoughtSession.Lifecycle.COMPLETED) {
+                this.deepThought.complete(sanitized.text());
+            }
             this.conversation.add(ModelMessage.assistant(sanitized.text()));
-            ModelGenerationHudState.replaceText(this.displayId, finalSanitized.text());
+            ModelGenerationHudState.replaceText(this.displayId, sanitized.text());
             ModelGenerationHudState.state(this.displayId, ModelRequestState.COMPLETED, "response added to chat");
+            if (!voiceAlreadyStreamed) {
+                ModelVoiceService.speakFinalAnswer(sanitized.text());
+            }
             MinecraftClient current = MinecraftClient.getInstance();
             if (current != null) {
                 current.execute(() -> {
-                    ModelChatMessageBridge.addToChat(current, finalSanitized.text());
-                    ModelGenerationHudState.dismiss(this.displayId);
+                    ModelChatMessageBridge.addToChat(current, sanitized.text());
+                    ModelGenerationHudState.messagePresented(this.displayId);
+                    if (this.deepThought != null) {
+                        CompletableFuture.runAsync(this.deepThought::markFinalPresented);
+                    }
                     if (this.mode == RequestMode.AUTOMATION && AutomationModeController.isAutomationMode()) {
                         AutomationModeController.ready("local model ready");
                     }
@@ -1304,6 +1882,9 @@ public final class LocalModelService {
                         ModelGenerationHudState.ActivityEventType.THOUGHT_SUMMARY,
                         visiblePlanSummary(summary.text())
                 );
+                if (this.deepThought != null && this.mode == RequestMode.AUTOMATION) {
+                    this.deepThought.acceptRoundSummary(visiblePlanSummary(summary.text()));
+                }
             }
             ModelGenerationHudState.replaceText(this.displayId, "");
         }
@@ -1396,9 +1977,14 @@ public final class LocalModelService {
             if (!this.terminal.compareAndSet(false, true)) {
                 return;
             }
+            SESSIONS.remove(this.displayId, this);
             if (this.mode == RequestMode.AUTOMATION) {
                 AutomationModeController.setDeepThinkingActive(false);
                 AutomationModeController.setPlanningActive(false);
+            }
+            if (this.deepThought != null) {
+                if ("cancelled".equals(code)) this.deepThought.cancel();
+                else this.deepThought.pause();
             }
             String safeCode = code == null || code.isBlank() ? "failed" : code;
             String safeDetail = detail == null || detail.isBlank() ? safeCode : detail;
@@ -1441,9 +2027,14 @@ public final class LocalModelService {
     }
 
     private static final class SessionCancellation implements ModelCancellationHandle {
+        private final UUID displayId;
         private final AtomicBoolean cancelled = new AtomicBoolean();
         private final AtomicReference<ModelCancellationHandle> active = new AtomicReference<>();
         private volatile String reason = "";
+
+        private SessionCancellation(UUID displayId) {
+            this.displayId = displayId;
+        }
 
         private void bind(ModelCancellationHandle handle) {
             this.active.set(handle);
@@ -1466,6 +2057,7 @@ public final class LocalModelService {
             if (client != null && AutomationRouter.isTaskRunning()) {
                 client.execute(() -> AutomationRouter.cancelCurrentTask(this.reason));
             }
+            ProjectValidationModelToolRegistry.cancel(this.displayId);
             return true;
         }
 
@@ -1493,6 +2085,7 @@ public final class LocalModelService {
 
     private enum RequestMode {
         ASK,
+        ASK_DEEP,
         AUTOMATION
     }
 }

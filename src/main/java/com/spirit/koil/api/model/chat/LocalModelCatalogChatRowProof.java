@@ -3,6 +3,7 @@ package com.spirit.koil.api.model.chat;
 import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
 import com.spirit.koil.api.model.catalog.LocalModelCompatibility;
+import com.spirit.koil.api.model.catalog.LocalModelAutomationEligibility;
 import com.spirit.koil.api.command.CommandOutputPresentation;
 import net.minecraft.text.ClickEvent;
 import net.minecraft.text.HoverEvent;
@@ -39,6 +40,20 @@ public final class LocalModelCatalogChatRowProof {
                 "error command tone is not red");
         require(CommandOutputPresentation.formatting(CommandOutputPresentation.Tone.LIMITED) == net.minecraft.util.Formatting.DARK_GRAY,
                 "limited command tone is not dark gray");
+        require(CommandOutputPresentation.commandIndicator(
+                        "Command output",
+                        "Command",
+                        CommandOutputPresentation.Tone.PRIMARY,
+                        false
+                ).indicatorColor() == (CommandOutputPresentation.COMMAND_BAR_ORANGE & 0x00FFFFFF),
+                "command output indicator bar is not orange");
+        require(CommandOutputPresentation.commandIndicator(
+                        "Command output",
+                        "Command",
+                        CommandOutputPresentation.Tone.METADATA,
+                        true
+                ).indicatorColor() == (CommandOutputPresentation.COMMAND_BAR_ORANGE_DIM & 0x00FFFFFF),
+                "dim command output indicator bar is not orange");
         Text restyledCommand = CommandOutputPresentation.restyleRow(
                 Text.literal("Command result").formatted(
                         net.minecraft.util.Formatting.AQUA,
@@ -60,7 +75,17 @@ public final class LocalModelCatalogChatRowProof {
             String installHover = hoverText(installRow).getString();
             require(installHover.contains("Model ID: " + catalogEntry.id()), "hover omitted model id");
             require(installHover.contains("Intent estimate:"), "hover omitted intent estimate");
-            require(installHover.contains("Chat / tools: yes / yes"), "hover omitted chat/tool support");
+            String expectedTools = LocalModelAutomationEligibility.supportsAutomationTools(catalogEntry)
+                    ? "yes / yes"
+                    : "yes / no";
+            require(installHover.contains("Chat / tools: " + expectedTools),
+                    "hover misstated chat/tool support for " + catalogEntry.id());
+            String automationRule = LocalModelAutomationEligibility.REQUIRED_COMPLEX_INTENT_EXCLUSIVE + "%";
+            require(installHover.contains(LocalModelAutomationEligibility.supportsAutomationTools(catalogEntry)
+                            ? "Automation: eligible — complex intent exceeds " + automationRule
+                            : "Automation: blocked — complex intent must exceed " + automationRule
+                                    + "; /ask remains available"),
+                    "hover omitted the Automation complexity boundary for " + catalogEntry.id());
             require(installHover.contains("Storage:"), "hover omitted storage");
             require(installHover.contains("Compatibility: Recommended"), "hover omitted compatibility");
 
@@ -74,6 +99,8 @@ public final class LocalModelCatalogChatRowProof {
         require(uninstallRow.getString().contains("[uninstall]"), "installed row omitted uninstall action");
         require(hoverText(uninstallRow).getString().contains("Status: selected and installed"),
                 "selected model status was not preserved");
+        require(hoverText(uninstallRow).getString().contains("Chat / tools: yes / no"),
+                "sub-threshold selected model still advertised tools");
 
         System.out.println("Local model catalog chat-row proof passed.");
     }

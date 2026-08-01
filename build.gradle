@@ -113,7 +113,7 @@ tasks.withType(JavaExec).configureEach {
 }
 
 def runClientRequiredClassFiles = [
-		file("$buildDir/classes/java/main/com/spirit/client/gui/browser/ContentBrowserListRowRenderer.class"),
+		file("$buildDir/classes/java/main/com/spirit/client/gui/content/browser/ContentBrowserListRowRenderer.class"),
 		file("$buildDir/classes/java/main/com/spirit/mixin/client/gui/revamp/world/MixinWorldEntry.class"),
 		file("$buildDir/classes/java/main/com/spirit/koil/api/util/file/media/VisualTransportControls.class"),
 		file("$buildDir/classes/java/main/com/spirit/Client.class"),
@@ -200,6 +200,18 @@ tasks.register('runModelPresencePlanningProof', JavaExec) {
 	dependsOn classes
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'com.spirit.koil.api.model.testing.ModelPresencePlanningProof'
+}
+
+tasks.register('runModelAgentPlatformProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.testing.ModelAgentPlatformProof'
+}
+
+tasks.register('runRichChatSectionFormattingProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.chat.RichChatSectionFormattingProof'
 }
 
 tasks.register('runKtlLibraryProof', JavaExec) {

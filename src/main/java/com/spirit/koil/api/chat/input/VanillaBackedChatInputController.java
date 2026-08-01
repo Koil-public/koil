@@ -1,12 +1,12 @@
 package com.spirit.koil.api.chat.input;
 
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
+import com.spirit.koil.api.chat.RichChatSectionFormatting;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.util.math.Rect2i;
-import net.minecraft.text.OrderedText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
@@ -50,6 +50,46 @@ public final class VanillaBackedChatInputController {
                 && (text.startsWith("/") || RichChatAttachmentRenderer.containsLiveFormatting(text) || looksLikeHeader(text));
     }
 
+    /**
+     * Width-bounds a draft without letting vanilla split or consume a section
+     * control. Valid legacy/hex controls are atomic cursor/source units.
+     */
+    public static String trimDraftSourceToWidth(
+            TextRenderer renderer,
+            MinecraftClient client,
+            String source,
+            int maxWidth
+    ) {
+        if (renderer == null || source == null || source.isEmpty() || maxWidth <= 0) {
+            return "";
+        }
+        if (styledLineWidth(renderer, client, source) <= maxWidth) {
+            return source;
+        }
+        List<Integer> boundaries = new ArrayList<>();
+        boundaries.add(0);
+        for (int index = 0; index < source.length();) {
+            int controlLength = RichChatSectionFormatting.codeLengthAt(source, index);
+            index += controlLength > 0
+                    ? controlLength
+                    : Character.charCount(source.codePointAt(index));
+            boundaries.add(index);
+        }
+        int low = 0;
+        int high = boundaries.size() - 1;
+        while (low < high) {
+            int middle = (low + high + 1) >>> 1;
+            int end = boundaries.get(middle);
+            int width = styledRangeWidth(renderer, client, source, 0, end, end);
+            if (width <= maxWidth) {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        return source.substring(0, boundaries.get(low));
+    }
+
     public static int renderStyledLine(DrawContext context, TextRenderer renderer, MinecraftClient client, String line, int x, int y, int maxWidth) {
         return renderStyledLine(context, renderer, client, line, x, y, maxWidth, line == null ? -1 : line.length());
     }
@@ -58,23 +98,19 @@ public final class VanillaBackedChatInputController {
         if (line == null || line.isEmpty()) {
             return x;
         }
-        List<KoilCommandAnalysisService.StyledChunk> chunks = line.startsWith("/")
-                ? KoilCommandAnalysisService.highlightLine(client, line, activeCursor)
-                : formattedPreviewChunks(line);
-        int cursor = x;
-        int right = x + Math.max(8, maxWidth);
-        for (KoilCommandAnalysisService.StyledChunk chunk : chunks) {
-            if (chunk == null || chunk.text().isEmpty() || cursor >= right) {
-                continue;
-            }
-            String visible = renderer.trimToWidth(chunk.text(), Math.max(1, right - cursor));
-            if (visible.isEmpty()) {
-                continue;
-            }
-            OrderedText ordered = Text.literal(visible).setStyle(chunk.style()).asOrderedText();
-            cursor = RichChatAttachmentRenderer.renderPreviewOrDrawText(context, renderer, ordered, cursor, y, chunk.color());
+        if (!line.startsWith("/")) {
+            return RichChatAttachmentRenderer.renderLiveDraftFormattedText(
+                    context, renderer, line, x, y, 0xFFE0E0E0, Style.EMPTY
+            );
         }
-        return cursor;
+        return renderChunks(
+                context,
+                renderer,
+                KoilCommandAnalysisService.highlightLine(client, line, activeCursor),
+                x,
+                y,
+                maxWidth
+        );
     }
 
     public static int renderStyledRange(DrawContext context, TextRenderer renderer, MinecraftClient client, String fullLine, int from, int to, int activeCursor, int x, int y, int maxWidth) {
@@ -83,10 +119,25 @@ public final class VanillaBackedChatInputController {
         }
         int start = Math.max(0, Math.min(fullLine.length(), from));
         int end = Math.max(start, Math.min(fullLine.length(), to));
-        List<KoilCommandAnalysisService.StyledChunk> chunks = fullLine.startsWith("/")
-                ? KoilCommandAnalysisService.highlightRange(client, fullLine, start, end, activeCursor)
-                : formattedPreviewChunks(fullLine.substring(start, end));
-        return renderChunks(context, renderer, chunks, x, y, maxWidth);
+        if (!fullLine.startsWith("/")) {
+            return RichChatAttachmentRenderer.renderLiveDraftFormattedText(
+                    context,
+                    renderer,
+                    fullLine.substring(start, end),
+                    x,
+                    y,
+                    0xFFE0E0E0,
+                    Style.EMPTY
+            );
+        }
+        return renderChunks(
+                context,
+                renderer,
+                KoilCommandAnalysisService.highlightRange(client, fullLine, start, end, activeCursor),
+                x,
+                y,
+                maxWidth
+        );
     }
 
     public static int styledRangeWidth(TextRenderer renderer, MinecraftClient client, String fullLine, int from, int to, int activeCursor) {
@@ -95,13 +146,23 @@ public final class VanillaBackedChatInputController {
         }
         int start = Math.max(0, Math.min(fullLine.length(), from));
         int end = Math.max(start, Math.min(fullLine.length(), to));
+        if (!fullLine.startsWith("/")) {
+            return RichChatAttachmentRenderer.measureLiveDraftFormattedText(
+                    renderer,
+                    fullLine.substring(start, end),
+                    Style.EMPTY
+            );
+        }
         List<KoilCommandAnalysisService.StyledChunk> chunks = fullLine.startsWith("/")
                 ? KoilCommandAnalysisService.highlightRange(client, fullLine, start, end, activeCursor)
                 : formattedPreviewChunks(fullLine.substring(start, end));
         int width = 0;
         for (KoilCommandAnalysisService.StyledChunk chunk : chunks) {
             if (chunk != null && chunk.text() != null && !chunk.text().isEmpty()) {
-                width += renderer.getWidth(Text.literal(chunk.text()).setStyle(chunk.style()));
+                for (com.spirit.koil.api.chat.RichChatSectionFormatting.Segment segment
+                        : com.spirit.koil.api.chat.RichChatSectionFormatting.parseDraft(chunk.text(), chunk.style())) {
+                    width += renderer.getWidth(Text.literal(segment.text()).setStyle(segment.style()));
+                }
             }
         }
         return width;
@@ -118,8 +179,15 @@ public final class VanillaBackedChatInputController {
             if (visible.isEmpty()) {
                 continue;
             }
-            OrderedText ordered = Text.literal(visible).setStyle(chunk.style()).asOrderedText();
-            cursor = RichChatAttachmentRenderer.renderPreviewOrDrawText(context, renderer, ordered, cursor, y, chunk.color());
+            cursor = RichChatAttachmentRenderer.renderLiveDraftFormattedText(
+                    context,
+                    renderer,
+                    visible,
+                    cursor,
+                    y,
+                    chunk.color(),
+                    chunk.style()
+            );
         }
         return cursor;
     }
@@ -129,9 +197,15 @@ public final class VanillaBackedChatInputController {
         if (renderer == null || line == null || line.isEmpty()) {
             return 0;
         }
-        List<KoilCommandAnalysisService.StyledChunk> chunks = line.startsWith("/")
-                ? KoilCommandAnalysisService.highlightLine(client, line)
-                : formattedPreviewChunks(line);
+        if (!line.startsWith("/")) {
+            return RichChatAttachmentRenderer.measureLiveDraftFormattedText(
+                    renderer,
+                    line,
+                    Style.EMPTY
+            );
+        }
+        List<KoilCommandAnalysisService.StyledChunk> chunks =
+                KoilCommandAnalysisService.highlightLine(client, line);
         int width = 0;
         for (KoilCommandAnalysisService.StyledChunk chunk : chunks) {
             if (chunk != null && chunk.text() != null && !chunk.text().isEmpty()) {
@@ -158,7 +232,14 @@ public final class VanillaBackedChatInputController {
             }
             int markerEnd = Math.min(line.length(), headerOffset + hashes + 1);
             out.add(new KoilCommandAnalysisService.StyledChunk(line.substring(headerOffset, markerEnd), Style.EMPTY, 0xFFA8B0BC));
-            collectFormattedChunks(line.substring(markerEnd), baseStyle.withBold(true).withUnderline(true).withColor(Formatting.WHITE), out);
+            collectFormattedChunks(
+                    line.substring(markerEnd),
+                    com.spirit.koil.api.chat.RichChatStructuralStyleRegistry.apply(
+                            com.spirit.koil.api.chat.RichChatStructuralStyleRegistry.Role.HEADING,
+                            baseStyle
+                    ),
+                    out
+            );
             return out;
         }
         collectFormattedChunks(line, baseStyle, out);
@@ -187,7 +268,14 @@ public final class VanillaBackedChatInputController {
             }
             String inner = text.substring(match.start() + match.marker().length(), close);
             if ("||".equals(match.marker())) {
-                out.add(new KoilCommandAnalysisService.StyledChunk(inner, baseStyle.withObfuscated(true), 0xFFE0E0E0));
+                out.add(new KoilCommandAnalysisService.StyledChunk(
+                        inner,
+                        com.spirit.koil.api.chat.RichChatStructuralStyleRegistry.apply(
+                                com.spirit.koil.api.chat.RichChatStructuralStyleRegistry.Role.SPOILER_HIDDEN,
+                                baseStyle
+                        ),
+                        0xFFE0E0E0
+                ));
             } else {
                 collectFormattedChunks(inner, applyDraftStyle(baseStyle, match.marker()), out);
             }

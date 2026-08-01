@@ -6,15 +6,17 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 
 /**
- * Shared command-feedback palette. Ordinary command output is intentionally
- * limited to white, green, red, and dark gray. Command-block-specific
- * presentation remains outside this contract.
+ * Shared command-feedback presentation. Ordinary command text is intentionally
+ * limited to white, green, red, and dark gray; its separate message indicator
+ * bar remains Koil orange. Command-block presentation stays outside this contract.
  */
 public final class CommandOutputPresentation {
     public static final int WHITE = 0xFFFFFFFF;
     public static final int GREEN = 0xFF55FF55;
     public static final int RED = 0xFFFF5555;
     public static final int DARK_GRAY = 0xFF555555;
+    public static final int COMMAND_BAR_ORANGE = 0xFFFFAA00;
+    public static final int COMMAND_BAR_ORANGE_DIM = 0xFFA86F00;
 
     private CommandOutputPresentation() {
     }
@@ -65,10 +67,14 @@ public final class CommandOutputPresentation {
     }
 
     public static MessageIndicator indicator(String tooltip, String loggedName, Tone tone) {
+        return commandIndicator(tooltip, loggedName, tone, false);
+    }
+
+    public static MessageIndicator commandIndicator(String tooltip, String loggedName, Tone textTone, boolean dimmed) {
         return new MessageIndicator(
-                rgb(tone) & 0x00FFFFFF,
+                (dimmed ? COMMAND_BAR_ORANGE_DIM : COMMAND_BAR_ORANGE) & 0x00FFFFFF,
                 null,
-                text(tooltip, tone),
+                text(tooltip, textTone),
                 loggedName == null ? "Command" : loggedName
         );
     }

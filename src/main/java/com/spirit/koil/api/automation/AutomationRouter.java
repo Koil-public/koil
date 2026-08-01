@@ -114,14 +114,13 @@ public final class AutomationRouter {
                 .executes(context -> {
                     if (AutomationModeController.isAutomationMode()) {
                         stopAutomation(false);
+                        return 1;
                     } else {
-                        enableAutomationMode();
+                        return enableAutomationMode() ? 1 : 0;
                     }
-                    return 1;
                 })
                 .then(literal("on").executes(context -> {
-                    enableAutomationMode();
-                    return 1;
+                    return enableAutomationMode() ? 1 : 0;
                 }))
                 .then(literal("off").executes(context -> {
                     stopAutomation(false);
@@ -144,24 +143,17 @@ public final class AutomationRouter {
                                 ? " | planning: " + (snapshot.planningModeEnabled() ? "on" : "off")
                                 + (snapshot.planningActive() ? " (active)" : "")
                                 : "";
-                        client.inGameHud.getChatHud().addMessage(Text.literal("Automation mode: " + state + policy + thinking + planning));
+                        String experimental = snapshot.enabled()
+                                ? " | experimental: " + (snapshot.experimentalCompactAgentEnabled() ? "on" : "off")
+                                : "";
+                        client.inGameHud.getChatHud().addMessage(Text.literal(
+                                "Automation mode: " + state + policy + thinking + planning + experimental
+                        ));
                     }
                     return 1;
                 }))
                 .then(literal("unrestricted").executes(context -> {
-                    enableAutomationMode();
-                    AutomationModeController.enableYoloMode();
-                    AutomationReporter.pipeline(
-                            "[mode]",
-                            "Unrestricted mode enabled for this session: registered model capabilities skip Koil approval; Minecraft permissions remain unchanged"
-                    );
-                    MinecraftClient client = MinecraftClient.getInstance();
-                    if (client != null && client.inGameHud != null) {
-                        client.inGameHud.getChatHud().addMessage(Text.literal(
-                                "Unrestricted mode is on for this session. Registered model capabilities skip Koil approval; player permissions still apply."
-                        ));
-                    }
-                    return 1;
+                    return toggleUnrestrictedMode() ? 1 : 0;
                 }))
                 .then(literal("deep")
                         .executes(context -> {
@@ -197,12 +189,37 @@ public final class AutomationRouter {
                             reportModeSetting("Planning Mode", AutomationModeController.isPlanningModeEnabled());
                             return 1;
                         })))
+                .then(literal("planning")
+                        .executes(context -> {
+                            setPlanningMode(!AutomationModeController.isPlanningModeEnabled());
+                            return 1;
+                        })
+                        .then(literal("status").executes(context -> {
+                            reportModeSetting("Planning Mode", AutomationModeController.isPlanningModeEnabled());
+                            return 1;
+                        })))
+                .then(literal("experimental")
+                        .executes(context -> {
+                            return toggleExperimentalMode() ? 1 : 0;
+                        })
+                        .then(literal("on").executes(context -> {
+                            return setExperimentalMode(true) ? 1 : 0;
+                        }))
+                        .then(literal("off").executes(context -> {
+                            return setExperimentalMode(false) ? 1 : 0;
+                        }))
+                        .then(literal("status").executes(context -> {
+                            reportModeSetting("Experimental compact agent", AutomationModeController.isExperimentalCompactAgentEnabled());
+                            return 1;
+                        })))
                 .then(literal("exit").executes(context -> {
                     stopAutomation(true);
                     return 1;
                 }))
                 .then(literal("chat").executes(context -> {
-                    enableAutomationMode();
+                    if (!enableAutomationMode()) {
+                        return 0;
+                    }
                     AutomationCliViewModel.beginSession("/" + commandName + " chat");
                     AutomationReporter.pipeline("[mode]", "automation chat routing enabled");
                     MinecraftClient client = MinecraftClient.getInstance();
@@ -218,15 +235,24 @@ public final class AutomationRouter {
                 }));
     }
 
-    private static void enableAutomationMode() {
+    private static boolean enableAutomationMode() {
+        var eligibility = LocalModelService.selectedAutomationEligibility();
+        if (!eligibility.eligible() && !LocalModelService.experimentalAutomationAllowed()) {
+            LocalModelService.revokeIneligibleAutomation(eligibility, true);
+            AutomationReporter.block("[block]", eligibility.detail());
+            return false;
+        }
         AutomationModeController.setAutomationMode(true);
         LocalModelService.prepareAutomationMode();
         AutomationReporter.pipeline("[mode]", "automation mode connecting");
+        return true;
     }
 
     private static void setDeepThinking(boolean enabled) {
         if (!AutomationModeController.isAutomationMode()) {
-            enableAutomationMode();
+            if (!enableAutomationMode()) {
+                return;
+            }
         }
         AutomationModeController.setDeepThinkingEnabled(enabled);
         AutomationReporter.pipeline(
@@ -238,7 +264,9 @@ public final class AutomationRouter {
 
     private static void setPlanningMode(boolean enabled) {
         if (!AutomationModeController.isAutomationMode()) {
-            enableAutomationMode();
+            if (!enableAutomationMode()) {
+                return;
+            }
         }
         AutomationModeController.setPlanningModeEnabled(enabled);
         AutomationReporter.pipeline(
@@ -258,6 +286,46 @@ public final class AutomationRouter {
         }
     }
 
+    private static boolean toggleUnrestrictedMode() {
+        boolean enable = !AutomationModeController.isYoloMode();
+        if (enable && !AutomationModeController.isAutomationMode() && !enableAutomationMode()) {
+            return false;
+        }
+        AutomationModeController.setYoloModeEnabled(enable);
+        AutomationReporter.pipeline(
+                "[mode]",
+                enable
+                        ? "Unrestricted mode enabled for this session: registered model capabilities skip Koil approval; Minecraft permissions remain unchanged"
+                        : "Unrestricted mode disabled; standard Koil approvals are required"
+        );
+        reportModeSetting("Unrestricted", enable);
+        return true;
+    }
+
+    private static boolean toggleExperimentalMode() {
+        return setExperimentalMode(!AutomationModeController.isExperimentalCompactAgentEnabled());
+    }
+
+    private static boolean setExperimentalMode(boolean enabled) {
+        AutomationModeController.setExperimentalCompactAgentEnabled(enabled);
+        if (enabled && !AutomationModeController.isAutomationMode() && !enableAutomationMode()) {
+            AutomationModeController.setExperimentalCompactAgentEnabled(false);
+            return false;
+        }
+        if (!enabled && AutomationModeController.isAutomationMode()) {
+            var eligibility = LocalModelService.selectedAutomationEligibility();
+            if (!eligibility.eligible()) {
+                LocalModelService.revokeIneligibleAutomation(eligibility, true);
+            }
+        }
+        AutomationReporter.pipeline(
+                "[mode]",
+                "experimental compact agent " + (enabled ? "enabled" : "disabled")
+        );
+        reportModeSetting("Experimental compact agent", enabled);
+        return true;
+    }
+
     public static void toggleAutomationModeFromUi() {
         if (AutomationModeController.isAutomationMode()) {
             stopAutomation(false);
@@ -266,13 +334,8 @@ public final class AutomationRouter {
         }
     }
 
-    public static void enableAutomationYoloFromUi() {
-        enableAutomationMode();
-        AutomationModeController.enableYoloMode();
-        AutomationReporter.pipeline(
-                "[mode]",
-                "Unrestricted mode enabled from chat controls; registered capabilities skip Koil approval"
-        );
+    public static void toggleAutomationYoloFromUi() {
+        toggleUnrestrictedMode();
     }
 
     public static void toggleDeepThinkingFromUi() {
@@ -281,6 +344,10 @@ public final class AutomationRouter {
 
     public static void togglePlanningModeFromUi() {
         setPlanningMode(!AutomationModeController.isPlanningModeEnabled());
+    }
+
+    public static void toggleExperimentalModeFromUi() {
+        toggleExperimentalMode();
     }
 
     public static void openCli() {
@@ -323,11 +390,7 @@ public final class AutomationRouter {
                 }
                 return;
             }
-            case "/automate on" -> {
-                enableAutomationMode();
-                return;
-            }
-            case "/automate off" -> {
+            case "/automate stop" -> {
                 stopAutomation(false);
                 return;
             }
@@ -336,7 +399,9 @@ public final class AutomationRouter {
                 return;
             }
             case "/automate chat" -> {
-                enableAutomationMode();
+                if (!enableAutomationMode()) {
+                    return;
+                }
                 AutomationCliViewModel.beginSession(trimmed);
                 AutomationReporter.pipeline("[mode]", "automation chat prompt opened");
                 return;
@@ -362,13 +427,24 @@ public final class AutomationRouter {
                 reportModeSetting("Planning Mode", AutomationModeController.isPlanningModeEnabled());
                 return;
             }
+            case "/automate planning" -> {
+                setPlanningMode(!AutomationModeController.isPlanningModeEnabled());
+                return;
+            }
+            case "/automate planning status" -> {
+                reportModeSetting("Planning Mode", AutomationModeController.isPlanningModeEnabled());
+                return;
+            }
+            case "/automate experimental" -> {
+                toggleExperimentalMode();
+                return;
+            }
+            case "/automate experimental status" -> {
+                reportModeSetting("Experimental compact agent", AutomationModeController.isExperimentalCompactAgentEnabled());
+                return;
+            }
             case "/automate unrestricted" -> {
-                enableAutomationMode();
-                AutomationModeController.enableYoloMode();
-                AutomationReporter.pipeline(
-                        "[mode]",
-                        "Unrestricted mode enabled for this session: registered model capabilities skip Koil approval; Minecraft permissions remain unchanged"
-                );
+                toggleUnrestrictedMode();
                 return;
             }
         }

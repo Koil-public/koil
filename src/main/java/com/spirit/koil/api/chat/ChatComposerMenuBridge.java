@@ -47,7 +47,7 @@ public final class ChatComposerMenuBridge {
             entries.add(new PopupMenu.MenuEntry(
                     "composer:automation_yolo",
                     "unrestricted",
-                    AutomationModeController.isYoloMode() ? 0xFFFFAA00 : 0,
+                    AutomationModeController.isYoloMode() ? 0x00FF00FF : 0,
                     AutomationModeController.isYoloMode() ? "•" : ""
             ));
             entries.add(new PopupMenu.MenuEntry(
@@ -61,6 +61,12 @@ public final class ChatComposerMenuBridge {
                     "planning",
                     AutomationModeController.isPlanningModeEnabled() ? 0xFFB067FF : 0,
                     AutomationModeController.isPlanningModeEnabled() ? "•" : ""
+            ));
+            entries.add(new PopupMenu.MenuEntry(
+                    "composer:automation_experimental",
+                    "experimental",
+                    AutomationModeController.isExperimentalCompactAgentEnabled() ? 0xFF55FF55 : 0,
+                    AutomationModeController.isExperimentalCompactAgentEnabled() ? "•" : ""
             ));
             return entries;
         }
@@ -135,7 +141,7 @@ public final class ChatComposerMenuBridge {
             return ActionResult.HANDLED;
         }
         if ("composer:automation_yolo".equals(actionId)) {
-            AutomationRouter.enableAutomationYoloFromUi();
+            AutomationRouter.toggleAutomationYoloFromUi();
             return ActionResult.HANDLED;
         }
         if ("composer:automation_deep".equals(actionId)) {
@@ -144,6 +150,10 @@ public final class ChatComposerMenuBridge {
         }
         if ("composer:automation_planning".equals(actionId)) {
             AutomationRouter.togglePlanningModeFromUi();
+            return ActionResult.HANDLED;
+        }
+        if ("composer:automation_experimental".equals(actionId)) {
+            AutomationRouter.toggleExperimentalModeFromUi();
             return ActionResult.HANDLED;
         }
         if (actionId.startsWith("composer:model:")) {

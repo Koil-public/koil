@@ -1,5 +1,6 @@
 package com.spirit.koil.api.model.voice;
 
+import com.spirit.koil.api.chat.RichChatSectionFormatting;
 import com.spirit.koil.api.model.LocalModelRuntimeLog;
 
 import javax.sound.sampled.AudioInputStream;
@@ -101,6 +102,16 @@ public final class ModelVoiceService {
         return new StreamingSpeech(SPEECH_EPOCH.get());
     }
 
+    /** Speaks only a finalized, user-facing model answer. */
+    public static void speakFinalAnswer(String answer) {
+        if (answer == null || answer.isBlank() || !settings.enabled()) {
+            return;
+        }
+        StreamingSpeech speech = beginStreaming();
+        speech.accept(answer);
+        speech.finish();
+    }
+
     /**
      * Immediately invalidates speech from the prior response without touching
      * universal media playback.
@@ -141,7 +152,7 @@ public final class ModelVoiceService {
         if (text == null || text.isBlank()) {
             return "";
         }
-        String normalized = text
+        String normalized = RichChatSectionFormatting.speechSafeText(text)
                 .replaceAll("https?://\\S+", " ")
                 .replaceAll("[`*_#|\\[\\]{}<>]", " ")
                 .replaceAll("\\s+", " ")
@@ -161,17 +172,24 @@ public final class ModelVoiceService {
         if (!snapshot.enabled() || phrase == null || phrase.text().isBlank() || epoch != SPEECH_EPOCH.get()) {
             return;
         }
+        String spoken = RichChatSectionFormatting.speechSafeText(phrase.text())
+                .replaceAll("\\s+", " ")
+                .strip();
+        if (spoken.isBlank()) {
+            return;
+        }
+        ModelVoicePhrase safePhrase = new ModelVoicePhrase(spoken, phrase.expression());
         CompletableFuture<Path> audio = new CompletableFuture<>();
         ACTIVE_AUDIO.add(audio);
         try {
-            SYNTHESIS.execute(() -> synthesize(snapshot.voiceId(), phrase, audio, epoch));
+            SYNTHESIS.execute(() -> synthesize(snapshot.voiceId(), safePhrase, audio, epoch));
         } catch (RejectedExecutionException rejected) {
             audio.completeExceptionally(rejected);
             ACTIVE_AUDIO.remove(audio);
             return;
         }
         try {
-            PLAYBACK.execute(() -> playQueued(snapshot.voiceId(), phrase, audio, epoch));
+            PLAYBACK.execute(() -> playQueued(snapshot.voiceId(), safePhrase, audio, epoch));
         } catch (RejectedExecutionException rejected) {
             audio.whenComplete((path, failure) -> deleteQuietly(path));
             audio.completeExceptionally(rejected);
@@ -391,6 +409,14 @@ public final class ModelVoiceService {
             this.finished = true;
             cancelPendingFlush();
             enqueuePhrases(this.planner.finish(), this.epoch);
+        }
+
+        /** Drops an incomplete provider round without invalidating other model speech. */
+        public synchronized void discard() {
+            if (this.finished) {
+                return;
+            }
+            stopWithoutFlush();
         }
 
         public boolean cancelled() {

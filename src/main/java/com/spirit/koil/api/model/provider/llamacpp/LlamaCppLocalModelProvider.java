@@ -167,14 +167,19 @@ public final class LlamaCppLocalModelProvider implements LocalModelProvider {
     }
 
     private ModelHealthSnapshot waitForReadiness() {
-        long deadline = System.nanoTime() + this.configuration.startupTimeout().toNanos();
-        while (!this.closed && !this.stopping && System.nanoTime() < deadline) {
+        long startedAt = System.nanoTime();
+        boolean slowReported = false;
+        while (!this.closed && !this.stopping) {
             Process current = this.process;
             if (current != null && !current.isAlive()) {
                 return failHealth("llama.cpp exited before becoming ready (exit " + current.exitValue() + ")");
             }
             if (compatibleRuntimeAvailable(this.selectedPort)) {
                 return updateHealth(ModelHealthState.READY, "llama.cpp runtime ready", diagnostics());
+            }
+            if (!slowReported && System.nanoTime() - startedAt >= this.configuration.startupTimeout().toNanos()) {
+                slowReported = true;
+                updateHealth(ModelHealthState.STARTING, "llama.cpp is taking longer than expected; still waiting", diagnostics());
             }
             try {
                 Thread.sleep(250L);
@@ -183,7 +188,7 @@ public final class LlamaCppLocalModelProvider implements LocalModelProvider {
                 return failHealth("llama.cpp startup was interrupted");
             }
         }
-        return failHealth(this.stopping ? "llama.cpp startup cancelled" : "llama.cpp startup timed out");
+        return failHealth("llama.cpp startup cancelled");
     }
 
     private boolean compatibleRuntimeAvailable(int port) {
@@ -294,7 +299,7 @@ public final class LlamaCppLocalModelProvider implements LocalModelProvider {
             decoder.finishTools();
             if (!decoder.toolCalls().isEmpty()) {
                 for (var toolCall : decoder.toolCalls()) {
-                    observer.onState(request.id(), ModelRequestState.EXECUTING_TOOL, toolCall.toolId());
+                    observer.onState(request.id(), ModelRequestState.SELECTING_TOOL, toolCall.toolId());
                     observer.onToolCall(request.id(), toolCall);
                 }
             }

@@ -66,6 +66,7 @@ public class uiColorVal {
     public static int uiColorAutomationModeUnrestrictedText;
     public static int uiColorAutomationModeDeepThinkingText;
     public static int uiColorAutomationModePlanningText;
+    public static int uiColorAutomationModeExperimentalText;
     public static int uiColorEditorError;
     public static int uiColorEditorSuggestionClass;
     public static int uiColorEditorSuggestionField;

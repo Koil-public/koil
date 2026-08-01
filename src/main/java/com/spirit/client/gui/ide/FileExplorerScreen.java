@@ -13,7 +13,7 @@ import com.spirit.client.gui.PopupMenu.MenuEntry;
 import com.spirit.client.gui.TopBarLayout;
 import com.spirit.client.gui.UiSoundHelper;
 import com.spirit.client.gui.DesignMusicController;
-import com.spirit.client.gui.mod.ModConfigScreen;
+import com.spirit.client.gui.content.mod.ModConfigScreen;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.util.file.audio.AudioManager;
 import com.spirit.koil.api.util.file.image.ExternalImageLoader;

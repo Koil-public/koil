@@ -15,6 +15,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -42,9 +46,10 @@ public final class ModelWorkspaceToolRegistry {
             "workspace.write",
             "workspace.replace",
             "workspace.delete",
+            "workspace.restore",
             "automation.ktl_apply"
     );
-    private static final String VERSION = "model-workspace-tools-v2:"
+    private static final String VERSION = "model-workspace-tools-v3:"
             + Integer.toHexString(DEFINITIONS.keySet().hashCode());
 
     private ModelWorkspaceToolRegistry() {
@@ -67,6 +72,20 @@ public final class ModelWorkspaceToolRegistry {
             ModelToolCall call
     ) {
         return execute(displayRequestId, call, false);
+    }
+
+    public static CompletableFuture<ModelToolResult> executeReadOnly(ModelToolCall call) {
+        if (call == null || !Set.of("workspace.roots", "workspace.list", "workspace.read", "workspace.search").contains(call.toolId())) {
+            return CompletableFuture.completedFuture(new ModelToolResult(
+                    call == null ? "" : call.id(), call == null ? "" : call.toolId(),
+                    "unsupported", new JsonObject(), "read_only_boundary",
+                    "Conversational Deep Thought can use only read-only workspace operations."
+            ));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            try { return executeBlocking(call); }
+            catch (Exception failure) { return failure(call, "workspace_operation_failed", message(failure)); }
+        });
     }
 
     public static CompletableFuture<ModelToolResult> execute(
@@ -112,6 +131,16 @@ public final class ModelWorkspaceToolRegistry {
             return CompletableFuture.supplyAsync(() -> {
                 try {
                     return executeBlocking(call);
+                } catch (StaleFileException stale) {
+                    JsonObject output = new JsonObject();
+                    output.addProperty("expectedHash", stale.expected);
+                    output.addProperty("actualHash", stale.actual);
+                    return new ModelToolResult(
+                            call.id(), call.toolId(), "stale", output,
+                            "stale_file", stale.getMessage(),
+                            stale.startedAt, System.currentTimeMillis(), "failed",
+                            List.of(), true, false, "approved"
+                    );
                 } catch (Exception failure) {
                     return failure(call, "workspace_operation_failed", message(failure));
                 }
@@ -129,6 +158,7 @@ public final class ModelWorkspaceToolRegistry {
             case "workspace.write" -> write(call);
             case "workspace.replace" -> replace(call);
             case "workspace.delete" -> delete(call);
+            case "workspace.restore" -> restore(call);
             case "automation.ktl_apply" -> applyKtl(call);
             default -> failure(call, "unknown_tool", "Unknown workspace tool.");
         };
@@ -216,6 +246,7 @@ public final class ModelWorkspaceToolRegistry {
         output.addProperty("startLine", from + 1);
         output.addProperty("endLine", end);
         output.addProperty("totalLines", lines.size());
+        output.addProperty("contentHash", sha256(Files.readAllBytes(resolved.path())));
         output.addProperty("text", text.toString());
         output.addProperty("truncated", end < lines.size());
         return completed(call, output, "Requested file section was read.");
@@ -285,8 +316,9 @@ public final class ModelWorkspaceToolRegistry {
             throw new IOException("File already exists; use workspace.write or workspace.replace.");
         }
         String content = boundedContent(arguments);
+        byte[] previous = new byte[0];
         atomicWrite(resolved.path(), content, false);
-        return mutationResult(call, resolved, "created", content.length());
+        return mutationResult(call, resolved, "created", previous, content.getBytes(StandardCharsets.UTF_8), true, "created");
     }
 
     private static ModelToolResult write(ModelToolCall call) throws IOException {
@@ -295,9 +327,11 @@ public final class ModelWorkspaceToolRegistry {
         if (!Files.isRegularFile(resolved.path())) {
             throw new IOException("File does not exist; use workspace.create.");
         }
+        byte[] previous = Files.readAllBytes(resolved.path());
+        requireExpectedHash(arguments, previous);
         String content = boundedContent(arguments);
         atomicWrite(resolved.path(), content, true);
-        return mutationResult(call, resolved, "written", content.length());
+        return mutationResult(call, resolved, "modified", previous, content.getBytes(StandardCharsets.UTF_8), true, "written");
     }
 
     private static ModelToolResult replace(ModelToolCall call) throws IOException {
@@ -309,7 +343,9 @@ public final class ModelWorkspaceToolRegistry {
         if (find.length() > MAXIMUM_FILE_BYTES || replacement.length() > MAXIMUM_FILE_BYTES) {
             throw new IOException("Replacement input exceeds the 262144 b limit.");
         }
-        String content = Files.readString(resolved.path(), StandardCharsets.UTF_8);
+        byte[] previousBytes = Files.readAllBytes(resolved.path());
+        requireExpectedHash(arguments, previousBytes);
+        String content = new String(previousBytes, StandardCharsets.UTF_8);
         int occurrences = countOccurrences(content, find);
         int expected = boundedInt(arguments, "expectedOccurrences", 1, 1, 1000);
         if (occurrences != expected) {
@@ -320,7 +356,7 @@ public final class ModelWorkspaceToolRegistry {
             throw new IOException("Updated file exceeds the 262144 b limit.");
         }
         atomicWrite(resolved.path(), updated, true);
-        return mutationResult(call, resolved, "replaced", occurrences);
+        return mutationResult(call, resolved, "modified", previousBytes, updated.getBytes(StandardCharsets.UTF_8), true, "replaced");
     }
 
     private static ModelToolResult delete(ModelToolCall call) throws IOException {
@@ -329,8 +365,10 @@ public final class ModelWorkspaceToolRegistry {
         if (!Files.isRegularFile(resolved.path())) {
             throw new IOException("Only individual regular files can be removed.");
         }
-        Path trashDirectory = TRASH_ROOT.toAbsolutePath().normalize()
-                .resolve(UUID.randomUUID().toString());
+        byte[] previous = Files.readAllBytes(resolved.path());
+        requireExpectedHash(arguments, previous);
+        String recoveryToken = UUID.randomUUID().toString();
+        Path trashDirectory = TRASH_ROOT.toAbsolutePath().normalize().resolve(recoveryToken);
         Files.createDirectories(trashDirectory);
         Path trashed = trashDirectory.resolve(resolved.path().getFileName().toString());
         try {
@@ -338,12 +376,49 @@ public final class ModelWorkspaceToolRegistry {
         } catch (IOException unsupported) {
             Files.move(resolved.path(), trashed);
         }
-        JsonObject output = new JsonObject();
-        output.addProperty("workspace", resolved.workspace().id());
-        output.addProperty("path", resolved.relativePath());
+        ModelToolResult mutation = mutationResult(call, resolved, "deleted", previous, new byte[0], true, "deleted");
+        JsonObject output = mutation.output();
         output.addProperty("recoverable", true);
-        output.addProperty("trashPath", trashed.toString());
-        return completed(call, output, "File was moved to Koil's recoverable model trash.");
+        output.addProperty("recoveryToken", recoveryToken);
+        return new ModelToolResult(
+                call.id(), call.toolId(), "completed", output, "",
+                "File was moved to Koil's recoverable model trash.",
+                mutation.startedAtMillis(), System.currentTimeMillis(), "passed",
+                List.of(resolved.workspace().id() + ":" + resolved.relativePath()),
+                false, false, "approved"
+        );
+    }
+
+    private static ModelToolResult restore(ModelToolCall call) throws IOException {
+        JsonObject arguments = call.arguments();
+        ModelWorkspaceRegistry.ResolvedPath resolved = writableFile(arguments);
+        if (Files.exists(resolved.path())) {
+            throw new IOException("Restore target already exists; no file was changed.");
+        }
+        String token = requiredString(arguments, "recoveryToken");
+        if (!token.matches("[0-9a-fA-F-]{36}")) {
+            throw new IOException("Invalid recovery token.");
+        }
+        Path directory = TRASH_ROOT.toAbsolutePath().normalize().resolve(token).normalize();
+        if (!directory.startsWith(TRASH_ROOT.toAbsolutePath().normalize()) || !Files.isDirectory(directory)) {
+            throw new IOException("Recovery token was not found.");
+        }
+        List<Path> files;
+        try (var paths = Files.list(directory)) {
+            files = paths.filter(Files::isRegularFile).limit(2).toList();
+        }
+        if (files.size() != 1) {
+            throw new IOException("Recovery token is ambiguous or empty.");
+        }
+        byte[] restored = Files.readAllBytes(files.get(0));
+        Files.createDirectories(resolved.path().getParent());
+        try {
+            Files.move(files.get(0), resolved.path(), StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException unsupported) {
+            Files.move(files.get(0), resolved.path());
+        }
+        Files.deleteIfExists(directory);
+        return mutationResult(call, resolved, "restored", new byte[0], restored, true, "restored");
     }
 
     private static ModelToolResult applyKtl(ModelToolCall call) throws IOException {
@@ -454,14 +529,122 @@ public final class ModelWorkspaceToolRegistry {
             ModelToolCall call,
             ModelWorkspaceRegistry.ResolvedPath resolved,
             String operation,
-            long changed
-    ) {
+            byte[] previous,
+            byte[] resulting,
+            boolean reread,
+            String filesystemState
+    ) throws IOException {
+        long started = System.currentTimeMillis();
+        byte[] actual = Files.isRegularFile(resolved.path()) ? Files.readAllBytes(resolved.path()) : new byte[0];
+        if (!MessageDigest.isEqual(resulting, actual)) {
+            throw new IOException("Post-mutation reread did not match the intended content.");
+        }
+        DiffSummary diff = diff(
+                new String(previous, StandardCharsets.UTF_8),
+                new String(resulting, StandardCharsets.UTF_8),
+                resolved.relativePath()
+        );
         JsonObject output = new JsonObject();
         output.addProperty("workspace", resolved.workspace().id());
         output.addProperty("path", resolved.relativePath());
         output.addProperty("operation", operation);
-        output.addProperty("changed", changed);
-        return completed(call, output, "Workspace file change completed atomically.");
+        output.addProperty("previousContentHash", sha256(previous));
+        output.addProperty("resultingContentHash", sha256(resulting));
+        output.addProperty("linesAdded", diff.linesAdded());
+        output.addProperty("linesRemoved", diff.linesRemoved());
+        output.add("diffHunks", diff.hunks());
+        output.addProperty("diffTruncated", diff.truncated());
+        output.addProperty("reread", reread);
+        output.addProperty("filesystemState", filesystemState);
+        output.addProperty("validationStatus", "passed");
+        return new ModelToolResult(
+                call.id(), call.toolId(), "completed", output, "",
+                "Workspace file change completed atomically and was reread.",
+                started, System.currentTimeMillis(), "passed",
+                List.of(resolved.workspace().id() + ":" + resolved.relativePath()),
+                false, false, "approved"
+        );
+    }
+
+    private static void requireExpectedHash(JsonObject arguments, byte[] previous) throws IOException {
+        String expected = requiredString(arguments, "expectedHash");
+        String actual = sha256(previous);
+        if (!actual.equalsIgnoreCase(expected)) {
+            throw new StaleFileException(expected, actual);
+        }
+    }
+
+    private static String sha256(byte[] content) throws IOException {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(content));
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IOException("SHA-256 is unavailable.", impossible);
+        }
+    }
+
+    private static DiffSummary diff(String before, String after, String path) {
+        List<String> oldLines = List.of(before.split("\\n", -1));
+        List<String> newLines = List.of(after.split("\\n", -1));
+        int prefix = 0;
+        while (prefix < oldLines.size() && prefix < newLines.size()
+                && oldLines.get(prefix).equals(newLines.get(prefix))) {
+            prefix++;
+        }
+        int suffix = 0;
+        while (suffix < oldLines.size() - prefix && suffix < newLines.size() - prefix
+                && oldLines.get(oldLines.size() - 1 - suffix).equals(newLines.get(newLines.size() - 1 - suffix))) {
+            suffix++;
+        }
+        int oldChanged = oldLines.size() - prefix - suffix;
+        int newChanged = newLines.size() - prefix - suffix;
+        JsonArray hunks = new JsonArray();
+        if (oldChanged == 0 && newChanged == 0) {
+            return new DiffSummary(0, 0, hunks, false);
+        }
+        JsonObject hunk = new JsonObject();
+        hunk.addProperty("header", "@@ -" + (prefix + 1) + "," + oldChanged
+                + " +" + (prefix + 1) + "," + newChanged + " @@");
+        JsonArray lines = new JsonArray();
+        int contextStart = Math.max(0, prefix - 3);
+        for (int i = contextStart; i < prefix; i++) {
+            lines.add(" " + oldLines.get(i));
+        }
+        boolean truncated = false;
+        int chars = 0;
+        for (int i = prefix; i < oldLines.size() - suffix; i++) {
+            String line = "-" + oldLines.get(i);
+            if ((chars += line.length()) > MAXIMUM_TOOL_TEXT_CHARS) { truncated = true; break; }
+            lines.add(line);
+        }
+        if (!truncated) {
+            for (int i = prefix; i < newLines.size() - suffix; i++) {
+                String line = "+" + newLines.get(i);
+                if ((chars += line.length()) > MAXIMUM_TOOL_TEXT_CHARS) { truncated = true; break; }
+                lines.add(line);
+            }
+        }
+        if (!truncated) {
+            for (int i = oldLines.size() - suffix; i < Math.min(oldLines.size(), oldLines.size() - suffix + 3); i++) {
+                lines.add(" " + oldLines.get(i));
+            }
+        }
+        hunk.add("lines", lines);
+        hunks.add(hunk);
+        return new DiffSummary(newChanged, oldChanged, hunks, truncated);
+    }
+
+    private record DiffSummary(int linesAdded, int linesRemoved, JsonArray hunks, boolean truncated) {}
+
+    private static final class StaleFileException extends IOException {
+        private final String expected;
+        private final String actual;
+        private final long startedAt = System.currentTimeMillis();
+
+        private StaleFileException(String expected, String actual) {
+            super("File changed after it was read; reread it before retrying.");
+            this.expected = expected;
+            this.actual = actual;
+        }
     }
 
     private static ModelToolResult completed(ModelToolCall call, JsonObject output, String detail) {
@@ -540,8 +723,8 @@ public final class ModelWorkspaceToolRegistry {
         ));
         definitions.put("workspace.write", definition(
                 "workspace.write",
-                "Atomically replace the complete content of an existing permitted UTF-8 text file of any format.",
-                mutationSchema(false),
+                "Atomically replace an existing permitted UTF-8 text file only when expectedHash matches its latest read revision.",
+                mutationSchema(true),
                 true,
                 Set.of("changes_file")
         ));
@@ -553,8 +736,9 @@ public final class ModelWorkspaceToolRegistry {
                         "path", stringSchema(),
                         "find", stringSchema(),
                         "replacement", stringSchema(),
-                        "expectedOccurrences", integerSchema(1, 1000)
-                ), List.of("workspace", "path", "find")),
+                        "expectedOccurrences", integerSchema(1, 1000),
+                        "expectedHash", hashSchema()
+                ), List.of("workspace", "path", "find", "expectedHash")),
                 true,
                 Set.of("changes_file")
         ));
@@ -563,10 +747,22 @@ public final class ModelWorkspaceToolRegistry {
                 "Move one regular file to Koil's recoverable model trash.",
                 objectSchema(Map.of(
                         "workspace", stringSchema(),
-                        "path", stringSchema()
-                ), List.of("workspace", "path")),
+                        "path", stringSchema(),
+                        "expectedHash", hashSchema()
+                ), List.of("workspace", "path", "expectedHash")),
                 true,
                 Set.of("moves_file_to_trash")
+        ));
+        definitions.put("workspace.restore", definition(
+                "workspace.restore",
+                "Restore one recoverably deleted file using its opaque recovery token; fails if the target now exists.",
+                objectSchema(Map.of(
+                        "workspace", stringSchema(),
+                        "path", stringSchema(),
+                        "recoveryToken", stringSchema()
+                ), List.of("workspace", "path", "recoveryToken")),
+                true,
+                Set.of("restores_file")
         ));
         definitions.put("automation.ktl_apply", definition(
                 "automation.ktl_apply",
@@ -602,12 +798,26 @@ public final class ModelWorkspaceToolRegistry {
         );
     }
 
-    private static JsonObject mutationSchema(boolean unused) {
-        return objectSchema(Map.of(
-                "workspace", stringSchema(),
-                "path", stringSchema(),
-                "content", stringSchema()
-        ), List.of("workspace", "path", "content"));
+    private static JsonObject mutationSchema(boolean existingFile) {
+        Map<String, JsonObject> properties = new LinkedHashMap<>();
+        properties.put("workspace", stringSchema());
+        properties.put("path", stringSchema());
+        properties.put("content", stringSchema());
+        if (existingFile) {
+            properties.put("expectedHash", hashSchema());
+        }
+        List<String> required = new ArrayList<>(List.of("workspace", "path", "content"));
+        if (existingFile) {
+            required.add("expectedHash");
+        }
+        return objectSchema(properties, required);
+    }
+
+    private static JsonObject hashSchema() {
+        JsonObject schema = new JsonObject();
+        schema.addProperty("type", "string");
+        schema.addProperty("pattern", "^[0-9a-fA-F]{64}$");
+        return schema;
     }
 
     private static JsonObject objectSchema(Map<String, JsonObject> properties, List<String> required) {

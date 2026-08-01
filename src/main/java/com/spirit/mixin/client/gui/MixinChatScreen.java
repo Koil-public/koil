@@ -36,6 +36,7 @@ import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.api.chat.upload.RichChatRemoteImageCache;
 import com.spirit.koil.api.chat.upload.RichChatUploadDraft;
 import com.spirit.koil.api.chat.RichChatSettings;
+import com.spirit.koil.api.chat.RichChatSectionFormatting;
 import com.spirit.koil.api.chat.RichChatAttachment;
 import com.spirit.client.gui.PopupMenu;
 import com.spirit.client.gui.UiSoundHelper;
@@ -157,6 +158,20 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
     }
 
+    @Override
+    public boolean charTyped(char chr, int modifiers) {
+        if (chr != RichChatSectionFormatting.PREFIX
+                || !RichChatSettings.enabled()
+                || chatField == null
+                || !chatField.isActive()) {
+            return super.charTyped(chr, modifiers);
+        }
+        // TextFieldWidget.write(...) calls StringHelper.stripInvalidChars,
+        // which removes §. Insert it through the raw Rich Chat draft path.
+        koil$insertDraftText(String.valueOf(chr));
+        return true;
+    }
+
     @Inject(method = "removed", at = @At("TAIL"))
     private void koil$clearMultilineLayoutOnRemoved(CallbackInfo ci) {
         MultilineChatInputLayout.clear();
@@ -234,7 +249,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 cir.setReturnValue(true);
                 return;
             }
-            if (clipboard.indexOf('\n') >= 0 || clipboard.indexOf('\r') >= 0) {
+            if (clipboard.indexOf('\n') >= 0 || clipboard.indexOf('\r') >= 0
+                    || RichChatSectionFormatting.containsSectionSign(clipboard)) {
                 koil$insertDraftText(clipboard.replace("\r\n", "\n").replace('\r', '\n'));
                 cir.setReturnValue(true);
                 return;
@@ -306,7 +322,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Inject(method = "normalize", at = @At("HEAD"), cancellable = true)
     private void koil$preserveMultilineNormalize(String chatText, CallbackInfoReturnable<String> cir) {
-        if (chatText.indexOf('\n') < 0 && chatText.indexOf('\r') < 0) {
+        boolean sectionInput = RichChatSectionFormatting.containsSectionSign(chatText);
+        if (chatText.indexOf('\n') < 0 && chatText.indexOf('\r') < 0 && !sectionInput) {
             return;
         }
 
@@ -397,7 +414,10 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
 
         if (chatText.indexOf('\n') < 0 && chatText.indexOf('\r') < 0) {
-            RichChatMessageData richMessage = koil$rememberRichChatMetadata(chatText, chatText, "text", List.of());
+            RichChatMessageData richMessage = koil$rememberRichChatMetadata(chatText, singleLineNetworkText, "text", List.of());
+            if (RichChatSectionFormatting.containsFormatting(chatText)) {
+                LocalMultilineChatBridge.remember(singleLineNetworkText, chatText);
+            }
             if (richMessage != null && RichChatSyncClientBridge.canSync()) {
                 RichChatSyncClientBridge.send(richMessage);
             }
@@ -476,7 +496,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (addToHistory && minecraft != null && minecraft.inGameHud != null) {
             minecraft.inGameHud.getChatHud().addToMessageHistory(historyText);
         }
-        String routedBody = historyText.indexOf('\n') >= 0 ? koil$networkSafeMultiline(historyText) : historyText;
+        String routedBody = koil$networkSafeMultiline(historyText);
         String command = RichChatPrivateMessageBridge.routeOutgoing(routedBody);
         if (command.length() > KOIL_MAX_VANILLA_CHAT_CHARS) {
             koil$sendChunkedPrivateMessage(historyText, routedBody, RichChatPrivateMessageBridge.targetPlayer(), cir);
@@ -525,7 +545,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (addToHistory && minecraft != null && minecraft.inGameHud != null) {
             minecraft.inGameHud.getChatHud().addToMessageHistory(koil$truncateDraft(chatText == null ? "" : chatText.replace("\r\n", "\n").replace('\r', '\n')).trim());
         }
-        String routedBody = normalizedBody.indexOf('\n') >= 0 ? koil$networkSafeMultiline(normalizedBody) : normalizedBody;
+        String routedBody = koil$networkSafeMultiline(normalizedBody);
         String command = "msg " + targetPlayer + " " + routedBody;
         if (command.length() > KOIL_MAX_VANILLA_CHAT_CHARS) {
             koil$sendChunkedPrivateMessage(normalizedBody, routedBody, targetPlayer, cir);
@@ -574,7 +594,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (addToHistory && minecraft != null && minecraft.inGameHud != null) {
             minecraft.inGameHud.getChatHud().addToMessageHistory(koil$truncateDraft(chatText == null ? "" : chatText.replace("\r\n", "\n").replace('\r', '\n')).trim());
         }
-        String routedBody = normalizedBody.indexOf('\n') >= 0 ? koil$networkSafeMultiline(normalizedBody) : normalizedBody;
+        String routedBody = koil$networkSafeMultiline(normalizedBody);
         String command = "execute as " + executorName + " run " + whisperCommand + " " + targetPlayer + " " + routedBody;
         if (command.length() > KOIL_MAX_VANILLA_CHAT_CHARS) {
             koil$sendChunkedExecutePrivateMessage(normalizedBody, routedBody, executorName, whisperCommand, targetPlayer, cir);
@@ -786,13 +806,14 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         String normalizedRaw = rawText == null ? "" : rawText.replace("\r\n", "\n").replace('\r', '\n').trim();
         RichChatLatexDetector.Result latex = RichChatLatexDetector.detect(normalizedRaw);
         boolean multiline = normalizedRaw.indexOf('\n') >= 0;
-        if (!latex.hasLatex() && !multiline && !hasAttachments) {
+        boolean sectionFormatting = RichChatSectionFormatting.containsFormatting(normalizedRaw);
+        if (!latex.hasLatex() && !multiline && !sectionFormatting && !hasAttachments) {
             return null;
         }
 
         RichMessageBuilder builder = RichMessageBuilder.create()
                 .messageId(messageId)
-                .type(hasAttachments ? com.spirit.koil.api.chat.RichChatMessageType.MIXED : (latex.hasLatex() ? latex.messageType() : com.spirit.koil.api.chat.RichChatMessageType.MULTILINE_TEXT))
+                .type(hasAttachments ? com.spirit.koil.api.chat.RichChatMessageType.MIXED : (latex.hasLatex() ? latex.messageType() : (multiline ? com.spirit.koil.api.chat.RichChatMessageType.MULTILINE_TEXT : com.spirit.koil.api.chat.RichChatMessageType.TEXT)))
                 .rawText(normalizedRaw)
                 .fallbackText(fallbackText == null ? normalizedRaw : fallbackText)
                 .sender(minecraft.player.getUuid(), minecraft.player.getGameProfile().getName())
@@ -809,7 +830,12 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                     .metadata("latex_block_count", Integer.toString(latex.blockCount()))
                     .metadata("latex_document_count", Integer.toString(latex.documentCount()));
         } else if (!normalizedRaw.isBlank()) {
-            builder.segment(com.spirit.koil.api.chat.RichChatSegment.multilineText(normalizedRaw));
+            builder.segment(multiline
+                    ? com.spirit.koil.api.chat.RichChatSegment.multilineText(normalizedRaw)
+                    : com.spirit.koil.api.chat.RichChatSegment.text(normalizedRaw));
+        }
+        if (sectionFormatting) {
+            builder.metadata("section_formatting", "true");
         }
         if (hasAttachments) {
             builder.metadata("attachment_count", Integer.toString(attachments.size()));
@@ -873,7 +899,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Redirect(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/DrawContext;fill(IIIII)V"))
     private void koil$renderVanillaInputBackground(DrawContext context, int x1, int y1, int x2, int y2, int color) {
-        if (!RichChatSettings.enabled() || !koil$isMultilineDraft()) {
+        if (!RichChatSettings.enabled()
+                || !koil$isMultilineDraft() && !koil$hasExpandedSingleLineDraft()) {
             context.fill(x1, y1, x2, y2, color);
         }
     }
@@ -905,7 +932,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             koil$renderUploadDraft(context, mouseX, mouseY);
         }
         if (!koil$isMultilineDraft()) {
-            MultilineChatInputLayout.clear();
+            koil$updateMultilineLayoutReservation();
             koil$renderCustomSuggestionPopup(context, mouseX, mouseY);
             RichChatAttachmentRenderer.renderFocused(context, this.width, this.height, mouseX, mouseY);
             koil$pmMenu.render(context, mouseX, mouseY);
@@ -920,37 +947,42 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         TextRenderer renderer = this.textRenderer;
         List<String> lines = koil$splitLines(chatField.getText());
         int cursorLine = koil$cursorLine(lines, chatField.getCursor());
-        int lineHeight = renderer.fontHeight + 2;
-        int maxVisibleLines = Math.max(2, Math.min(6, (this.height - 34) / lineHeight));
-        int visibleLines = Math.min(maxVisibleLines, Math.max(2, lines.size()));
+        int visibleLines = koil$visibleLineCount(lines);
         int firstLine = koil$firstVisibleLine(lines, visibleLines, cursorLine);
 
         int left = 2;
         int right = this.width - 2;
         int bottom = this.height - 2;
-        int top = bottom - visibleLines * lineHeight - 8;
+        int contentHeight = koil$visibleDraftContentHeight(lines, firstLine, visibleLines);
+        int top = bottom - contentHeight - 8;
         int background = MinecraftClient.getInstance().options.getTextBackgroundColor(Integer.MIN_VALUE);
         context.fill(left, top, right, bottom, background);
 
         int textX = left + KOIL_MULTILINE_TEXT_INSET;
         int textY = top + 5;
+        int lineY = textY;
         for (int i = 0; i < visibleLines; i++) {
             int lineIndex = firstLine + i;
             if (lineIndex >= lines.size()) {
                 break;
             }
-            int lineY = textY + i * lineHeight;
-            String line = renderer.trimToWidth(lines.get(lineIndex), Math.max(20, right - left - 12));
+            String line = VanillaBackedChatInputController.trimDraftSourceToWidth(
+                    renderer,
+                    MinecraftClient.getInstance(),
+                    lines.get(lineIndex),
+                    Math.max(20, right - left - 12)
+            );
             koil$renderDraftSelection(context, renderer, lines, lineIndex, textX, lineY);
             int activeCursor = lineIndex == cursorLine
                     ? Math.min(line.length(), koil$lineBeforeCursor(lines, chatField.getCursor()).length())
                     : -1;
             koil$renderDraftLine(context, line, textX, lineY, Math.max(20, right - left - 12), activeCursor);
+            lineY += koil$draftLineHeight(lines.get(lineIndex));
         }
 
         if ((System.currentTimeMillis() / 300L) % 2L == 0L && cursorLine >= firstLine && cursorLine < firstLine + visibleLines) {
             int cursorX = textX + VanillaBackedChatInputController.styledLineWidth(renderer, MinecraftClient.getInstance(), koil$lineBeforeCursor(lines, chatField.getCursor()));
-            int cursorY = textY + (cursorLine - firstLine) * lineHeight - 1;
+            int cursorY = textY + koil$draftLineOffset(lines, firstLine, cursorLine) - 1;
             context.fill(cursorX, cursorY, cursorX + 1, cursorY + renderer.fontHeight + 1, 0xFFFFFFFF);
         }
 
@@ -1222,10 +1254,21 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Unique
     private String koil$networkSafeMultiline(String chatText) {
-        return chatText.replace("\r\n", "\n")
+        return RichChatSectionFormatting.networkSafeFallback(chatText).replace("\r\n", "\n")
                 .replace('\r', '\n')
                 .trim()
                 .replaceAll("[\\t ]*\\n[\\t ]*", " | ");
+    }
+
+    @Unique
+    private void koil$applyComposerAction(ChatComposerMenuBridge.ActionResult result) {
+        if (result == null || chatField == null) {
+            return;
+        }
+        if (result == ChatComposerMenuBridge.ActionResult.OPEN_MODEL_SETUP_COMMAND) {
+            chatField.setText("/models setup");
+            chatField.setCursorToEnd();
+        }
     }
 
     @Unique
@@ -1339,8 +1382,12 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         String line = lines.get(lineIndex);
         int startOffset = Math.max(0, Math.min(line.length(), selectedStart - lineGlobalStart));
         int endOffset = Math.max(0, Math.min(line.length(), selectedEnd - lineGlobalStart));
-        int selectionX1 = textX + renderer.getWidth(line.substring(0, startOffset));
-        int selectionX2 = textX + renderer.getWidth(line.substring(0, endOffset));
+        int selectionX1 = textX + VanillaBackedChatInputController.styledRangeWidth(
+                renderer, MinecraftClient.getInstance(), line, 0, startOffset, startOffset
+        );
+        int selectionX2 = textX + VanillaBackedChatInputController.styledRangeWidth(
+                renderer, MinecraftClient.getInstance(), line, 0, endOffset, endOffset
+        );
         context.fill(selectionX1, lineY - 1, selectionX2, lineY + renderer.fontHeight + 1, 0x804A8FD6);
     }
 
@@ -1420,12 +1467,18 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     @Unique
     private int koil$cursorFromMouse(double mouseX, double mouseY) {
         List<String> lines = koil$splitLines(chatField.getText());
-        int lineHeight = this.textRenderer.fontHeight + 2;
         int visibleLines = koil$visibleLineCount(lines);
         int cursorLine = koil$cursorLine(lines, chatField.getCursor());
         int firstLine = koil$firstVisibleLine(lines, visibleLines, cursorLine);
         int top = koil$draftTop();
-        int line = firstLine + Math.max(0, Math.min(visibleLines - 1, (int)((mouseY - top - 5) / lineHeight)));
+        int relativeY = Math.max(0, (int) mouseY - top - 5);
+        int line = firstLine;
+        int consumed = 0;
+        while (line + 1 < lines.size() && line + 1 < firstLine + visibleLines
+                && relativeY >= consumed + koil$draftLineHeight(lines.get(line))) {
+            consumed += koil$draftLineHeight(lines.get(line));
+            line++;
+        }
         line = Math.max(0, Math.min(lines.size() - 1, line));
         int index = 0;
         for (int i = 0; i < line; i++) {
@@ -1434,28 +1487,81 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
         String textLine = lines.get(line);
         int relativeX = Math.max(0, (int)mouseX - (2 + KOIL_MULTILINE_TEXT_INSET));
-        int column = this.textRenderer.trimToWidth(textLine, relativeX).length();
+        int column = VanillaBackedChatInputController.trimDraftSourceToWidth(
+                this.textRenderer,
+                MinecraftClient.getInstance(),
+                textLine,
+                relativeX
+        ).length();
         return Math.min(chatField.getText().length(), index + Math.min(column, textLine.length()));
     }
 
     @Unique
     private int koil$draftTop() {
-        int lineHeight = this.textRenderer.fontHeight + 2;
-        int visibleLines = koil$visibleLineCount(koil$splitLines(chatField.getText()));
-        return this.height - 2 - visibleLines * lineHeight - 8;
+        List<String> lines = koil$splitLines(chatField.getText());
+        int visibleLines = koil$visibleLineCount(lines);
+        int cursorLine = koil$cursorLine(lines, chatField.getCursor());
+        int firstLine = koil$firstVisibleLine(lines, visibleLines, cursorLine);
+        return this.height - 2 - koil$visibleDraftContentHeight(lines, firstLine, visibleLines) - 8;
     }
 
     @Unique
     private void koil$updateMultilineLayoutReservation() {
         if (!koil$isMultilineDraft()) {
-            MultilineChatInputLayout.clear();
+            if (chatField == null || this.textRenderer == null) {
+                MultilineChatInputLayout.clear();
+                return;
+            }
+            int formattedHeight = RichChatAttachmentRenderer.liveDraftFormattedLineHeight(
+                    this.textRenderer,
+                    chatField.getText()
+            );
+            int required = chatField.getHeight() + Math.max(
+                    0,
+                    formattedHeight - (this.textRenderer.fontHeight + 2)
+            );
+            MultilineChatInputLayout.setReservedHeight(
+                    Math.max(0, required - chatField.getHeight())
+            );
             return;
         }
 
-        int lineHeight = this.textRenderer.fontHeight + 2;
-        int visibleLines = koil$visibleLineCount(koil$splitLines(chatField.getText()));
-        int draftHeight = visibleLines * lineHeight + 8;
+        List<String> lines = koil$splitLines(chatField.getText());
+        int visibleLines = koil$visibleLineCount(lines);
+        int cursorLine = koil$cursorLine(lines, chatField.getCursor());
+        int firstLine = koil$firstVisibleLine(lines, visibleLines, cursorLine);
+        int draftHeight = koil$visibleDraftContentHeight(lines, firstLine, visibleLines) + 8;
         MultilineChatInputLayout.setReservedHeight(Math.max(0, draftHeight - 12));
+    }
+
+    @Unique
+    private int koil$draftLineHeight(String line) {
+        return Math.max(
+                this.textRenderer.fontHeight + 2,
+                RichChatAttachmentRenderer.liveDraftFormattedLineHeight(this.textRenderer, line)
+        );
+    }
+
+    @Unique
+    private int koil$visibleDraftContentHeight(List<String> lines, int firstLine, int visibleLines) {
+        int height = 0;
+        for (int index = Math.max(0, firstLine);
+             index < lines.size() && index < firstLine + Math.max(0, visibleLines);
+             index++) {
+            height += koil$draftLineHeight(lines.get(index));
+        }
+        return Math.max(this.textRenderer.fontHeight + 2, height);
+    }
+
+    @Unique
+    private int koil$draftLineOffset(List<String> lines, int firstLine, int targetLine) {
+        int offset = 0;
+        for (int index = Math.max(0, firstLine);
+             index < lines.size() && index < targetLine;
+             index++) {
+            offset += koil$draftLineHeight(lines.get(index));
+        }
+        return offset;
     }
 
     @Unique
@@ -1724,17 +1830,6 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     }
 
     @Unique
-    private void koil$applyComposerAction(ChatComposerMenuBridge.ActionResult result) {
-        if (result == null || chatField == null) {
-            return;
-        }
-        if (result == ChatComposerMenuBridge.ActionResult.OPEN_MODEL_SETUP_COMMAND) {
-            chatField.setText("/models setup");
-            chatField.setCursorToEnd();
-        }
-    }
-
-    @Unique
     private boolean koil$mouseInsidePrivateMessageButton(double mouseX, double mouseY) {
         if (!koil$showChatControls()) {
             return false;
@@ -1827,7 +1922,34 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
 
     @Unique
     private int koil$inputPanelTop() {
-        return koil$isMultilineDraft() ? koil$draftTop() : this.height - 16;
+        return koil$isMultilineDraft() ? koil$draftTop() : koil$singleLineInputTop();
+    }
+
+    @Unique
+    private boolean koil$hasExpandedSingleLineDraft() {
+        return !koil$isMultilineDraft()
+                && chatField != null
+                && this.textRenderer != null
+                && RichChatAttachmentRenderer.liveDraftFormattedLineHeight(
+                this.textRenderer,
+                chatField.getText()
+        ) > this.textRenderer.fontHeight + 2;
+    }
+
+    @Unique
+    private int koil$singleLineInputTop() {
+        if (chatField == null || this.textRenderer == null || !koil$hasExpandedSingleLineDraft()) {
+            return this.height - 16;
+        }
+        int formattedHeight = RichChatAttachmentRenderer.liveDraftFormattedLineHeight(
+                this.textRenderer,
+                chatField.getText()
+        );
+        int requiredHeight = chatField.getHeight() + Math.max(
+                0,
+                formattedHeight - (this.textRenderer.fontHeight + 2)
+        );
+        return chatField.getY() + chatField.getHeight() - requiredHeight;
     }
 
     @Unique
@@ -2690,23 +2812,42 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
         String text = field.getText() == null ? "" : field.getText();
         int first = Math.max(0, Math.min(accessor.koil$getFirstCharacterIndex(), text.length()));
-        String visible = this.textRenderer.trimToWidth(text.substring(first), field.getInnerWidth());
+        String visible = VanillaBackedChatInputController.trimDraftSourceToWidth(
+                this.textRenderer,
+                MinecraftClient.getInstance(),
+                text.substring(first),
+                field.getInnerWidth()
+        );
         int x = field.getX() + KOIL_SINGLE_LINE_TEXT_INSET;
-        int y = field.getY() + Math.max(1, (field.getHeight() - this.textRenderer.fontHeight) / 2) - 1;
-        context.enableScissor(field.getX() + 1, field.getY(), field.getX() + field.getWidth() - 1, field.getY() + field.getHeight() - 1);
+        int formattedHeight = RichChatAttachmentRenderer.liveDraftFormattedLineHeight(this.textRenderer, text);
+        int requiredHeight = field.getHeight() + Math.max(
+                0,
+                formattedHeight - (this.textRenderer.fontHeight + 2)
+        );
+        int bottom = field.getY() + field.getHeight();
+        int top = bottom - requiredHeight;
+        int y = top + Math.max(0, (requiredHeight - formattedHeight) / 2);
+        if (requiredHeight > field.getHeight()) {
+            int background = MinecraftClient.getInstance().options.getTextBackgroundColor(Integer.MIN_VALUE);
+            context.fill(field.getX() - 2, top, field.getX() + field.getWidth() + 2, bottom, background);
+        }
+        context.enableScissor(field.getX() + 1, top, field.getX() + field.getWidth() - 1, bottom - 1);
         koil$renderSingleLineSelection(context, accessor, text, first, visible, x, y);
         int renderedCursorX = -1;
         if (!visible.isEmpty()) {
             int cursor = Math.max(first, Math.min(field.getCursor(), first + visible.length()));
             int visibleEnd = first + visible.length();
-            renderedCursorX = VanillaBackedChatInputController.renderStyledRange(
-                    context, this.textRenderer, MinecraftClient.getInstance(), text,
-                    first, cursor, cursor, x, y, field.getInnerWidth()
-            );
             VanillaBackedChatInputController.renderStyledRange(
                     context, this.textRenderer, MinecraftClient.getInstance(), text,
-                    cursor, visibleEnd, cursor, renderedCursorX, y,
-                    Math.max(1, field.getInnerWidth() - (renderedCursorX - x))
+                    first, visibleEnd, cursor, x, y, field.getInnerWidth()
+            );
+            renderedCursorX = x + VanillaBackedChatInputController.styledRangeWidth(
+                    this.textRenderer,
+                    MinecraftClient.getInstance(),
+                    text,
+                    first,
+                    cursor,
+                    cursor
             );
         }
         koil$renderSingleLineCursor(context, field, text, first, visible, x, y, renderedCursorX);
@@ -2729,8 +2870,12 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (clippedStart >= clippedEnd) {
             return;
         }
-        int selectionX1 = x + this.textRenderer.getWidth(text.substring(first, clippedStart));
-        int selectionX2 = x + this.textRenderer.getWidth(text.substring(first, clippedEnd));
+        int selectionX1 = x + VanillaBackedChatInputController.styledRangeWidth(
+                this.textRenderer, MinecraftClient.getInstance(), text, first, clippedStart, clippedStart
+        );
+        int selectionX2 = x + VanillaBackedChatInputController.styledRangeWidth(
+                this.textRenderer, MinecraftClient.getInstance(), text, first, clippedEnd, clippedEnd
+        );
         context.fill(selectionX1, y - 1, selectionX2, y + this.textRenderer.fontHeight + 1, 0x804A8FD6);
     }
 

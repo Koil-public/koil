@@ -3,6 +3,8 @@ package com.spirit.koil.api.chat.upload;
 import com.spirit.koil.api.chat.RichChatAttachment;
 import com.spirit.koil.api.chat.RichChatAttachmentType;
 import com.spirit.koil.api.chat.RichChatSettings;
+import com.spirit.koil.api.chat.RichChatSectionFormatting;
+import com.spirit.koil.api.chat.RichChatStructuralStyleRegistry;
 import com.spirit.koil.api.chat.ChatHudPanelRegistry;
 import com.spirit.client.gui.InfoPopup;
 import com.spirit.client.gui.PopupMenu;
@@ -13,6 +15,7 @@ import com.spirit.client.gui.ide.TextFileViewSupport;
 import com.spirit.koil.api.design.uiColorVal;
 import com.spirit.koil.api.chat.RichChatCodeBlockBridge;
 import com.spirit.koil.api.chat.RichChatHeadingLayout;
+import com.spirit.koil.api.chat.RichChatStructuralContinuation;
 import com.spirit.koil.api.chat.RichChatTableBridge;
 import com.spirit.koil.api.chat.RichChatMaskedLinkBridge;
 import com.spirit.koil.api.chat.RichChatCommandFeedbackFormatter;
@@ -459,7 +462,10 @@ public final class RichChatAttachmentRenderer {
             effectiveOrderedText = Text.literal(displayText).asOrderedText();
         }
         if (!LocalRichAttachmentBridge.containsMarker(displayText) && containsRichFormatting(displayText)) {
-            int right = renderFormattedText(context, renderer, displayText, x, y, effectiveColor, style);
+            String formattedSource = displayText.equals(text)
+                    ? RichChatSectionFormatting.controlSource(effectiveOrderedText)
+                    : displayText;
+            int right = renderFormattedText(context, renderer, formattedSource, x, y, effectiveColor, style);
             RichChatTimestampBridge.render(context, renderer, text, x, y);
             return right;
         }
@@ -529,6 +535,112 @@ public final class RichChatAttachmentRenderer {
         return renderFormattedText(context, renderer, text, x, y, color, RichChatPrivateMessageBridge.VisualStyle.NORMAL);
     }
 
+    /** Draft-only path: control tokens stay visible while their style applies. */
+    public static int renderLiveDraftFormattedText(
+            DrawContext context,
+            TextRenderer renderer,
+            String text,
+            int x,
+            int y,
+            int color,
+            Style baseStyle
+    ) {
+        return renderFormattedText(
+                context,
+                renderer,
+                text,
+                x,
+                y,
+                color,
+                RichChatPrivateMessageBridge.VisualStyle.NORMAL,
+                true,
+                baseStyle
+        );
+    }
+
+    /** Measures the draft path without drawing, including structural geometry. */
+    public static int measureLiveDraftFormattedText(TextRenderer renderer, String text, Style suppliedBaseStyle) {
+        if (renderer == null || text == null || text.isEmpty()) {
+            return 0;
+        }
+        String visiblePrefix = detectVisibleTextPrefix(text);
+        String content = visiblePrefix.isEmpty() ? text : text.substring(visiblePrefix.length());
+        Style baseStyle = suppliedBaseStyle == null ? Style.EMPTY : suppliedBaseStyle;
+        int width = visiblePrefix.isEmpty()
+                ? 0
+                : renderer.getWidth(Text.literal(visiblePrefix).setStyle(baseStyle));
+        if (ModelChatIdentity.PREFIX.equals(visiblePrefix)) {
+            width += ModelChatIdentity.alignmentPadding(
+                    renderer.getWidth(visiblePrefix),
+                    renderer.getWidth(" ")
+            );
+        }
+        float contentScale = 1.0F;
+        QuoteStyle quote = detectQuoteStyle(content);
+        if (quote != null) {
+            width += renderer.getWidth(Text.literal(quote.leadingWhitespace()).setStyle(baseStyle)) + 5;
+            content = quote.content();
+            baseStyle = RichChatStructuralStyleRegistry.apply(
+                    RichChatStructuralStyleRegistry.Role.QUOTE_TEXT,
+                    baseStyle
+            );
+        }
+        SubtextStyle subtext = detectSubtextStyle(content);
+        if (subtext != null) {
+            width += renderer.getWidth(Text.literal(subtext.leadingWhitespace()).setStyle(baseStyle));
+            content = subtext.content();
+            baseStyle = RichChatStructuralStyleRegistry.apply(
+                    RichChatStructuralStyleRegistry.Role.SUBTEXT,
+                    baseStyle
+            );
+            contentScale = 0.82F;
+        }
+        HeaderStyle header = detectHeaderStyle(content);
+        if (header != null) {
+            width += renderer.getWidth(Text.literal(header.leadingWhitespace()).setStyle(baseStyle));
+            content = header.content();
+            baseStyle = RichChatStructuralStyleRegistry.heading(header.level()).text().apply(baseStyle);
+            contentScale = header.scale();
+        }
+        java.util.List<RenderedSegment> segments = new java.util.ArrayList<>();
+        collectFormattedSegments(content, baseStyle, firstLineKey(text), new int[]{0}, segments, "", true);
+        for (RenderedSegment segment : segments) {
+            width += Math.max(0, Math.round(
+                    renderer.getWidth(Text.literal(segment.text()).setStyle(segment.style())) * contentScale
+            ));
+        }
+        return width;
+    }
+
+    /** Actual painted height needed by a live input row. */
+    public static int liveDraftFormattedLineHeight(TextRenderer renderer, String text) {
+        if (renderer == null) {
+            return 0;
+        }
+        int normal = renderer.fontHeight + 2;
+        if (text == null || text.isEmpty()) {
+            return normal;
+        }
+        String prefix = detectVisibleTextPrefix(text);
+        String content = prefix.isEmpty() ? text : text.substring(prefix.length());
+        QuoteStyle quote = detectQuoteStyle(content);
+        if (quote != null) {
+            content = quote.content();
+        }
+        SubtextStyle subtext = detectSubtextStyle(content);
+        if (subtext != null) {
+            content = subtext.content();
+        }
+        HeaderStyle header = detectHeaderStyle(content);
+        if (header == null) {
+            return normal;
+        }
+        return Math.max(
+                normal,
+                header.yOffset() + Math.round((renderer.fontHeight + 2) * header.scale()) + 3
+        );
+    }
+
     private static boolean attachmentSeparator(String text) {
         return text != null && stripInlineAttachmentMarkers(text).replace("\\n", "").trim().isEmpty();
     }
@@ -557,12 +669,29 @@ public final class RichChatAttachmentRenderer {
     }
 
     private static int renderFormattedText(DrawContext context, TextRenderer renderer, String text, int x, int y, int color, RichChatPrivateMessageBridge.VisualStyle style) {
+        return renderFormattedText(context, renderer, text, x, y, color, style, false, Style.EMPTY);
+    }
+
+    private static int renderFormattedText(
+            DrawContext context,
+            TextRenderer renderer,
+            String text,
+            int x,
+            int y,
+            int color,
+            RichChatPrivateMessageBridge.VisualStyle style,
+            boolean draftMode,
+            Style suppliedBaseStyle
+    ) {
         if (context == null || renderer == null || text == null || text.isEmpty()) {
             return x;
         }
         String visiblePrefix = detectVisibleTextPrefix(text);
         String content = visiblePrefix.isEmpty() ? text : text.substring(visiblePrefix.length());
-        Style baseStyle = style == RichChatPrivateMessageBridge.VisualStyle.DIM ? Style.EMPTY.withItalic(true) : Style.EMPTY;
+        Style baseStyle = suppliedBaseStyle == null ? Style.EMPTY : suppliedBaseStyle;
+        if (style == RichChatPrivateMessageBridge.VisualStyle.DIM) {
+            baseStyle = baseStyle.withItalic(true);
+        }
         int cursor = x;
         float contentScale = 1.0F;
         int contentYOffset = 0;
@@ -591,9 +720,17 @@ public final class RichChatAttachmentRenderer {
                 cursor = RichChatLatexTextureRenderer.renderOrDrawText(context, renderer, Text.literal(quoteStyle.leadingWhitespace()).setStyle(baseStyle).asOrderedText(), cursor, y, color);
             }
             int quoteColor = withMultipliedAlpha(style == RichChatPrivateMessageBridge.VisualStyle.DIM ? 0xFF59616C : 0xFF7B8794, lineAlpha(color));
+            quoteColor = RichChatStructuralStyleRegistry.color(
+                    RichChatStructuralStyleRegistry.Role.QUOTE_BAR,
+                    quoteColor
+            );
             context.fill(cursor, y - 1, cursor + 2, y + renderer.fontHeight, quoteColor);
             cursor += 5;
             content = quoteStyle.content();
+            baseStyle = RichChatStructuralStyleRegistry.apply(
+                    RichChatStructuralStyleRegistry.Role.QUOTE_TEXT,
+                    baseStyle
+            );
         }
         SubtextStyle subtextStyle = detectSubtextStyle(content);
         if (subtextStyle != null) {
@@ -608,7 +745,10 @@ public final class RichChatAttachmentRenderer {
                 );
             }
             content = subtextStyle.content();
-            baseStyle = mergeStyles(baseStyle, Style.EMPTY.withColor(Formatting.DARK_GRAY));
+            baseStyle = RichChatStructuralStyleRegistry.apply(
+                    RichChatStructuralStyleRegistry.Role.SUBTEXT,
+                    baseStyle
+            );
             contentScale = 0.82F;
             contentYOffset = 1;
         }
@@ -625,13 +765,21 @@ public final class RichChatAttachmentRenderer {
                         color
                 );
             }
-            baseStyle = mergeStyles(baseStyle, headerStyle.style());
+            baseStyle = RichChatStructuralStyleRegistry.heading(headerStyle.level()).text().apply(baseStyle);
             contentScale = headerStyle.scale();
             contentYOffset = headerStyle.yOffset();
         }
         int[] spoilerCounter = new int[]{0};
         java.util.List<RenderedSegment> segments = new java.util.ArrayList<>();
-        collectFormattedSegments(content, baseStyle, firstLineKey(text), spoilerCounter, segments);
+        collectFormattedSegments(
+                content,
+                baseStyle,
+                firstLineKey(text),
+                spoilerCounter,
+                segments,
+                "",
+                draftMode
+        );
         for (RenderedSegment segment : segments) {
             cursor = drawFormattedSegment(context, renderer, segment, x, y + contentYOffset, cursor, color, contentScale);
         }
@@ -647,7 +795,7 @@ public final class RichChatAttachmentRenderer {
         if (RichChatSettings.chatColorsEnabled() && segment.style() != null && segment.style().getColor() != null) {
             segmentColor = ((color >>> 24) << 24) | (segment.style().getColor().getRgb() & 0x00FFFFFF);
         }
-        int width = Math.max(1, Math.round(renderer.getWidth(segment.text()) * Math.max(0.01F, scale)));
+        int width = Math.max(1, Math.round(renderer.getWidth(Text.literal(segment.text()).setStyle(segment.style())) * Math.max(0.01F, scale)));
         int height = Math.max(1, Math.round((renderer.fontHeight + 2) * Math.max(0.01F, scale)));
         if (segment.inlineCode()) {
             // Keep the inline card inside the current text row; the old extra
@@ -691,19 +839,33 @@ public final class RichChatAttachmentRenderer {
         return right;
     }
 
-    private static void collectFormattedSegments(String text, Style baseStyle, String lineKey, int[] spoilerCounter, java.util.List<RenderedSegment> out) {
+    private static String collectFormattedSegments(
+            String text,
+            Style baseStyle,
+            String lineKey,
+            int[] spoilerCounter,
+            java.util.List<RenderedSegment> out,
+            String sectionPrefix,
+            boolean draftMode
+    ) {
         if (text == null || text.isEmpty()) {
-            return;
+            return sectionPrefix == null ? "" : sectionPrefix;
         }
+        String activeSection = sectionPrefix == null ? "" : sectionPrefix;
         int index = 0;
         while (index < text.length()) {
             MarkerMatch match = nextFormattingMarker(text, index);
             if (match == null) {
-                appendPlainAndLinks(text.substring(index), baseStyle, out);
-                return;
+                return appendPlainAndLinks(text.substring(index), baseStyle, out, activeSection, draftMode);
             }
             if (match.start() > index) {
-                appendPlainAndLinks(text.substring(index, match.start()), baseStyle, out);
+                activeSection = appendPlainAndLinks(
+                        text.substring(index, match.start()),
+                        baseStyle,
+                        out,
+                        activeSection,
+                        draftMode
+                );
             }
             int close = text.indexOf(match.marker(), match.start() + match.marker().length());
             if (close < 0) {
@@ -721,23 +883,73 @@ public final class RichChatAttachmentRenderer {
                 String spoilerKey = lineKey + ":spoiler:" + spoilerCounter[0]++;
                 VISIBLE_SPOILERS.add(spoilerKey);
                 if (REVEALED_SPOILERS.contains(spoilerKey)) {
-                    collectFormattedSegments(inner, baseStyle, lineKey, spoilerCounter, out);
+                    activeSection = collectFormattedSegments(
+                            inner,
+                            baseStyle,
+                            lineKey,
+                            spoilerCounter,
+                            out,
+                            activeSection,
+                            draftMode
+                    );
                 } else {
-                    out.add(new RenderedSegment(inner, baseStyle.withObfuscated(true), spoilerKey, true, false, null));
+                    activeSection = appendSectionText(
+                            inner,
+                            RichChatStructuralStyleRegistry.apply(
+                                    RichChatStructuralStyleRegistry.Role.SPOILER_HIDDEN,
+                                    baseStyle
+                            ),
+                            null,
+                            out,
+                            activeSection,
+                            spoilerKey,
+                            true,
+                            false,
+                            draftMode
+                    );
                 }
             } else if ("`".equals(match.marker())) {
-                out.add(new RenderedSegment(inner, baseStyle.withColor(Formatting.GRAY), null, false, true, null));
+                activeSection = appendSectionText(
+                        inner,
+                        RichChatStructuralStyleRegistry.apply(
+                                RichChatStructuralStyleRegistry.Role.INLINE_CODE,
+                                baseStyle
+                        ),
+                        null,
+                        out,
+                        activeSection,
+                        null,
+                        false,
+                        true,
+                        draftMode
+                );
             } else {
-                collectFormattedSegments(inner, applyStyle(baseStyle, match.marker()), lineKey, spoilerCounter, out);
+                activeSection = collectFormattedSegments(
+                        inner,
+                        applyStyle(baseStyle, match.marker()),
+                        lineKey,
+                        spoilerCounter,
+                        out,
+                        activeSection,
+                        draftMode
+                );
             }
             index = close + match.marker().length();
         }
+        return activeSection;
     }
 
-    private static void appendPlainAndLinks(String text, Style baseStyle, java.util.List<RenderedSegment> out) {
+    private static String appendPlainAndLinks(
+            String text,
+            Style baseStyle,
+            java.util.List<RenderedSegment> out,
+            String sectionPrefix,
+            boolean draftMode
+    ) {
         if (text == null || text.isEmpty()) {
-            return;
+            return sectionPrefix == null ? "" : sectionPrefix;
         }
+        String activeSection = sectionPrefix == null ? "" : sectionPrefix;
         int cursor = 0;
         while (cursor < text.length()) {
             RichChatMaskedLinkBridge.Marker compact = RichChatMaskedLinkBridge.nextMarker(text, cursor);
@@ -747,12 +959,18 @@ public final class RichChatAttachmentRenderer {
             int rawStart = hasRaw ? matcher.start() : Integer.MAX_VALUE;
             int compactStart = compact == null ? Integer.MAX_VALUE : compact.start();
             if (rawStart == Integer.MAX_VALUE && compactStart == Integer.MAX_VALUE) {
-                out.add(new RenderedSegment(text.substring(cursor), baseStyle, null, false, false, null));
-                return;
+                return appendSectionText(text.substring(cursor), baseStyle, null, out, activeSection, draftMode);
             }
             int start = Math.min(rawStart, compactStart);
             if (start > cursor) {
-                out.add(new RenderedSegment(text.substring(cursor, start), baseStyle, null, false, false, null));
+                activeSection = appendSectionText(
+                        text.substring(cursor, start),
+                        baseStyle,
+                        null,
+                        out,
+                        activeSection,
+                        draftMode
+                );
             }
             String label;
             String target;
@@ -771,10 +989,62 @@ public final class RichChatAttachmentRenderer {
                 target = matcher.group(2).trim();
                 end = matcher.end();
             }
-            Formatting linkColor = isCommandLink(target) ? Formatting.GOLD : Formatting.BLUE;
-            out.add(new RenderedSegment(label, baseStyle.withUnderline(true).withColor(linkColor), null, false, false, target));
+            RichChatStructuralStyleRegistry.Role linkRole = isCommandLink(target)
+                    ? RichChatStructuralStyleRegistry.Role.COMMAND_LINK
+                    : RichChatStructuralStyleRegistry.Role.LINK;
+            activeSection = appendSectionText(
+                    label,
+                    RichChatStructuralStyleRegistry.apply(linkRole, baseStyle),
+                    target,
+                    out,
+                    activeSection,
+                    draftMode
+            );
             cursor = end;
         }
+        return activeSection;
+    }
+
+    private static String appendSectionText(
+            String text,
+            Style baseStyle,
+            String linkTarget,
+            java.util.List<RenderedSegment> out,
+            String sectionPrefix,
+            boolean draftMode
+    ) {
+        return appendSectionText(text, baseStyle, linkTarget, out, sectionPrefix, null, false, false, draftMode);
+    }
+
+    private static String appendSectionText(
+            String text,
+            Style baseStyle,
+            String linkTarget,
+            java.util.List<RenderedSegment> out,
+            String sectionPrefix,
+            String spoilerKey,
+            boolean obfuscated,
+            boolean inlineCode,
+            boolean draftMode
+    ) {
+        if (text == null || text.isEmpty()) {
+            return sectionPrefix == null ? "" : sectionPrefix;
+        }
+        String prefix = sectionPrefix == null ? "" : sectionPrefix;
+        java.util.List<RichChatSectionFormatting.Segment> parsed = draftMode
+                ? RichChatSectionFormatting.parseDraft(text, baseStyle, prefix)
+                : RichChatSectionFormatting.parse(prefix + text, baseStyle);
+        for (RichChatSectionFormatting.Segment segment : parsed) {
+            out.add(new RenderedSegment(
+                    segment.text(),
+                    segment.style(),
+                    spoilerKey,
+                    obfuscated,
+                    inlineCode,
+                    linkTarget
+            ));
+        }
+        return RichChatSectionFormatting.continuationPrefix(prefix + text);
     }
 
     private static boolean isCommandLink(String target) {
@@ -797,17 +1067,23 @@ public final class RichChatAttachmentRenderer {
         topLeft.mul(matrix);
         bottomRight.mul(matrix);
         VISIBLE_SPOILERS.add(spoilerKey);
-        SPOILER_BOUNDS.put(
-                spoilerKey,
-                new SpoilerBounds(
+        SpoilerBounds next = new SpoilerBounds(
                         spoilerKey,
                         Math.round(Math.min(topLeft.x(), bottomRight.x())) - 4,
                         Math.round(Math.min(topLeft.y(), bottomRight.y())) - 2,
                         Math.max(1, Math.round(Math.abs(bottomRight.x() - topLeft.x()))) + 8,
                         Math.max(1, Math.round(Math.abs(bottomRight.y() - topLeft.y()))) + 4,
                         lineX
-                )
-        );
+                );
+        SPOILER_BOUNDS.merge(spoilerKey, next, RichChatAttachmentRenderer::mergeSpoilerBounds);
+    }
+
+    private static SpoilerBounds mergeSpoilerBounds(SpoilerBounds first, SpoilerBounds second) {
+        int left = Math.min(first.x(), second.x());
+        int top = Math.min(first.y(), second.y());
+        int right = Math.max(first.x() + first.width(), second.x() + second.width());
+        int bottom = Math.max(first.y() + first.height(), second.y() + second.height());
+        return new SpoilerBounds(first.key(), left, top, right - left, bottom - top, first.lineX());
     }
 
     private static boolean containsRichFormatting(String text) {
@@ -817,6 +1093,11 @@ public final class RichChatAttachmentRenderer {
         String visiblePrefix = detectVisibleTextPrefix(text);
         String content = visiblePrefix.isEmpty() ? text : text.substring(visiblePrefix.length());
         if (ModelChatIdentity.PREFIX.equals(visiblePrefix)) {
+            return true;
+        }
+        // Incomplete draft codes stay literal until they become valid. Route
+        // any section sign through the parser, which preserves invalid input.
+        if (RichChatSectionFormatting.containsSectionSign(content)) {
             return true;
         }
         if (content.contains("***") || content.contains("**") || content.contains("__") || content.contains("*") || content.contains("--") || content.contains("||") || content.contains("`") || MASKED_LINK.matcher(content).find() || RichChatMaskedLinkBridge.containsMarker(content)) {
@@ -830,10 +1111,9 @@ public final class RichChatAttachmentRenderer {
         if (heading == null) {
             return null;
         }
-        Style style = Style.EMPTY.withBold(true).withUnderline(true).withColor(Formatting.WHITE);
         return new HeaderStyle(
+                heading.level(),
                 heading.content(),
-                style,
                 heading.scale(),
                 heading.yOffset(),
                 heading.leadingWhitespace()
@@ -848,12 +1128,17 @@ public final class RichChatAttachmentRenderer {
         while (leadingWhitespace < text.length() && Character.isWhitespace(text.charAt(leadingWhitespace))) {
             leadingWhitespace++;
         }
-        if (!text.startsWith("-# ", leadingWhitespace)) {
+        int markerLength;
+        if (text.startsWith("-# ", leadingWhitespace)) {
+            markerLength = 3;
+        } else if (RichChatStructuralContinuation.isSubtext(text, leadingWhitespace)) {
+            markerLength = 1;
+        } else {
             return null;
         }
         return new SubtextStyle(
                 text.substring(0, leadingWhitespace),
-                text.substring(leadingWhitespace + 3)
+                text.substring(leadingWhitespace + markerLength)
         );
     }
 
@@ -3188,7 +3473,7 @@ public final class RichChatAttachmentRenderer {
     private record MarkerMatch(int start, String marker) {
     }
 
-    private record HeaderStyle(String content, Style style, float scale, int yOffset, String leadingWhitespace) {
+    private record HeaderStyle(int level, String content, float scale, int yOffset, String leadingWhitespace) {
     }
 
     private record SubtextStyle(String leadingWhitespace, String content) {

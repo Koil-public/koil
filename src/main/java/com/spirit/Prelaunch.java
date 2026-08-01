@@ -9,6 +9,7 @@ public class Prelaunch implements PreLaunchEntrypoint {
     public void onPreLaunch() {
         try {
             KPakPrivateKeyStore.generate();
+            System.out.println("Pre-Launched");
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

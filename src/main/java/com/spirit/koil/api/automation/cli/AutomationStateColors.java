@@ -4,6 +4,7 @@ import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.console.ConsoleTheme;
 
 import java.util.Locale;
+import java.util.Set;
 
 public final class AutomationStateColors {
     private AutomationStateColors() {
@@ -18,6 +19,11 @@ public final class AutomationStateColors {
             case "attacking" -> ConsoleTheme.levelColor(ConsoleLevel.ERROR);
             case "mining" -> ConsoleTheme.levelColor(ConsoleLevel.WARN);
             case "waiting", "thinking", "header" -> ConsoleTheme.levelColor(ConsoleLevel.INFO);
+            case "inspecting", "observing", "writing" -> 0xFF55FFFF;
+            case "planning", "replanning" -> 0xFFAA55FF;
+            case "executing", "retrying" -> 0xFFFFAA00;
+            case "validating", "approval" -> 0xFFFFFF55;
+            case "cancelled" -> 0xFFFF5555;
             case "idle" -> ConsoleTheme.secondaryText();
             default -> ConsoleTheme.levelColor(ConsoleLevel.INFO);
         };
@@ -45,6 +51,8 @@ public final class AutomationStateColors {
         if ("header".equals(searchable)) {
             return "header";
         }
+        if (Set.of("inspecting", "observing", "writing", "planning", "replanning", "executing",
+                "retrying", "validating", "approval", "cancelled").contains(searchable)) return searchable;
         if (searchable.contains("fail") || searchable.contains("error") || searchable.contains("crash")) {
             return "failed";
         }

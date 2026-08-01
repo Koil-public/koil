@@ -26,6 +26,7 @@ import com.spirit.koil.api.model.tool.ModelWorkspaceRegistry;
 import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
 import com.spirit.koil.api.model.tool.MinecraftKnowledgeModelToolRegistry;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
+import com.spirit.koil.api.model.chat.ModelRequestMetricsPresentation;
 import com.google.gson.JsonObject;
 import com.spirit.koil.api.model.LocalModelRuntimeManager;
 import com.spirit.koil.api.model.ManagedModelRequest;
@@ -36,6 +37,8 @@ import com.spirit.koil.api.model.ModelRequestState;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolResult;
 import com.spirit.koil.api.model.ModelUsage;
+import com.spirit.koil.api.model.ModelCancellationHandle;
+import com.spirit.koil.api.model.ModelFinalizationHandle;
 import com.spirit.koil.api.model.StreamingModelObserver;
 import com.spirit.koil.api.model.StreamingModelRequest;
 import com.spirit.koil.api.model.StreamingModelResponse;
@@ -78,6 +81,25 @@ public final class LocalModelFoundationProof {
         require(ModelChatIdentity.alignedPrefixAdvance(18, 4) == 20
                         && ModelChatIdentity.alignmentPadding(18, 4) == 2,
                 "model continuation alignment did not use a stable whole-space advance");
+        require("00:00".equals(ModelRequestMetricsPresentation.formatElapsedMillis(1_000L, 1_999L))
+                        && "01:05".equals(ModelRequestMetricsPresentation.formatElapsedMillis(1_000L, 66_000L))
+                        && "1:01:01".equals(ModelRequestMetricsPresentation.formatElapsedMillis(1_000L, 3_662_000L)),
+                "bottom model elapsed timer formatting was not stable across minute/hour boundaries");
+        UUID elapsedRequest = UUID.randomUUID();
+        ModelGenerationHudState.begin(elapsedRequest, "elapsed timer proof");
+        ModelGenerationHudState.state(elapsedRequest, ModelRequestState.COMPLETED, "done");
+        var elapsedSnapshot = ModelGenerationHudState.visibleSnapshot();
+        require(elapsedSnapshot != null
+                        && elapsedSnapshot.completedAtMillis() > 0L
+                        && ModelRequestMetricsPresentation.elapsedLabel(
+                                elapsedSnapshot,
+                                elapsedSnapshot.completedAtMillis() + 120_000L
+                        ).equals(ModelRequestMetricsPresentation.formatElapsedMillis(
+                                elapsedSnapshot.createdAtMillis(),
+                                elapsedSnapshot.completedAtMillis()
+                        )),
+                "bottom model elapsed timer did not freeze at the terminal timestamp");
+        ModelGenerationHudState.dismiss(elapsedRequest);
         String compactAutomationPrompt = LocalModelAutomationPrompt.rules(false, false);
         require(compactAutomationPrompt.length() < 3_400,
                 "Automation prompt contract grew beyond its compact prefill budget");
@@ -92,6 +114,17 @@ public final class LocalModelFoundationProof {
                 "model voice did not select the final pronounceable word");
         require("".equals(ModelVoiceService.finalPronounceableWord("https://example.com/file")),
                 "model voice attempted to pronounce a URL");
+        require("Forest".equals(ModelVoiceService.finalPronounceableWord("\u00a7#04280DForest")),
+                "model voice treated compact-hex source as pronounceable text");
+        ModelVoicePhrasePlanner formattedSpeechPlanner = new ModelVoicePhrasePlanner();
+        var formattedSpeech = formattedSpeechPlanner.accept(
+                "\u00a7aDone \u00a7#04280Dforest text now "
+        );
+        require(formattedSpeech.size() == 1
+                        && formattedSpeech.get(0).text().contains("Done forest text now")
+                        && formattedSpeech.get(0).text().indexOf('\u00a7') < 0
+                        && !formattedSpeech.get(0).text().contains("04280D"),
+                "model voice retained a section/hex formatting control");
         ModelVoicePhrasePlanner planner = new ModelVoicePhrasePlanner();
         require(planner.accept("This ").isEmpty(),
                 "model voice emitted an incomplete one-word stream fragment");
@@ -124,6 +157,104 @@ public final class LocalModelFoundationProof {
         ModelVoiceService.stopSpeaking("foundation proof prompt");
         require(supersededSpeech.cancelled(),
                 "a new prompt did not invalidate speech from the prior response");
+        UUID cancelledRequest = UUID.randomUUID();
+        ModelGenerationHudState.begin(cancelledRequest, "cancel voice proof");
+        ModelGenerationHudState.bindCancellation(cancelledRequest, new ModelCancellationHandle() {
+            private boolean cancelled;
+
+            @Override
+            public boolean cancel(String reason) {
+                this.cancelled = true;
+                return true;
+            }
+
+            @Override
+            public boolean isCancellationRequested() {
+                return this.cancelled;
+            }
+
+            @Override
+            public String cancellationReason() {
+                return this.cancelled ? "proof cancellation" : "";
+            }
+        });
+        ModelVoiceService.StreamingSpeech popupSpeech = ModelVoiceService.beginStreaming();
+        require(ModelGenerationHudState.cancelVisible(), "model popup cancel did not reach its request handle");
+        require(popupSpeech.cancelled(), "model popup cancel did not invalidate queued/current voice");
+        var cancelledSnapshot = ModelGenerationHudState.visibleSnapshot();
+        require(cancelledSnapshot != null
+                        && cancelledSnapshot.state() == ModelRequestState.CANCELLING
+                        && cancelledSnapshot.activity().contains("Stopped thinking"),
+                "model popup cancel did not publish a stopped-thinking output");
+        ModelGenerationHudState.dismiss(cancelledRequest);
+        UUID answerNowRequest = UUID.randomUUID();
+        ModelGenerationHudState.begin(answerNowRequest, "answer now proof");
+        ModelGenerationHudState.bindFinalization(answerNowRequest, new ModelFinalizationHandle() {
+            private boolean requested;
+
+            @Override
+            public boolean requestAnswerNow() {
+                this.requested = true;
+                return true;
+            }
+
+            @Override
+            public boolean isFinalizationRequested() {
+                return this.requested;
+            }
+        });
+        ModelGenerationHudState.setAnswerNowVisible(answerNowRequest, true);
+        require(ModelGenerationHudState.answerNow(answerNowRequest),
+                "Answer Now did not request finalization");
+        var answerNowSnapshot = ModelGenerationHudState.visibleSnapshot();
+        require(answerNowSnapshot != null
+                        && answerNowSnapshot.state() == ModelRequestState.FINALIZING
+                        && answerNowSnapshot.activity().contains("Stopped thinking")
+                        && answerNowSnapshot.activity().contains("best complete answer"),
+                "Answer Now did not publish its non-cancelling stopped-thinking output");
+        ModelGenerationHudState.dismiss(answerNowRequest);
+        UUID headerRequest = UUID.randomUUID();
+        ModelGenerationHudState.begin(headerRequest, "header proof");
+        Text bottomHeader = ModelRequestMetricsPresentation.bottomHeader(
+                ModelGenerationHudState.visibleSnapshot(),
+                "proof-model",
+                0,
+                32_768
+        );
+        require(bottomHeader.getString().startsWith("Model | session kts-")
+                        && !bottomHeader.getString().contains("Local model"),
+                "bottom model header did not combine its renamed title and metrics");
+        require(bottomHeader.getStyle().getColor() != null
+                        && bottomHeader.getStyle().getColor().getRgb() == 0xAAAAAA,
+                "bottom Model title is not light gray");
+        String oversizedModelId = "provider/this-model-id-is-deliberately-too-long-for-the-metrics-row";
+        Text fittedBottomHeader = ModelRequestMetricsPresentation.bottomHeaderFitted(
+                ModelGenerationHudState.visibleSnapshot(),
+                oversizedModelId,
+                0,
+                32_768,
+                58,
+                text -> text.getString().length()
+        );
+        require(!fittedBottomHeader.getString().contains(oversizedModelId)
+                        && fittedBottomHeader.getString().startsWith("Model | session kts-")
+                        && fittedBottomHeader.getString().endsWith("| 0 | 0 | 0 | 0 |  --"),
+                "narrow bottom metrics culled session/numeric values before the model id");
+        Text fittedTopLine = ModelRequestMetricsPresentation.automationTopLineFitted(
+                ModelGenerationHudState.visibleSnapshot(),
+                oversizedModelId,
+                0,
+                32_768,
+                Text.literal("D-T | Plan"),
+                58,
+                text -> text.getString().length()
+        );
+        require(!fittedTopLine.getString().contains(oversizedModelId)
+                        && fittedTopLine.getString().startsWith("session ")
+                        && fittedTopLine.getString().contains("D-T | Plan")
+                        && fittedTopLine.getString().endsWith("| 0 | 0 | 0 | 0 |  --"),
+                "narrow Automation metrics culled mode/numeric values before the model id");
+        ModelGenerationHudState.dismiss(headerRequest);
         ModelContextWindowState context = ModelContextWindowState.from(
                 new ModelUsage(24_000, 1_000, 12_000, 0L, 0L, 0.0D),
                 100_000
@@ -372,7 +503,9 @@ public final class LocalModelFoundationProof {
                 "generation HUD lost the request mode");
         require(snapshot.activity().contains("Inspect the active command tree"),
                 "generation HUD did not preserve visible activity");
-        ModelGenerationHudState.dismiss(hudRequest);
+        ModelGenerationHudState.messagePresented(hudRequest);
+        require(ModelGenerationHudState.visibleSnapshot() == null,
+                "model popup remained visible after the final response entered chat");
     }
 
     private static void proveRichChatTablesAndSharedRegistrySuggestions() {

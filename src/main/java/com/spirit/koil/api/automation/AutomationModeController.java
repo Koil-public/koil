@@ -12,6 +12,7 @@ public final class AutomationModeController {
     private static volatile boolean deepThinkingActive;
     private static volatile boolean planningModeEnabled;
     private static volatile boolean planningActive;
+    private static volatile boolean experimentalCompactAgentEnabled;
     private static volatile String detail = "";
 
     private AutomationModeController() {
@@ -30,6 +31,9 @@ public final class AutomationModeController {
             deepThinkingActive = false;
             planningModeEnabled = false;
             planningActive = false;
+            if (!enabled) {
+                experimentalCompactAgentEnabled = false;
+            }
         }
         modeState = enabled ? ModeState.CONNECTING : ModeState.OFF;
         detail = enabled ? "connecting to local model" : "";
@@ -46,12 +50,21 @@ public final class AutomationModeController {
      * registry or bypass Minecraft's player permissions.
      */
     public static void enableYoloMode() {
-        if (!automationMode) {
+        setYoloModeEnabled(true);
+    }
+
+    public static void setYoloModeEnabled(boolean enabled) {
+        if (enabled && !automationMode) {
             setAutomationMode(true);
         }
-        approvalPolicy = ApprovalPolicy.YOLO;
-        detail = "yolo: registered capabilities require no Koil approval";
-        AutomationPresenceState.updateLocal("warning", detail);
+        approvalPolicy = enabled && automationMode ? ApprovalPolicy.YOLO : ApprovalPolicy.STANDARD;
+        detail = approvalPolicy == ApprovalPolicy.YOLO
+                ? "yolo: registered capabilities require no Koil approval"
+                : automationMode ? "standard approvals enabled" : "";
+        AutomationPresenceState.updateLocal(
+                approvalPolicy == ApprovalPolicy.YOLO ? "warning" : automationMode ? "idle" : "off",
+                detail
+        );
     }
 
     public static boolean isYoloMode() {
@@ -100,6 +113,14 @@ public final class AutomationModeController {
         return automationMode && planningActive;
     }
 
+    public static void setExperimentalCompactAgentEnabled(boolean enabled) {
+        experimentalCompactAgentEnabled = enabled;
+    }
+
+    public static boolean isExperimentalCompactAgentEnabled() {
+        return experimentalCompactAgentEnabled;
+    }
+
     public static void ready(String value) {
         if (automationMode) {
             modeState = ModeState.READY;
@@ -133,6 +154,7 @@ public final class AutomationModeController {
         deepThinkingActive = false;
         planningModeEnabled = false;
         planningActive = false;
+        experimentalCompactAgentEnabled = false;
         AutomationPresenceState.updateLocalMode(false);
         AutomationPresenceState.updateLocal("failed", detail);
         AutomationChatHudState.hide();
@@ -147,6 +169,7 @@ public final class AutomationModeController {
                 deepThinkingActive,
                 planningModeEnabled,
                 planningActive,
+                experimentalCompactAgentEnabled,
                 detail
         );
     }
@@ -173,6 +196,7 @@ public final class AutomationModeController {
             boolean deepThinkingActive,
             boolean planningModeEnabled,
             boolean planningActive,
+            boolean experimentalCompactAgentEnabled,
             String detail
     ) {
     }

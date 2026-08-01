@@ -44,7 +44,7 @@ public final class ModelPresenceWireCodec {
 
     public record Decoded(int version, ModelPresenceState.Snapshot snapshot) {
         public boolean supported() {
-            return this.version == ModelPresenceState.PROTOCOL_VERSION;
+            return this.version >= 1 && this.version <= ModelPresenceState.PROTOCOL_VERSION;
         }
     }
 }

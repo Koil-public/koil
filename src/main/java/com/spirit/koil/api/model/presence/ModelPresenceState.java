@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * No prompt, response, path, tool argument, or free-form detail is stored.
  */
 public final class ModelPresenceState {
-    public static final int PROTOCOL_VERSION = 1;
+    public static final int PROTOCOL_VERSION = 2;
     public static final long STALE_AFTER_MILLIS = 5_000L;
     public static final long TERMINAL_VISIBILITY_MILLIS = 8_000L;
 
@@ -144,6 +144,10 @@ public final class ModelPresenceState {
         if ("idle".equals(state) || "header".equals(state)) {
             return 0xFF9AA0A6;
         }
+        if ("inspecting".equals(state) || "observing".equals(state) || "writing".equals(state)) return 0xFF55FFFF;
+        if ("planning".equals(state) || "replanning".equals(state) || "thinking".equals(state)) return 0xFFAA55FF;
+        if ("executing".equals(state) || "retrying".equals(state) || "acting".equals(state)) return 0xFFFFAA00;
+        if ("validating".equals(state) || "approval".equals(state)) return 0xFFFFFF55;
         return AutomationStateColors.color(state);
     }
 
@@ -159,6 +163,10 @@ public final class ModelPresenceState {
     }
 
     private static String normalize(String state) {
+        String exact = state == null ? "" : state.strip().toLowerCase(java.util.Locale.ROOT);
+        if (java.util.Set.of("idle", "waiting", "thinking", "inspecting", "planning", "executing",
+                "observing", "validating", "retrying", "replanning", "finalizing", "writing",
+                "completed", "failed", "blocked", "cancelled").contains(exact)) return exact;
         String normalized = AutomationStateColors.normalizeState(state);
         return normalized == null || normalized.isBlank() ? "idle" : normalized;
     }

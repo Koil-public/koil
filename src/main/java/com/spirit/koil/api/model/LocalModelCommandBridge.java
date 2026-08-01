@@ -49,6 +49,13 @@ public final class LocalModelCommandBridge {
                                     LocalModelService.resetGeneralConversation();
                                     return 1;
                                 }))
+                        .then(literal("deep")
+                                .then(literal("resume")
+                                        .then(argument("session_id", word())
+                                                .executes(context -> LocalModelService.resumeDeepThought(
+                                                        getString(context, "session_id")) ? 1 : 0)))
+                                .then(argument("prompt", greedyString())
+                                        .executes(context -> LocalModelService.askDeep(getString(context, "prompt")) ? 1 : 0)))
                 )
         );
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
@@ -124,6 +131,27 @@ public final class LocalModelCommandBridge {
                                     : "No active local model or automation work to cancel.");
                             return 1;
                         }))
+                        .then(literal("queue")
+                                .executes(context -> {
+                                    showQueue();
+                                    return 1;
+                                })
+                                .then(literal("list").executes(context -> {
+                                    showQueue();
+                                    return 1;
+                                }))
+                                .then(literal("edit")
+                                        .then(argument("request_id", word())
+                                                .then(argument("revision", word())
+                                                        .then(argument("prompt", greedyString())
+                                                                .executes(context -> {
+                                                                    editQueuedPrompt(
+                                                                            getString(context, "request_id"),
+                                                                            getString(context, "revision"),
+                                                                            getString(context, "prompt")
+                                                                    );
+                                                                    return 1;
+                                                                }))))))
                         .then(literal("diagnostics").executes(context -> {
                             showHardware(false);
                             return 1;
@@ -184,54 +212,6 @@ public final class LocalModelCommandBridge {
                                                     setVoice(getString(context, "voice_id"));
                                                     return 1;
                                                 }))))
-                )
-        );
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
-                dispatcher.register(literal("models")
-                        .executes(context -> {
-                            openSetup();
-                            return 1;
-                        })
-                        .then(literal("setup").executes(context -> {
-                            openSetup();
-                            return 1;
-                        }))
-                        .then(literal("list").executes(context -> {
-                            showCatalog();
-                            return 1;
-                        }))
-                        .then(literal("installed").executes(context -> {
-                            showInstalled();
-                            return 1;
-                        }))
-                        .then(literal("install")
-                                .then(argument("catalog_id", word())
-                                        .suggests((context, builder) -> suggestCompatibleModels(builder, SuggestionMode.INSTALL))
-                                        .executes(context -> {
-                                    installModel(getString(context, "catalog_id"), false);
-                                    return 1;
-                                })))
-                        .then(literal("use")
-                                .then(argument("catalog_id", word())
-                                        .suggests((context, builder) -> suggestInstalledModels(builder, false))
-                                        .executes(context -> {
-                                    useInstalledModel(getString(context, "catalog_id"));
-                                    return 1;
-                                })))
-                        .then(literal("switch")
-                                .then(argument("catalog_id", word())
-                                        .suggests((context, builder) -> suggestCompatibleModels(builder, SuggestionMode.SWITCH))
-                                        .executes(context -> {
-                                    installModel(getString(context, "catalog_id"), true);
-                                    return 1;
-                                })))
-                        .then(literal("uninstall")
-                                .then(argument("catalog_id", word())
-                                        .suggests((context, builder) -> suggestInstalledModels(builder, true))
-                                        .executes(context -> {
-                                    uninstallModel(getString(context, "catalog_id"));
-                                    return 1;
-                                })))
                 )
         );
     }
@@ -322,6 +302,40 @@ public final class LocalModelCommandBridge {
         if (!health.detail().isBlank()) {
             info("Runtime: " + health.detail());
         }
+    }
+
+    private static void showQueue() {
+        List<LocalModelService.QueuedPrompt> queued = LocalModelService.queuedPrompts();
+        LocalModelControlChatFeedback.header("Local Model Queue");
+        if (queued.isEmpty()) {
+            info("No editable queued messages.");
+            return;
+        }
+        int position = 1;
+        for (LocalModelService.QueuedPrompt prompt : queued) {
+            info(position++ + ". " + prompt.mode() + " | " + prompt.requestId()
+                    + " | rev " + prompt.revision() + " | " + abbreviate(prompt.prompt(), 160));
+        }
+    }
+
+    private static void editQueuedPrompt(String requestId, String revision, String prompt) {
+        try {
+            boolean updated = LocalModelService.editQueuedPrompt(
+                    java.util.UUID.fromString(requestId), Long.parseLong(revision), prompt
+            );
+            if (updated) {
+                chat("Queued model message updated in place.");
+            } else {
+                warning("Queued message changed, started, or no longer exists; reopen the queue and retry.");
+            }
+        } catch (RuntimeException invalid) {
+            warning("Invalid queued request ID or revision.");
+        }
+    }
+
+    private static String abbreviate(String value, int maximum) {
+        String clean = value == null ? "" : value.replaceAll("\\s+", " ").strip();
+        return clean.length() <= maximum ? clean : clean.substring(0, maximum - 1) + "…";
     }
 
     private static void showSelectedModel() {

@@ -11,12 +11,14 @@ import com.spirit.koil.api.command.MinecraftCommandFeedbackTracker;
 import com.spirit.koil.api.command.MinecraftCommandInspector;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolResult;
+import com.spirit.koil.api.model.LocalModelService;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
 import com.spirit.koil.api.model.tool.MinecraftCommandModelToolRegistry;
 import com.spirit.koil.api.model.tool.MinecraftKnowledgeModelToolRegistry;
 import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
 import com.spirit.koil.api.model.tool.AutomationPlanModelToolRegistry;
 import com.spirit.koil.api.model.tool.AutomationKtlSkillModelToolRegistry;
+import com.spirit.koil.api.model.tool.ProjectValidationModelToolRegistry;
 import net.minecraft.client.MinecraftClient;
 
 import java.time.Duration;
@@ -49,6 +51,15 @@ public final class AutomationToolCoordinator {
                     "Automation Mode must be enabled before the model can use automation capabilities."
             ));
         }
+        var eligibility = LocalModelService.selectedAutomationEligibility();
+        if (!eligibility.eligible() && !LocalModelService.experimentalAutomationAllowed()) {
+            LocalModelService.revokeIneligibleAutomation(eligibility, true);
+            return CompletableFuture.completedFuture(failure(
+                    call,
+                    "automation_model_complexity",
+                    eligibility.detail()
+            ));
+        }
         if (call == null || call.toolId().isBlank()) {
             return CompletableFuture.completedFuture(failure(call, "unknown_tool", "Tool name is missing."));
         }
@@ -69,6 +80,9 @@ public final class AutomationToolCoordinator {
         }
         if (ModelWorkspaceToolRegistry.supports(call.toolId())) {
             return ModelWorkspaceToolRegistry.execute(displayRequestId, call, preapproved);
+        }
+        if (ProjectValidationModelToolRegistry.supports(call.toolId())) {
+            return ProjectValidationModelToolRegistry.execute(displayRequestId, call, preapproved);
         }
         AutomationCapabilityDefinition definition = AutomationCapabilityRegistry.definitions().get(call.toolId());
         if (definition == null) {

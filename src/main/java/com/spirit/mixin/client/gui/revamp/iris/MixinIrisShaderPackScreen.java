@@ -1,6 +1,6 @@
 package com.spirit.mixin.client.gui.revamp.iris;
 
-import com.spirit.client.gui.shader.ShaderPackMenuScreen;
+import com.spirit.client.gui.content.shader.ShaderPackMenuScreen;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;

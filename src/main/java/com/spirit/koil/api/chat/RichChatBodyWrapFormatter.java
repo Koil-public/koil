@@ -232,7 +232,7 @@ public final class RichChatBodyWrapFormatter {
                     builder.append('\n');
                 }
             }
-            builder.append('\n').append(markerPrefix).append(indent).append(structural.marker());
+            builder.append('\n').append(markerPrefix).append(indent).append(structural.continuationMarker());
             appendHeadingPart(builder, heading, parts.get(i));
         }
         return builder.toString();
@@ -281,18 +281,35 @@ public final class RichChatBodyWrapFormatter {
 
     private static StructuralPrefix structuralPrefix(String body) {
         if (body == null || body.isEmpty()) {
-            return new StructuralPrefix("", "", "", 1.0F, false);
+            return new StructuralPrefix("", "", "", 1.0F, false, "");
         }
         int whitespace = leadingWhitespaceWidth(body);
         String leading = body.substring(0, whitespace);
         String content = body.substring(whitespace);
         if (content.startsWith("-# ")) {
-            return new StructuralPrefix(leading + "-# ", content.substring(3), leading, 0.82F, true);
+            return new StructuralPrefix(
+                    leading + "-# ",
+                    content.substring(3),
+                    leading,
+                    0.82F,
+                    true,
+                    leading + RichChatStructuralContinuation.SUBTEXT
+            );
+        }
+        if (RichChatStructuralContinuation.isSubtext(content, 0)) {
+            return new StructuralPrefix(
+                    leading + RichChatStructuralContinuation.SUBTEXT,
+                    content.substring(1),
+                    leading,
+                    0.82F,
+                    true,
+                    leading + RichChatStructuralContinuation.SUBTEXT
+            );
         }
         if (content.startsWith("> ")) {
-            return new StructuralPrefix(leading + "> ", content.substring(2), leading, 1.0F, false);
+            return new StructuralPrefix(leading + "> ", content.substring(2), leading, 1.0F, false, leading + "> ");
         }
-        return new StructuralPrefix("", body, "", 1.0F, false);
+        return new StructuralPrefix("", body, "", 1.0F, false, "");
     }
 
     private static void appendHeadingPart(
@@ -341,13 +358,16 @@ public final class RichChatBodyWrapFormatter {
         }
         List<String> formatted = new ArrayList<>(rawParts.size());
         Deque<String> active = new ArrayDeque<>();
+        String sectionPrefix = "";
         for (String rawPart : rawParts) {
             String part = rawPart == null ? "" : rawPart;
-            StringBuilder row = new StringBuilder(part.length() + active.size() * 6);
+            StringBuilder row = new StringBuilder(part.length() + active.size() * 6 + sectionPrefix.length());
+            row.append(sectionPrefix);
             for (String marker : active) {
                 row.append(marker);
             }
             updateActiveFormatting(part, active);
+            sectionPrefix = RichChatSectionFormatting.continuationPrefix(sectionPrefix + part);
             row.append(part);
             active.descendingIterator().forEachRemaining(row::append);
             formatted.add(row.toString());
@@ -549,12 +569,17 @@ public final class RichChatBodyWrapFormatter {
         if (token == null || token.isEmpty()) {
             return 0;
         }
+        int sectionLength = 0;
+        int codeLength;
+        while ((codeLength = RichChatSectionFormatting.codeLengthAt(token, sectionLength)) > 0) {
+            sectionLength += codeLength;
+        }
         for (String marker : List.of("***", "**", "__", "--", "||", "`", "*")) {
-            if (token.startsWith(marker)) {
-                return marker.length();
+            if (token.startsWith(marker, sectionLength)) {
+                return sectionLength + marker.length();
             }
         }
-        return 0;
+        return sectionLength;
     }
 
     private static int boldWrapReserve(TextRenderer renderer, String text) {
@@ -573,7 +598,7 @@ public final class RichChatBodyWrapFormatter {
     }
 
     private static String visibleMarkupText(String text) {
-        String visible = formattingScanText(text);
+        String visible = RichChatSectionFormatting.stripCodes(formattingScanText(text));
         return visible
                 .replace("***", "")
                 .replace("**", "")
@@ -684,7 +709,8 @@ public final class RichChatBodyWrapFormatter {
             String content,
             String leadingWhitespace,
             float contentScale,
-            boolean markerHidden
+            boolean markerHidden,
+            String continuationMarker
     ) {
         private int visibleAdvance(TextRenderer renderer) {
             if (renderer == null) {

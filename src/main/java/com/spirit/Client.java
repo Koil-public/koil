@@ -15,6 +15,7 @@ import com.spirit.koil.api.f3.F3SnapshotService;
 import com.spirit.koil.api.macro.MacroRuntime;
 import com.spirit.koil.api.model.LocalModelCommandBridge;
 import com.spirit.koil.api.model.LocalModelService;
+import com.spirit.koil.api.model.deepthought.DeepThoughtSessionLifecycleBridge;
 import com.spirit.koil.api.multiplayer.ServerCommandBridge;
 import com.spirit.koil.api.navigation.ClientSessionTransitionCoordinator;
 import com.spirit.koil.api.navigation.StartupDestinationService;
@@ -45,6 +46,7 @@ public class Client implements ClientModInitializer {
     public void onInitializeClient() {
         DevelopmentCommandBridge.initialize();
         LocalModelService.initialize();
+        DeepThoughtSessionLifecycleBridge.initialize();
         StartupDestinationService.initialize();
         WorldInstanceResourceProfileService.initialize();
         ActiveWorldContentResourceBridge.initialize();
@@ -66,6 +68,7 @@ public class Client implements ClientModInitializer {
             WorldInstanceResourceProfileService.tick(client);
             ActiveWorldContentResourceBridge.tick(client);
             DevelopmentCommandBridge.tick(client);
+            DeepThoughtSessionLifecycleBridge.tick(client);
             boolean focused = client.isWindowFocused();
             if (lastWindowFocused != null && focused && !lastWindowFocused) {
                 UiSoundHelper.playButtonClick();

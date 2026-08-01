@@ -23,10 +23,10 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class AutomationPlanModelToolRegistry {
     public static final String TOOL_ID = "automation.plan";
-    private static final int MAXIMUM_STEPS = 12;
+    private static final int MAXIMUM_STEPS = 24;
     private static final ModelToolDefinition DEFINITION = new ModelToolDefinition(
             TOOL_ID,
-            "Create and validate a bounded structured plan for a complex objective. Use stable supplied tool identifiers and concrete arguments. This tool does not execute any step or grant approval.",
+            "Create and validate a bounded structured plan for a complex objective. Use canonical dotted Koil tool identifiers inside steps and concrete arguments. This tool does not execute any step or grant approval.",
             schema(),
             List.of("automation_mode_enabled"),
             Set.of(),
@@ -41,7 +41,7 @@ public final class AutomationPlanModelToolRegistry {
     }
 
     public static String version() {
-        return "automation-plan-tool-v2";
+        return "automation-plan-tool-v3";
     }
 
     public static List<ModelToolDefinition> modelTools() {
@@ -75,6 +75,8 @@ public final class AutomationPlanModelToolRegistry {
 
         Set<String> knownTools = knownToolIds();
         JsonArray validatedSteps = new JsonArray();
+        String planId = "kap-" + UUID.randomUUID().toString().substring(0, 12);
+        Set<String> stepIds = new LinkedHashSet<>();
         for (int index = 0; index < inputSteps.size(); index++) {
             JsonElement element = inputSteps.get(index);
             if (!element.isJsonObject()) {
@@ -83,12 +85,13 @@ public final class AutomationPlanModelToolRegistry {
                 ));
             }
             JsonObject step = element.getAsJsonObject();
-            String toolId = string(step, "toolId");
+            String suppliedToolId = string(step, "toolId");
+            String toolId = canonicalPlanToolId(suppliedToolId, knownTools);
             if (toolId.isBlank() || TOOL_ID.equals(toolId) || !knownTools.contains(toolId)) {
                 return CompletableFuture.completedFuture(failure(
                         call,
                         "unknown_plan_tool",
-                        "Plan step " + (index + 1) + " references an unavailable tool: " + toolId
+                        "Plan step " + (index + 1) + " references an unavailable tool: " + suppliedToolId
                 ));
             }
             JsonObject toolArguments = step.has("arguments") && step.get("arguments").isJsonObject()
@@ -128,18 +131,34 @@ public final class AutomationPlanModelToolRegistry {
                 }
             }
             JsonObject validated = new JsonObject();
+            String stepId = planId + "-step-" + (index + 1);
+            stepIds.add(stepId);
+            validated.addProperty("stepId", stepId);
             validated.addProperty("index", index + 1);
             validated.addProperty("toolId", toolId);
             validated.add("arguments", toolArguments.deepCopy());
             validated.addProperty("reason", string(step, "reason"));
-            validated.addProperty("validation", AutomationCapabilityRegistry.definitions().containsKey(toolId)
+            String validation = string(step, "validationRequirement");
+            if (validation.isBlank()) {
+                validation = AutomationCapabilityRegistry.definitions().containsKey(toolId)
                     ? "schema_validated"
-                    : "tool_registered");
+                    : "tool_registered";
+            }
+            validated.addProperty("validation", validation);
+            validated.addProperty("validationRequirement", validation);
+            validated.addProperty("expectedObservation", string(step, "expectedObservation"));
+            validated.addProperty("sideEffectClassification",
+                    LocalModelToolCatalog.requiresFreshApproval(toolId) ? "side_effect" : "read_only");
+            JsonArray dependencies = new JsonArray();
+            if (index > 0) {
+                dependencies.add(planId + "-step-" + index);
+            }
+            validated.add("dependencies", dependencies);
             validatedSteps.add(validated);
         }
 
         JsonObject output = new JsonObject();
-        output.addProperty("planId", "kap-" + UUID.randomUUID().toString().substring(0, 12));
+        output.addProperty("planId", planId);
         output.addProperty("objective", objective);
         output.addProperty("stepCount", validatedSteps.size());
         output.addProperty("executable", true);
@@ -160,7 +179,44 @@ public final class AutomationPlanModelToolRegistry {
         MinecraftKnowledgeModelToolRegistry.modelTools().forEach(tool -> ids.add(tool.id()));
         ModelWorkspaceToolRegistry.modelTools().forEach(tool -> ids.add(tool.id()));
         AutomationKtlSkillModelToolRegistry.modelTools().forEach(tool -> ids.add(tool.id()));
+        ProjectValidationModelToolRegistry.modelTools().forEach(tool -> ids.add(tool.id()));
         return Set.copyOf(ids);
+    }
+
+    /**
+     * Providers may expose dotted Koil function names through a restricted
+     * wire alphabet. Compact models sometimes copy that wire-safe spelling
+     * into automation.plan's nested toolId. Resolve it only when it maps to
+     * exactly one registered capability; ambiguous or invented names remain
+     * invalid.
+     */
+    private static String canonicalPlanToolId(String supplied, Set<String> knownTools) {
+        String clean = supplied == null ? "" : supplied.strip();
+        if (clean.isBlank() || knownTools.contains(clean)) return clean;
+        String match = "";
+        for (String candidate : knownTools) {
+            if (!wireSafe(candidate).equals(clean)) continue;
+            if (!match.isBlank() && !match.equals(candidate)) return clean;
+            match = candidate;
+        }
+        return match.isBlank() ? clean : match;
+    }
+
+    private static String wireSafe(String canonical) {
+        StringBuilder safe = new StringBuilder(canonical == null ? 0 : canonical.length());
+        if (canonical != null) {
+            for (int index = 0; index < canonical.length(); index++) {
+                char value = canonical.charAt(index);
+                safe.append((value >= 'a' && value <= 'z')
+                                || (value >= 'A' && value <= 'Z')
+                                || (value >= '0' && value <= '9')
+                                || value == '_'
+                                || value == '-'
+                        ? value
+                        : '_');
+            }
+        }
+        return safe.toString();
     }
 
     private static JsonObject schema() {
@@ -185,6 +241,7 @@ public final class AutomationPlanModelToolRegistry {
         JsonObject stepProperties = new JsonObject();
         JsonObject toolId = new JsonObject();
         toolId.addProperty("type", "string");
+        toolId.addProperty("description", "Canonical dotted Koil tool id for this step, such as movement.walk_relative or player.jump.");
         toolId.addProperty("minLength", 1);
         toolId.addProperty("maxLength", 96);
         stepProperties.add("toolId", toolId);
@@ -195,6 +252,14 @@ public final class AutomationPlanModelToolRegistry {
         reason.addProperty("type", "string");
         reason.addProperty("maxLength", 240);
         stepProperties.add("reason", reason);
+        JsonObject expectedObservation = new JsonObject();
+        expectedObservation.addProperty("type", "string");
+        expectedObservation.addProperty("maxLength", 320);
+        stepProperties.add("expectedObservation", expectedObservation);
+        JsonObject validationRequirement = new JsonObject();
+        validationRequirement.addProperty("type", "string");
+        validationRequirement.addProperty("maxLength", 96);
+        stepProperties.add("validationRequirement", validationRequirement);
         step.add("properties", stepProperties);
         JsonArray stepRequired = new JsonArray();
         stepRequired.add("toolId");

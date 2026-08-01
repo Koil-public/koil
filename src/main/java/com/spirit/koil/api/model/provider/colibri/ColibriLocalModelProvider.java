@@ -149,9 +149,10 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
     }
 
     private ModelHealthSnapshot waitForReadiness() {
-        long deadline = System.nanoTime() + this.configuration.startupTimeout().toNanos();
+        long startedAt = System.nanoTime();
+        boolean slowReported = false;
         String lastFailure = "runtime has not reported ready";
-        while (!this.closed && !this.stopping && System.nanoTime() < deadline) {
+        while (!this.closed && !this.stopping) {
             Process current = this.process;
             if (current != null && !current.isAlive()) {
                 return failHealth("Colibri exited before becoming ready (exit " + current.exitValue() + ")");
@@ -161,6 +162,10 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
                 return updateHealth(ModelHealthState.READY, "local runtime ready", runtimeDiagnostics());
             }
             lastFailure = this.health.detail();
+            if (!slowReported && System.nanoTime() - startedAt >= this.configuration.startupTimeout().toNanos()) {
+                slowReported = true;
+                updateHealth(ModelHealthState.STARTING, "Colibri is taking longer than expected; still waiting", runtimeDiagnostics());
+            }
             try {
                 Thread.sleep(250L);
             } catch (InterruptedException exception) {
@@ -168,7 +173,7 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
                 return failHealth("runtime startup was interrupted");
             }
         }
-        return failHealth(this.stopping ? "runtime startup cancelled" : lastFailure);
+        return failHealth(this.stopping || this.closed ? "runtime startup cancelled" : lastFailure);
     }
 
     private boolean compatibleRuntimeAvailable(int port) {
@@ -236,7 +241,7 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
 
             @Override
             public void onToolCall(java.util.UUID requestId, com.spirit.koil.api.model.ModelToolCall call) {
-                observer.onState(requestId, ModelRequestState.EXECUTING_TOOL, call.toolId());
+                observer.onState(requestId, ModelRequestState.SELECTING_TOOL, call.toolId());
                 observer.onToolCall(requestId, call);
             }
         });

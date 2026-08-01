@@ -5,7 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.spirit.client.gui.BrowserLayoutHelper;
-import com.spirit.client.gui.browser.ContentRemoteIconResolver;
+import com.spirit.client.gui.content.browser.ContentRemoteIconResolver;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.multiplayer.KoilServerAddressMaskAccess;
 import com.spirit.koil.api.util.file.image.ExternalImageLoader;

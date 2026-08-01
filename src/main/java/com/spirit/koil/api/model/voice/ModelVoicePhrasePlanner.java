@@ -1,5 +1,7 @@
 package com.spirit.koil.api.model.voice;
 
+import com.spirit.koil.api.chat.RichChatSectionFormatting;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -124,7 +126,7 @@ public final class ModelVoicePhrasePlanner {
     }
 
     private static String sanitizeToken(String token) {
-        return token
+        return RichChatSectionFormatting.speechSafeText(token)
                 .replaceAll("[`*_#|\\[\\]{}<>]", "")
                 .replaceAll("\\s+", " ")
                 .strip();

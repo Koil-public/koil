@@ -3,6 +3,8 @@ package com.spirit.koil.api.model.testing;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.spirit.koil.api.automation.AutomationModeController;
+import com.spirit.koil.api.automation.AutomationModeStatusChatPanel;
+import com.spirit.koil.api.chat.ChatComposerMenuBridge;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolResult;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
@@ -38,9 +40,21 @@ public final class ModelPresencePlanningProof {
         require(!AutomationModeController.isDeepThinkingEnabled(), "Deep Thought did not start off");
         AutomationModeController.setPlanningModeEnabled(true);
         AutomationModeController.setDeepThinkingEnabled(true);
+        AutomationModeController.setExperimentalCompactAgentEnabled(true);
         AutomationModeController.enableYoloMode();
         require(AutomationModeController.isPlanningModeEnabled(), "Unrestricted disabled Planning Mode");
         require(AutomationModeController.isDeepThinkingEnabled(), "Planning Mode disabled Deep Thought");
+        var automationEntries = ChatComposerMenuBridge.childEntries(ChatComposerMenuBridge.AUTOMATION_SECTION, null);
+        require(automationEntries.size() == 5
+                        && "composer:automation_experimental".equals(automationEntries.get(4).id()),
+                "Automation popup did not add Experimental as its fourth mode option");
+        require("TEST | D-T | Plan".equals(AutomationModeStatusChatPanel.modeIndicatorLabels(
+                        AutomationModeController.snapshot())),
+                "Automation mode indicators were not ordered TEST before D-T before Plan");
+        require(AutomationModeStatusChatPanel.experimentalIndicatorColor(0) == 0x55FF55,
+                "TEST indicator did not use the configurable green color");
+        AutomationModeController.setYoloModeEnabled(false);
+        require(!AutomationModeController.isYoloMode(), "Unrestricted did not toggle back to standard approvals");
         AutomationThinkingPolicy.Decision forced =
                 AutomationThinkingPolicy.evaluate("Jump", false, true);
         require(forced.includePlanTool(), "forced Planning Mode omitted automation.plan");
@@ -78,6 +92,22 @@ public final class ModelPresencePlanningProof {
         ValidatedAutomationPlan plan = ValidatedAutomationPlan.from(result);
         require(plan.id().startsWith("kap-"), "validated plan omitted a stable plan id");
         require(plan.steps().size() == 2, "validated plan lost ordered steps");
+
+        JsonObject wireSafeArguments = planArguments.deepCopy();
+        wireSafeArguments.getAsJsonArray("steps").get(0).getAsJsonObject()
+                .addProperty("toolId", "movement_walk_relative");
+        wireSafeArguments.getAsJsonArray("steps").get(1).getAsJsonObject()
+                .addProperty("toolId", "player_jump");
+        ModelToolResult wireSafeResult = AutomationPlanModelToolRegistry.execute(new ModelToolCall(
+                "wire-safe-plan-proof",
+                "automation.plan",
+                wireSafeArguments
+        )).join();
+        ValidatedAutomationPlan wireSafePlan = ValidatedAutomationPlan.from(wireSafeResult);
+        require(wireSafePlan.steps().size() == 2
+                        && "movement.walk_relative".equals(wireSafePlan.steps().get(0).toolId())
+                        && "player.jump".equals(wireSafePlan.steps().get(1).toolId()),
+                "provider-safe nested plan tool ids were not restored to canonical Koil ids");
 
         ReviewedPlanAuthorization authorization = new ReviewedPlanAuthorization(plan);
         ModelToolCall exactWalk = plan.steps().get(0).asToolCall(plan.id());
@@ -135,7 +165,11 @@ public final class ModelPresencePlanningProof {
         ModelGenerationHudState.Snapshot snapshot = ModelGenerationHudState.visibleSnapshot();
         require(snapshot != null && snapshot.events().size() == 1,
                 "typed activity event was not retained");
-        require(snapshot.activity().contains("│"), "dotted activity connector was not rendered");
+        require(snapshot.activity().contains("┊"), "dotted thought connector was not rendered");
+        require(snapshot.activity().contains("┬─ Goal") && snapshot.activity().contains("└─"),
+                "plan goal and steps were not rendered as one connected tree");
+        require(snapshot.activity().contains("§a✓ 1 completed"),
+                "completed plan row did not use the shared success color");
         require(snapshot.plan() != null
                         && snapshot.plan().steps().get(0).status()
                         == ModelGenerationHudState.PlanStepStatus.COMPLETED,

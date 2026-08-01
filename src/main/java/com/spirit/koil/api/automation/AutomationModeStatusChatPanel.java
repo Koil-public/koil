@@ -5,6 +5,7 @@ import com.spirit.koil.api.chat.ChatHudPanelBounds;
 import com.spirit.koil.api.chat.ChatHudPanelContext;
 import com.spirit.koil.api.chat.ChatHudPanelPlacement;
 import com.spirit.koil.api.chat.ChatHudPanelVisualStyle;
+import com.spirit.koil.api.chat.SlidingStatusText;
 import com.spirit.koil.api.automation.cli.AutomationPresenceState;
 import com.spirit.koil.api.automation.cli.AutomationStateColors;
 import com.spirit.koil.api.design.uiColorVal;
@@ -25,8 +26,6 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
     private static final int HEIGHT = 33;
     private static final int LOGO_SIZE = 24;
     private static final float TITLE_SCALE = 1.12F;
-    private static final long STATUS_ANIMATION_STEP_MILLIS = 110L;
-    private static final int STATUS_ANIMATION_RESTART_PAUSE_STEPS = 4;
 
     @Override
     public String id() {
@@ -131,7 +130,7 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
         }
         drawContext.getMatrices().pop();
 
-        Text metrics = metricLine();
+        Text metrics = metricLine(availableWidth, client);
         if (!metrics.getString().isBlank()) {
             net.minecraft.text.OrderedText renderedMetrics = client.textRenderer
                     .wrapLines(metrics, Math.max(1, availableWidth))
@@ -148,11 +147,33 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
         }
     }
 
-    private static Text metricLine() {
+    private static Text metricLine(int availableWidth, MinecraftClient client) {
         ModelGenerationHudState.Snapshot generation = ModelGenerationHudState.visibleSnapshot();
         AutomationModeController.Snapshot mode = AutomationModeController.snapshot();
+        Text modeIndicators = modeIndicators(mode);
+        return ModelRequestMetricsPresentation.automationTopLineFitted(
+                generation,
+                LocalModelService.configuredModelId(),
+                LocalModelService.queueDepth(),
+                LocalModelService.configuredContextWindowTokens(),
+                modeIndicators,
+                availableWidth,
+                client.textRenderer::getWidth
+        );
+    }
+
+    public static Text modeIndicators(AutomationModeController.Snapshot mode) {
         MutableText modeIndicators = Text.empty();
+        if (mode.experimentalCompactAgentEnabled()) {
+            int experimentalColor = experimentalIndicatorColor(
+                    uiColorVal.uiColorAutomationModeExperimentalText
+            );
+            modeIndicators.append(Text.literal("TEST").styled(style -> style.withColor(experimentalColor)));
+        }
         if (mode.deepThinkingEnabled()) {
+            if (!modeIndicators.getString().isBlank()) {
+                modeIndicators.append(Text.literal(" | ").formatted(Formatting.DARK_GRAY));
+            }
             modeIndicators.append(Text.literal("D-T").styled(style -> style.withColor(
                     uiColorVal.uiColorAutomationModeDeepThinkingText & 0x00FFFFFF
             )));
@@ -165,59 +186,25 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
             int planColor = configured == 0 ? 0xB067FF : configured;
             modeIndicators.append(Text.literal("Plan").styled(style -> style.withColor(planColor)));
         }
-        return ModelRequestMetricsPresentation.automationTopLine(
-                generation,
-                LocalModelService.configuredModelId(),
-                LocalModelService.queueDepth(),
-                LocalModelService.configuredContextWindowTokens(),
-                modeIndicators
-        );
+        return modeIndicators;
+    }
+
+    public static String modeIndicatorLabels(AutomationModeController.Snapshot mode) {
+        java.util.ArrayList<String> labels = new java.util.ArrayList<>();
+        if (mode.experimentalCompactAgentEnabled()) labels.add("TEST");
+        if (mode.deepThinkingEnabled()) labels.add("D-T");
+        if (mode.planningModeEnabled() || mode.planningActive()) labels.add("Plan");
+        return String.join(" | ", labels);
+    }
+
+    public static int experimentalIndicatorColor(int configured) {
+        int color = configured & 0x00FFFFFF;
+        return color == 0 ? 0x55FF55 : color;
     }
 
     private static Text animatedStateLabel(StatusView status) {
         int color = AutomationStateColors.color(status.state()) & 0x00FFFFFF;
-        if (!isWorkingState(status.state())) {
-            return Text.literal(status.label()).styled(style -> style.withColor(color));
-        }
-        String word = status.label() == null ? "" : status.label();
-        String animated = word + "...";
-        int wordLength = Math.max(1, word.length());
-        int bandWidth = Math.max(2, Math.min(6, (wordLength + 2) / 3));
-        int movementSteps = animated.length() + bandWidth;
-        int cycleSteps = movementSteps + STATUS_ANIMATION_RESTART_PAUSE_STEPS;
-        int phase = (int) ((System.currentTimeMillis() / STATUS_ANIMATION_STEP_MILLIS)
-                % Math.max(1, cycleSteps));
-        int bandStart = phase < movementSteps
-                ? phase - bandWidth + 1
-                : animated.length() + 1;
-        int dimColor = blend(color, 0x4A4F57, 0.68F);
-        int edgeColor = blend(color, dimColor, 0.38F);
-        MutableText label = Text.empty();
-        for (int index = 0; index < animated.length(); index++) {
-            boolean highlighted = index >= bandStart && index < bandStart + bandWidth;
-            boolean edge = index == bandStart - 1 || index == bandStart + bandWidth;
-            int characterColor = highlighted ? color : (edge ? edgeColor : dimColor);
-            label.append(Text.literal(String.valueOf(animated.charAt(index)))
-                    .styled(style -> style.withColor(characterColor)));
-        }
-        return label;
-    }
-
-    private static int blend(int source, int target, float targetWeight) {
-        float weight = Math.max(0.0F, Math.min(1.0F, targetWeight));
-        int red = Math.round(((source >> 16) & 0xFF) * (1.0F - weight) + ((target >> 16) & 0xFF) * weight);
-        int green = Math.round(((source >> 8) & 0xFF) * (1.0F - weight) + ((target >> 8) & 0xFF) * weight);
-        int blue = Math.round((source & 0xFF) * (1.0F - weight) + (target & 0xFF) * weight);
-        return (red << 16) | (green << 8) | blue;
-    }
-
-    private static boolean isWorkingState(String state) {
-        String normalized = AutomationStateColors.normalizeState(state);
-        return "thinking".equals(normalized)
-                || "waiting".equals(normalized)
-                || "running".equals(normalized)
-                || "using".equals(normalized)
-                || "moving".equals(normalized);
+        return SlidingStatusText.styled(status.label(), AutomationStateColors.normalizeState(status.state()), color);
     }
 
     private static StatusView statusView(AutomationModeController.Snapshot snapshot) {

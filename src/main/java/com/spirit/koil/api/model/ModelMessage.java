@@ -63,6 +63,16 @@ public record ModelMessage(
         if (!result.detail().isBlank()) {
             payload.addProperty("detail", result.detail());
         }
+        payload.addProperty("startedAtMillis", result.startedAtMillis());
+        payload.addProperty("completedAtMillis", result.completedAtMillis());
+        payload.addProperty("durationMillis", result.durationMillis());
+        payload.addProperty("validationStatus", result.validationStatus());
+        payload.addProperty("retryable", result.retryable());
+        payload.addProperty("cancelled", result.cancelled());
+        payload.addProperty("approvalStatus", result.approvalStatus());
+        com.google.gson.JsonArray targets = new com.google.gson.JsonArray();
+        result.changedTargets().forEach(targets::add);
+        payload.add("changedTargets", targets);
         return new ModelMessage(
                 null,
                 ModelRole.TOOL,

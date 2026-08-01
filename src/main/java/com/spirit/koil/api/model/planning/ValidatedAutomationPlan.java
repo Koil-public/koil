@@ -51,10 +51,17 @@ public record ValidatedAutomationPlan(
                     ? step.getAsJsonObject("arguments")
                     : new JsonObject();
             steps.add(new Step(
+                    string(step, "stepId").isBlank()
+                            ? planId + "-step-" + (steps.size() + 1)
+                            : string(step, "stepId"),
                     steps.size() + 1,
                     toolId,
                     arguments,
-                    string(step, "reason")
+                    string(step, "reason"),
+                    strings(step, "dependencies"),
+                    string(step, "expectedObservation"),
+                    string(step, "validationRequirement"),
+                    string(step, "sideEffectClassification")
             ));
         }
         return new ValidatedAutomationPlan(planId, objective, steps);
@@ -73,24 +80,51 @@ public record ValidatedAutomationPlan(
     }
 
     public record Step(
+            String id,
             int index,
             String toolId,
             JsonObject arguments,
-            String reason
+            String reason,
+            List<String> dependencies,
+            String expectedObservation,
+            String validationRequirement,
+            String sideEffectClassification
     ) {
         public Step {
+            id = id == null ? "" : id.strip();
             toolId = toolId == null ? "" : toolId.strip();
             arguments = arguments == null ? new JsonObject() : arguments.deepCopy();
             reason = reason == null ? "" : reason.replaceAll("\\s+", " ").strip();
+            dependencies = dependencies == null ? List.of() : List.copyOf(dependencies);
+            expectedObservation = expectedObservation == null ? "" : expectedObservation.replaceAll("\\s+", " ").strip();
+            validationRequirement = validationRequirement == null ? "" : validationRequirement.strip();
+            sideEffectClassification = sideEffectClassification == null ? "" : sideEffectClassification.strip();
         }
 
         public ModelToolCall asToolCall(String planId) {
             return new ModelToolCall(
-                    planId + "-step-" + index,
+                    id.isBlank() ? planId + "-step-" + index : id,
                     toolId,
                     arguments
             );
         }
+    }
+
+    private static List<String> strings(JsonObject object, String key) {
+        if (object == null || !object.has(key) || !object.get(key).isJsonArray()) {
+            return List.of();
+        }
+        List<String> values = new ArrayList<>();
+        for (JsonElement element : object.getAsJsonArray(key)) {
+            try {
+                String value = element.getAsString().strip();
+                if (!value.isBlank()) {
+                    values.add(value);
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return List.copyOf(values);
     }
 
     private static String string(JsonObject object, String key) {

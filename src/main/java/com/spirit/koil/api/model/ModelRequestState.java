@@ -4,16 +4,33 @@ public enum ModelRequestState {
     WAITING_FOR_RUNTIME,
     QUEUED,
     PREPARING_CONTEXT,
+    THINKING,
+    INSPECTING,
+    PLANNING,
+    VALIDATING_PLAN,
+    WAITING_FOR_PLAN_APPROVAL,
     PREFILLING,
     GENERATING,
+    SELECTING_TOOL,
+    WAITING_FOR_ACTION_APPROVAL,
     EXECUTING_TOOL,
     WAITING_FOR_TOOL_RESULT,
+    OBSERVING_RESULT,
+    EDITING,
+    VALIDATING,
+    RETRYING,
+    REPLANNING,
+    CHECKPOINTING,
+    PAUSED,
+    WAITING_FOR_DATA,
     FINALIZING,
     COMPLETED,
+    BLOCKED,
+    CANCELLING,
     CANCELLED,
     FAILED;
 
     public boolean terminal() {
-        return this == COMPLETED || this == CANCELLED || this == FAILED;
+        return this == COMPLETED || this == BLOCKED || this == CANCELLED || this == FAILED;
     }
 }

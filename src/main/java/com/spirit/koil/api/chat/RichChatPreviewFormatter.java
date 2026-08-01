@@ -24,6 +24,6 @@ public final class RichChatPreviewFormatter {
             }
         }
         rewritten = RichChatMaskedLinkBridge.rewrite(rewritten);
-        return rewritten;
+        return RichChatSectionFormatting.styleBeforeWrapping(rewritten);
     }
 }

@@ -71,6 +71,52 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
         }
     }
 
+    public List<QueuedModelRequestSnapshot> queuedRequests() {
+        synchronized (this.lock) {
+            List<QueuedModelRequestSnapshot> snapshots = new ArrayList<>();
+            int position = 1;
+            for (QueuedRequest queued : this.queue) {
+                snapshots.add(queued.snapshot(position++));
+            }
+            return List.copyOf(snapshots);
+        }
+    }
+
+    public boolean replaceQueuedPrompt(UUID requestId, long expectedRevision, String prompt) {
+        String replacement = prompt == null ? "" : prompt.strip();
+        if (requestId == null || replacement.isBlank()) {
+            return false;
+        }
+        synchronized (this.lock) {
+            for (QueuedRequest queued : this.queue) {
+                if (!queued.request.id().equals(requestId) || queued.revision != expectedRevision) {
+                    continue;
+                }
+                List<ModelMessage> messages = new ArrayList<>(queued.request.messages());
+                int userIndex = -1;
+                for (int index = messages.size() - 1; index >= 0; index--) {
+                    if (messages.get(index).role() == ModelRole.USER) {
+                        userIndex = index;
+                        break;
+                    }
+                }
+                if (userIndex < 0) {
+                    return false;
+                }
+                messages.set(userIndex, ModelMessage.user(replacement));
+                StreamingModelRequest current = queued.request;
+                queued.request = new StreamingModelRequest(
+                        current.id(), current.conversationId(), current.systemPrompt(), messages,
+                        current.tools(), current.maximumOutputTokens(), current.timeout(), current.metadata()
+                );
+                queued.revision++;
+                queued.observer.onState(requestId, ModelRequestState.QUEUED, "queued prompt updated");
+                return true;
+            }
+        }
+        return false;
+    }
+
     public int selectedMaximumContextTokens() {
         synchronized (this.lock) {
             LocalModelProvider provider = this.providers.get(this.selectedProviderId);
@@ -78,6 +124,13 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
                 return 0;
             }
             return provider.capabilities().maximumContextTokens();
+        }
+    }
+
+    public ModelCapabilityDescriptor selectedCapabilities() {
+        synchronized (this.lock) {
+            LocalModelProvider provider = this.providers.get(this.selectedProviderId);
+            return provider == null ? null : provider.capabilities();
         }
     }
 
@@ -126,7 +179,11 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
         } : observer;
         RuntimeCancellation cancellation = new RuntimeCancellation(request.id());
         CompletableFuture<StreamingModelResponse> completion = new CompletableFuture<>();
-        QueuedRequest queued = new QueuedRequest(request, safeObserver, cancellation, completion);
+        String providerId;
+        synchronized (this.lock) {
+            providerId = this.selectedProviderId;
+        }
+        QueuedRequest queued = new QueuedRequest(request, providerId, safeObserver, cancellation, completion);
         cancellation.owner.set(queued);
         synchronized (this.lock) {
             ensureOpen();
@@ -162,7 +219,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
                         return;
                     }
                     this.active = next;
-                    provider = this.providers.get(this.selectedProviderId);
+                    provider = this.providers.get(next.providerId);
                 }
                 try {
                     execute(provider, next);
@@ -196,10 +253,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
         try {
             if (provider.health().state() != ModelHealthState.READY) {
                 queued.observer.onState(queued.request.id(), ModelRequestState.WAITING_FOR_RUNTIME, "starting provider");
-                Duration startTimeout = queued.request.timeout().compareTo(Duration.ofSeconds(30)) < 0
-                        ? queued.request.timeout()
-                        : Duration.ofSeconds(30);
-                ModelHealthSnapshot started = provider.start().get(Math.max(1L, startTimeout.toMillis()), TimeUnit.MILLISECONDS);
+                ModelHealthSnapshot started = provider.start().get();
                 if (started.state() != ModelHealthState.READY) {
                     fail(queued, "runtime_not_ready", started.detail(), null);
                     return;
@@ -413,22 +467,38 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
     }
 
     private static final class QueuedRequest {
-        private final StreamingModelRequest request;
+        private volatile StreamingModelRequest request;
+        private final String providerId;
         private final StreamingModelObserver observer;
         private final RuntimeCancellation cancellation;
         private final CompletableFuture<StreamingModelResponse> completion;
         private volatile ModelCancellationHandle providerCancellation;
+        private long revision = 1L;
 
         private QueuedRequest(
                 StreamingModelRequest request,
+                String providerId,
                 StreamingModelObserver observer,
                 RuntimeCancellation cancellation,
                 CompletableFuture<StreamingModelResponse> completion
         ) {
             this.request = request;
+            this.providerId = providerId == null ? "" : providerId;
             this.observer = observer;
             this.cancellation = cancellation;
             this.completion = completion;
+        }
+
+        private QueuedModelRequestSnapshot snapshot(int position) {
+            return new QueuedModelRequestSnapshot(
+                    this.request.id(),
+                    this.request.conversationId(),
+                    this.providerId,
+                    this.request.metadata().getOrDefault("mode", ""),
+                    this.request.latestUserText(),
+                    position,
+                    this.revision
+            );
         }
     }
 

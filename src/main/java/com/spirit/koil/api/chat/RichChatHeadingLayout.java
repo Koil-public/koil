@@ -28,16 +28,8 @@ public final class RichChatHeadingLayout {
                 || text.charAt(leading + hashes) != ' ') {
             return null;
         }
-        float scale = switch (hashes) {
-            case 1 -> 2.0F;
-            case 2 -> 1.66F;
-            case 3 -> 1.33F;
-            case 4 -> 1.20F;
-            case 5 -> 1.10F;
-            default -> 1.0F;
-        };
-        int yOffset = hashes <= 2 ? 2 : 1;
-        int spacerLines = hashes <= 2 ? 2 : 1;
+        RichChatStructuralStyleRegistry.HeadingStyle configured =
+                RichChatStructuralStyleRegistry.heading(hashes);
         String leadingWhitespace = text.substring(0, leading);
         String marker = "#".repeat(hashes) + " ";
         return new Heading(
@@ -45,9 +37,9 @@ public final class RichChatHeadingLayout {
                 leadingWhitespace,
                 marker,
                 text.substring(leading + hashes + 1),
-                scale,
-                yOffset,
-                spacerLines
+                configured.scale(),
+                configured.yOffset(),
+                configured.spacerLines()
         );
     }
 

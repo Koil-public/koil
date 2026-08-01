@@ -168,7 +168,7 @@ public final class LlamaCppProviderProof {
 
                 data: {"choices":[{"index":0,"delta":{"content":"ready","tool_calls":[{"index":0,"id":"tool-proof","type":"function","function":{"name":"minecraft_","arguments":"{\\"command\\":\\"/time "}}]},"finish_reason":null}]}
 
-                data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"command","arguments":"set day\\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16,"prompt_tokens_details":{"cached_tokens":3}}}
+                data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"command","arguments":"set day\\",}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":12,"completion_tokens":4,"total_tokens":16,"prompt_tokens_details":{"cached_tokens":3}}}
 
                 data: [DONE]
 

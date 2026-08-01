@@ -1,6 +1,6 @@
 package com.spirit.client.gui.world;
 
-import com.spirit.client.gui.browser.ContentBrowserListRowRenderer;
+import com.spirit.client.gui.content.browser.ContentBrowserListRowRenderer;
 import com.spirit.koil.api.world.LocalWorldDiscovery;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;

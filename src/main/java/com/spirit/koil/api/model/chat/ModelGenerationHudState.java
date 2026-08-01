@@ -2,8 +2,12 @@ package com.spirit.koil.api.model.chat;
 
 import com.spirit.koil.api.model.ModelCancellationHandle;
 import com.spirit.koil.api.model.ModelRequestState;
+import com.spirit.koil.api.model.ModelExecutionEvent;
+import com.spirit.koil.api.model.ModelFinalizationHandle;
+import com.spirit.koil.api.model.ModelDeepThoughtControl;
 import com.spirit.koil.api.model.ModelUsage;
 import com.spirit.koil.api.model.presence.ModelPresenceState;
+import com.spirit.koil.api.model.voice.ModelVoiceService;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -18,6 +22,7 @@ public final class ModelGenerationHudState {
     private static final long COMPLETED_VISIBILITY_MILLIS = 8_000L;
     private static final Map<UUID, MutableRequest> REQUESTS = new LinkedHashMap<>();
     private static final AtomicLong SESSION_SEQUENCE = new AtomicLong();
+    private static UUID selectedRequestId;
 
     private ModelGenerationHudState() {
     }
@@ -34,6 +39,7 @@ public final class ModelGenerationHudState {
                 SESSION_SEQUENCE.incrementAndGet(),
                 System.currentTimeMillis()
         ));
+        if (selectedRequestId == null) selectedRequestId = requestId;
         ModelPresenceState.updateRequest(
                 automationRequest
                         ? ModelPresenceState.ActivityKind.AUTOMATION
@@ -48,6 +54,60 @@ public final class ModelGenerationHudState {
         MutableRequest request = REQUESTS.get(requestId);
         if (request != null) {
             request.cancellation = cancellation;
+        }
+    }
+
+    public static synchronized void bindFinalization(UUID requestId, ModelFinalizationHandle finalization) {
+        MutableRequest request = REQUESTS.get(requestId);
+        if (request != null) {
+            request.finalization = finalization;
+        }
+    }
+
+    public static synchronized void bindDeepThought(UUID requestId, ModelDeepThoughtControl control) {
+        MutableRequest request = REQUESTS.get(requestId);
+        if (request != null) request.deepThought = control;
+    }
+
+    public static synchronized boolean pauseDeepThought(UUID requestId) {
+        MutableRequest request = REQUESTS.get(requestId);
+        return request != null && request.deepThought != null && request.deepThought.pause();
+    }
+
+    public static synchronized boolean resumeDeepThought(UUID requestId) {
+        MutableRequest request = REQUESTS.get(requestId);
+        return request != null && request.deepThought != null && request.deepThought.resume();
+    }
+
+    public static synchronized void setAnswerNowVisible(UUID requestId, boolean visible) {
+        MutableRequest request = REQUESTS.get(requestId);
+        if (request != null) {
+            request.answerNowVisible = visible;
+        }
+    }
+
+    public static synchronized boolean answerNow(UUID requestId) {
+        MutableRequest request = REQUESTS.get(requestId);
+        if (request == null || !request.answerNowVisible || request.answerNowRequested
+                || request.finalization == null || request.state.terminal()) {
+            return false;
+        }
+        request.answerNowRequested = request.finalization.requestAnswerNow();
+        if (request.answerNowRequested) {
+            request.appendEvent(
+                    ActivityEventType.THOUGHT_STOPPED,
+                    "Preparing the best complete answer available."
+            );
+            request.state = ModelRequestState.FINALIZING;
+            request.detail = "answer now requested";
+        }
+        return request.answerNowRequested;
+    }
+
+    public static synchronized void appendEvent(UUID requestId, ModelExecutionEvent event) {
+        MutableRequest request = REQUESTS.get(requestId);
+        if (request != null && event != null) {
+            request.appendEvent(map(event.type()), event.summary());
         }
     }
 
@@ -122,6 +182,11 @@ public final class ModelGenerationHudState {
         }
     }
 
+    public static synchronized void replacePrompt(UUID requestId, String prompt) {
+        MutableRequest request = REQUESTS.get(requestId);
+        if (request != null) request.prompt = prompt == null ? "" : prompt;
+    }
+
     public static synchronized void appendActivity(UUID requestId, String entry) {
         MutableRequest request = REQUESTS.get(requestId);
         if (request == null || entry == null || entry.isBlank()) {
@@ -148,7 +213,7 @@ public final class ModelGenerationHudState {
     ) {
         MutableRequest request = REQUESTS.get(requestId);
         if (request != null) {
-            request.plan = new MutablePlan(planId, steps);
+            request.plan = new MutablePlan(planId, request.prompt, steps);
         }
     }
 
@@ -222,6 +287,10 @@ public final class ModelGenerationHudState {
                         && now - entry.getValue().completedAtMillis > COMPLETED_VISIBILITY_MILLIS
         );
         MutableRequest selected = null;
+        if (selectedRequestId != null) {
+            selected = REQUESTS.get(selectedRequestId);
+        }
+        if (selected != null) return selected.snapshot();
         for (MutableRequest request : REQUESTS.values()) {
             if (!request.state.terminal()) {
                 selected = request;
@@ -232,19 +301,61 @@ public final class ModelGenerationHudState {
         return selected == null ? null : selected.snapshot();
     }
 
+    public static synchronized boolean selectNextVisible() {
+        if (REQUESTS.size() < 2) return false;
+        List<UUID> ids = new ArrayList<>(REQUESTS.keySet());
+        int current = selectedRequestId == null ? -1 : ids.indexOf(selectedRequestId);
+        for (int offset = 1; offset <= ids.size(); offset++) {
+            UUID candidate = ids.get((current + offset + ids.size()) % ids.size());
+            MutableRequest request = REQUESTS.get(candidate);
+            if (request != null) {
+                selectedRequestId = candidate;
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static synchronized boolean cancelVisible() {
         Snapshot snapshot = visibleSnapshot();
-        if (snapshot == null || snapshot.cancellation() == null || snapshot.state().terminal()) {
+        if (snapshot == null || snapshot.state().terminal()) {
             return false;
         }
-        return snapshot.cancellation().cancel("cancelled from model popup");
+        ModelVoiceService.stopSpeaking("model request cancelled");
+        boolean accepted = snapshot.cancellation() != null
+                && snapshot.cancellation().cancel("cancelled from model popup");
+        if (accepted) {
+            MutableRequest request = REQUESTS.get(snapshot.requestId());
+            if (request != null && !request.state.terminal()) {
+                request.appendEvent(
+                        ActivityEventType.CANCELLATION,
+                        "Stopped thinking. The model request was cancelled."
+                );
+                request.state = ModelRequestState.CANCELLING;
+                request.detail = "stopped thinking";
+                ModelPresenceState.updateRequest(
+                        request.automationRequest
+                                ? ModelPresenceState.ActivityKind.AUTOMATION
+                                : ModelPresenceState.ActivityKind.ASK,
+                        "cancelled",
+                        true
+                );
+            }
+        }
+        return accepted;
     }
 
     public static synchronized void dismiss(UUID requestId) {
         MutableRequest removed = REQUESTS.remove(requestId);
+        if (requestId != null && requestId.equals(selectedRequestId)) selectedRequestId = null;
         if (removed != null) {
             removed.resolveApproval(false);
         }
+    }
+
+    /** Called only after the final model response has entered normal chat. */
+    public static synchronized void messagePresented(UUID requestId) {
+        dismiss(requestId);
     }
 
     public static synchronized int queuedCount() {
@@ -272,16 +383,23 @@ public final class ModelGenerationHudState {
             return "failed";
         }
         return switch (state) {
-            case WAITING_FOR_RUNTIME, QUEUED -> "waiting";
-            case PREPARING_CONTEXT, PREFILLING -> "thinking";
+            case WAITING_FOR_RUNTIME, QUEUED, WAITING_FOR_DATA, PAUSED -> "waiting";
+            case PREPARING_CONTEXT, PREFILLING, THINKING -> "thinking";
+            case INSPECTING -> "inspecting";
+            case PLANNING, VALIDATING_PLAN, WAITING_FOR_PLAN_APPROVAL -> "planning";
             case GENERATING -> "writing";
-            case EXECUTING_TOOL -> detail != null && detail.toLowerCase(java.util.Locale.ROOT).contains("plan")
-                    ? "planning"
-                    : "acting";
-            case WAITING_FOR_TOOL_RESULT -> "waiting";
-            case FINALIZING -> "finishing";
+            case SELECTING_TOOL -> "thinking";
+            case WAITING_FOR_ACTION_APPROVAL -> "waiting";
+            case EXECUTING_TOOL, EDITING -> "executing";
+            case WAITING_FOR_TOOL_RESULT, OBSERVING_RESULT -> "observing";
+            case VALIDATING -> "validating";
+            case RETRYING -> "retrying";
+            case REPLANNING -> "replanning";
+            case CHECKPOINTING -> "waiting";
+            case FINALIZING -> "finalizing";
             case COMPLETED -> "completed";
-            case FAILED, CANCELLED -> "failed";
+            case BLOCKED, FAILED -> "failed";
+            case CANCELLING, CANCELLED -> "cancelled";
         };
     }
 
@@ -293,6 +411,11 @@ public final class ModelGenerationHudState {
             String detail,
             ModelUsage usage,
             ModelCancellationHandle cancellation,
+            ModelFinalizationHandle finalization,
+            boolean answerNowVisible,
+            boolean answerNowRequested,
+            ModelDeepThoughtControl deepThoughtControl,
+            ModelDeepThoughtControl.Status deepThoughtStatus,
             Approval approval,
             int toolCallCount,
             int currentToolStep,
@@ -319,7 +442,7 @@ public final class ModelGenerationHudState {
 
     private static final class MutableRequest {
         private final UUID requestId;
-        private final String prompt;
+        private String prompt;
         private final StringBuilder text = new StringBuilder();
         private final StringBuilder activity = new StringBuilder();
         private final List<ActivityEvent> events = new ArrayList<>();
@@ -330,6 +453,10 @@ public final class ModelGenerationHudState {
         private String detail = "queued";
         private ModelUsage usage = ModelUsage.empty();
         private ModelCancellationHandle cancellation;
+        private ModelFinalizationHandle finalization;
+        private boolean answerNowVisible;
+        private boolean answerNowRequested;
+        private ModelDeepThoughtControl deepThought;
         private MutableApproval approval;
         private int toolCallCount;
         private int currentToolStep;
@@ -383,7 +510,7 @@ public final class ModelGenerationHudState {
             while (this.events.size() > 64) {
                 this.events.remove(0);
             }
-            appendActivity(renderEvent(event, this.events.size() == 1));
+            appendActivity(ModelActivityPresentation.timelineEvent(event, this.events.size() == 1));
         }
 
         private String renderActivity() {
@@ -407,6 +534,11 @@ public final class ModelGenerationHudState {
                     this.detail,
                     this.usage,
                     this.cancellation,
+                    this.finalization,
+                    this.answerNowVisible,
+                    this.answerNowRequested,
+                    this.deepThought,
+                    this.deepThought == null ? null : this.deepThought.status(),
                     this.approval == null ? null : this.approval.snapshot,
                     this.toolCallCount,
                     this.currentToolStep,
@@ -432,19 +564,6 @@ public final class ModelGenerationHudState {
         }
     }
 
-    private static String renderEvent(ActivityEvent event, boolean first) {
-        String marker = first ? "• " : "├─ ";
-        String label = switch (event.type()) {
-            case THOUGHT_SUMMARY -> "Thought";
-            case PLAN_STEP -> "Plan";
-            case TOOL_START -> "Start";
-            case RESULT -> "Result";
-            case FAILURE -> "Failed";
-            case REPLAN -> "Replan";
-        };
-        return "-# " + marker + label + " — " + event.summary() + "\n-# │";
-    }
-
     private static String cleanVisibleSummary(String value) {
         if (value == null) {
             return "";
@@ -458,11 +577,20 @@ public final class ModelGenerationHudState {
 
     public enum ActivityEventType {
         THOUGHT_SUMMARY,
+        THOUGHT_STOPPED,
         PLAN_STEP,
+        APPROVAL,
         TOOL_START,
+        TOOL_PROGRESS,
+        FILE,
+        DIFF,
+        COMMAND,
+        VALIDATION,
         RESULT,
         FAILURE,
-        REPLAN
+        REPLAN,
+        CANCELLATION,
+        CHECKPOINT
     }
 
     public record ActivityEvent(
@@ -477,7 +605,30 @@ public final class ModelGenerationHudState {
         ACTIVE,
         COMPLETED,
         FAILED,
+        BLOCKED,
+        SKIPPED,
+        CANCELLED,
         REVISED
+    }
+
+    private static ActivityEventType map(ModelExecutionEvent.Type type) {
+        return switch (type) {
+            case THOUGHT_SUMMARY -> ActivityEventType.THOUGHT_SUMMARY;
+            case PLAN_CREATED, PLAN_VALIDATED -> ActivityEventType.PLAN_STEP;
+            case APPROVAL_REQUESTED, APPROVAL_ACCEPTED, APPROVAL_REJECTED -> ActivityEventType.APPROVAL;
+            case TOOL_SELECTED, TOOL_STARTED -> ActivityEventType.TOOL_START;
+            case TOOL_PROGRESS -> ActivityEventType.TOOL_PROGRESS;
+            case TOOL_RESULT -> ActivityEventType.RESULT;
+            case FILE_READ, FILE_SEARCHED, FILE_CREATED, FILE_MODIFIED, FILE_DELETED -> ActivityEventType.FILE;
+            case DIFF_PRODUCED -> ActivityEventType.DIFF;
+            case COMMAND_STARTED, COMMAND_OUTPUT, COMMAND_COMPLETED -> ActivityEventType.COMMAND;
+            case VALIDATION_STARTED, VALIDATION_PASSED, VALIDATION_FAILED -> ActivityEventType.VALIDATION;
+            case RETRY, REPLAN -> ActivityEventType.REPLAN;
+            case BLOCKED -> ActivityEventType.FAILURE;
+            case CANCELLATION_REQUESTED, CANCELLED -> ActivityEventType.CANCELLATION;
+            case FINAL_RESULT -> ActivityEventType.RESULT;
+            case CHECKPOINT -> ActivityEventType.CHECKPOINT;
+        };
     }
 
     public record PlanStep(
@@ -504,11 +655,13 @@ public final class ModelGenerationHudState {
 
     private static final class MutablePlan {
         private final String planId;
+        private final String objective;
         private final List<PlanStep> steps;
         private boolean revised;
 
-        private MutablePlan(String planId, List<PlanStep> input) {
+        private MutablePlan(String planId, String objective, List<PlanStep> input) {
             this.planId = planId == null ? "" : planId;
+            this.objective = cleanVisibleSummary(objective);
             this.steps = new ArrayList<>();
             if (input != null) {
                 for (int index = 0; index < input.size(); index++) {
@@ -550,27 +703,7 @@ public final class ModelGenerationHudState {
             if (this.steps.isEmpty()) {
                 return "";
             }
-            StringBuilder rendered = new StringBuilder("**Plan ")
-                    .append(this.planId);
-            if (this.revised) {
-                rendered.append(" — revised");
-            }
-            rendered.append("**");
-            for (PlanStep step : this.steps) {
-                rendered.append("\n")
-                        .append(step.index())
-                        .append(". [")
-                        .append(step.status().name().toLowerCase(java.util.Locale.ROOT))
-                        .append("] ")
-                        .append(step.toolId());
-                if (!step.summary().isBlank()) {
-                    rendered.append(" — ").append(step.summary());
-                }
-                if (!step.result().isBlank()) {
-                    rendered.append(" — ").append(step.result());
-                }
-            }
-            return rendered.toString();
+            return ModelActivityPresentation.plan(this.planId, this.objective, this.steps, this.revised);
         }
     }
 

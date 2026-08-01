@@ -3,6 +3,7 @@ package com.spirit.koil.api.model.provider.colibri;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.spirit.koil.api.model.ModelToolArgumentParser;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelUsage;
 import com.spirit.koil.api.model.StreamingModelObserver;
@@ -120,12 +121,7 @@ final class ColibriStreamDecoder {
         JsonObject arguments = new JsonObject();
         if (!accumulator.json.isEmpty()) {
             try {
-                JsonElement parsed = JsonParser.parseString(accumulator.json.toString());
-                if (parsed.isJsonObject()) {
-                    arguments = parsed.getAsJsonObject();
-                } else {
-                    throw new ProtocolException("invalid_tool_arguments", "tool input was not a JSON object", null);
-                }
+                arguments = ModelToolArgumentParser.parseObject(accumulator.json.toString());
             } catch (ProtocolException exception) {
                 throw exception;
             } catch (Exception exception) {

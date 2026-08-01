@@ -17,7 +17,8 @@ public final class LocalMultilineChatBridge {
     }
 
     public static void remember(String fallback, String original) {
-        if (fallback == null || fallback.isBlank() || original == null || original.indexOf('\n') < 0) {
+        if (fallback == null || fallback.isBlank() || original == null
+                || original.indexOf('\n') < 0 && !RichChatSectionFormatting.containsFormatting(original)) {
             return;
         }
 

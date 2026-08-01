@@ -1,7 +1,7 @@
 package com.spirit.client.gui.options;
 
-import com.spirit.client.gui.mod.ModMenuScreen;
-import com.spirit.client.gui.shader.ShaderPackMenuScreen;
+import com.spirit.client.gui.content.mod.ModMenuScreen;
+import com.spirit.client.gui.content.shader.ShaderPackMenuScreen;
 import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;

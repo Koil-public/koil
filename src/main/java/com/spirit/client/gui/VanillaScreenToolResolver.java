@@ -1,17 +1,17 @@
 package com.spirit.client.gui;
 
 import com.google.gson.JsonPrimitive;
-import com.spirit.client.gui.datapack.DatapackScreen;
+import com.spirit.client.gui.content.datapack.DatapackScreen;
 import com.spirit.client.gui.ide.FileEditorScreen;
 import com.spirit.client.gui.ide.FileExplorerScreen;
-import com.spirit.client.gui.mod.ModConfigScreen;
-import com.spirit.client.gui.mod.ModScreen;
-import com.spirit.client.gui.resourcepack.ResourcePackMenuScreen;
-import com.spirit.client.gui.resourcepack.ResourcepackScreen;
+import com.spirit.client.gui.content.mod.ModConfigScreen;
+import com.spirit.client.gui.content.mod.ModScreen;
+import com.spirit.client.gui.content.resourcepack.ResourcePackMenuScreen;
+import com.spirit.client.gui.content.resourcepack.ResourcepackScreen;
 import com.spirit.client.gui.main.KoilMenuScreen;
 import com.spirit.client.gui.measure.PixelDifferenceOverlay;
 import com.spirit.client.gui.measure.PixelMagnifierOverlay;
-import com.spirit.client.gui.mod.ModMenuScreen;
+import com.spirit.client.gui.content.mod.ModMenuScreen;
 import com.spirit.client.gui.update.UpdateScreen;
 import com.spirit.client.gui.video.KoilVideoOptionsScreen;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;

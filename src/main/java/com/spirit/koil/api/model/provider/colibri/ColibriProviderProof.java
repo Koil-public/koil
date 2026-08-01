@@ -139,7 +139,7 @@ public final class ColibriProviderProof {
         require(response.get().usage().queueMillis() == 17L, "queue wait header was not decoded");
         require(states.contains(ModelRequestState.PREFILLING), "prefill state was not emitted");
         require(states.contains(ModelRequestState.GENERATING), "generating state was not emitted");
-        require(states.contains(ModelRequestState.EXECUTING_TOOL), "tool state was not emitted");
+        require(states.contains(ModelRequestState.SELECTING_TOOL), "tool-selection state was not emitted");
         require(states.contains(ModelRequestState.COMPLETED), "completed state was not emitted");
         proveToolResultContinuation(provider, request.tools(), calls.get(0));
         provider.stop().get(5L, TimeUnit.SECONDS);
@@ -261,7 +261,7 @@ public final class ColibriProviderProof {
                 data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"distance\\":"}}
 
                 event: content_block_delta
-                data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"50}"}}
+                data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"50,}"}}
 
                 event: content_block_stop
                 data: {"type":"content_block_stop","index":1}

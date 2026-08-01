@@ -224,7 +224,11 @@
       "uiColorAutomationModePlanningTextR": 176,
       "uiColorAutomationModePlanningTextG": 103,
       "uiColorAutomationModePlanningTextB": 255,
-      "uiColorAutomationModePlanningTextA": 255
+      "uiColorAutomationModePlanningTextA": 255,
+      "uiColorAutomationModeExperimentalTextR": 85,
+      "uiColorAutomationModeExperimentalTextG": 255,
+      "uiColorAutomationModeExperimentalTextB": 85,
+      "uiColorAutomationModeExperimentalTextA": 255
     },
     "header": {
       "uiColorHeaderR": 0,

@@ -1,6 +1,6 @@
 package com.spirit.mixin.client.gui.revamp.world;
 
-import com.spirit.client.gui.browser.ContentBrowserListRowRenderer;
+import com.spirit.client.gui.content.browser.ContentBrowserListRowRenderer;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.util.file.image.ExternalImageLoader;
 import net.fabricmc.api.EnvType;

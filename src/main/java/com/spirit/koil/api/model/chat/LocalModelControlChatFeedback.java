@@ -66,7 +66,7 @@ public final class LocalModelControlChatFeedback {
             case INFO -> CommandOutputPresentation.Tone.PRIMARY;
             case WARNING -> CommandOutputPresentation.Tone.LIMITED;
         };
-        return CommandOutputPresentation.indicator("Local model command output", LOGGED_NAME, tone);
+        return CommandOutputPresentation.commandIndicator("Local model command output", LOGGED_NAME, tone, false);
     }
 
     public enum Level {

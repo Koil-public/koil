@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.spirit.koil.api.model.ModelToolArgumentParser;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelUsage;
 import com.spirit.koil.api.model.StreamingModelObserver;
@@ -120,11 +121,7 @@ final class OpenAiChatStreamDecoder {
             JsonObject arguments = new JsonObject();
             if (!accumulator.arguments.isEmpty()) {
                 try {
-                    JsonElement parsed = JsonParser.parseString(accumulator.arguments.toString());
-                    if (!parsed.isJsonObject()) {
-                        throw new ProtocolException("invalid_tool_arguments", "Tool arguments were not an object.", null);
-                    }
-                    arguments = parsed.getAsJsonObject();
+                    arguments = ModelToolArgumentParser.parseObject(accumulator.arguments.toString());
                 } catch (ProtocolException exception) {
                     throw exception;
                 } catch (Exception exception) {

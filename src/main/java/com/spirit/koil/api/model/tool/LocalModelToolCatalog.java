@@ -20,7 +20,8 @@ public final class LocalModelToolCatalog {
             + "|" + MinecraftKnowledgeModelToolRegistry.version()
             + "|" + AutomationPlanModelToolRegistry.version()
             + "|" + AutomationKtlSkillModelToolRegistry.version()
-            + "|intent-selector-v5";
+            + "|" + ProjectValidationModelToolRegistry.version()
+            + "|intent-selector-v6";
 
     private LocalModelToolCatalog() {
     }
@@ -119,7 +120,11 @@ public final class LocalModelToolCatalog {
                     "workspace.write",
                     "workspace.replace",
                     "workspace.delete",
+                    "workspace.restore",
                     "automation.ktl_apply");
+        }
+        if (containsAny(normalized, "compile", "compilation", "build", "gradle", "test", "tests", "proof", "proofs", "verify build")) {
+            add(selected, ProjectValidationModelToolRegistry.LIST_TOOL_ID, ProjectValidationModelToolRegistry.RUN_TOOL_ID);
         }
         if (containsAny(normalized,
                 "ktl", "skill", "skills", "task file", "automation file",
@@ -177,7 +182,64 @@ public final class LocalModelToolCatalog {
                 "remove item", "clear item", "take item from inventory", "remove from inventory")) {
             required.add("minecraft.command");
         }
+        if (containsAny(normalized, "read file", "read the file", "inspect file", "reread", "re read")) {
+            required.add("workspace.read");
+        }
+        if (containsAny(normalized, "search file", "search files", "find in file", "look for in", "grep")) {
+            required.add("workspace.search");
+        }
+        if (containsAny(normalized, "create file", "new file")) {
+            required.add("workspace.create");
+        }
+        if (containsAny(normalized, "edit file", "change file", "modify file", "replace in", "fix code", "update file")) {
+            required.add("workspace.replace");
+        }
+        if (containsAny(normalized, "write file", "rewrite file", "overwrite file")) {
+            required.add("workspace.write");
+        }
+        if (containsAny(normalized, "delete file", "remove file")) {
+            required.add("workspace.delete");
+        }
+        if (containsAny(normalized, "restore file", "recover file")) {
+            required.add("workspace.restore");
+        }
+        if (containsAny(normalized, "run ktl", "execute ktl", "use ktl skill", "run skill")) {
+            required.add(AutomationKtlSkillModelToolRegistry.RUN_TOOL_ID);
+        }
+        if (containsAny(normalized, "compile", "run test", "run tests", "run proof", "run proofs", "verify build", "validate project")) {
+            required.add(ProjectValidationModelToolRegistry.RUN_TOOL_ID);
+        }
+        if (containsAny(normalized, "mine", "dig", "break block")) required.add("block.mine");
+        if (containsAny(normalized, "attack", "hit entity", "fight")) required.add("entity.attack");
+        if (containsAny(normalized, "kill entity", "kill mob")) required.add("entity.kill");
+        if (containsAny(normalized, "interact", "right click", "use block")) required.add("block.interact");
+        if (containsAny(normalized, "open container", "open chest", "open barrel")) required.add("container.open");
         return Set.copyOf(required);
+    }
+
+    public static List<ModelToolDefinition> toolsForRound(
+            String prompt,
+            boolean includePlanningTool,
+            boolean stagedExecution,
+            boolean hasObservation
+    ) {
+        List<ModelToolDefinition> selected = toolsForPrompt(prompt, includePlanningTool);
+        if (!stagedExecution || selected.size() <= 8) {
+            return selected;
+        }
+        Set<String> allowed = new LinkedHashSet<>();
+        if (!hasObservation) {
+            add(allowed, "workspace.roots", "workspace.list", "workspace.read", "workspace.search",
+                    MinecraftKnowledgeModelToolRegistry.TOOL_ID,
+                    AutomationKtlSkillModelToolRegistry.CATALOG_TOOL_ID,
+                    ProjectValidationModelToolRegistry.LIST_TOOL_ID,
+                    AutomationPlanModelToolRegistry.TOOL_ID,
+                    "automation.cancel");
+        } else {
+            selected.stream().map(ModelToolDefinition::id).forEach(allowed::add);
+        }
+        List<ModelToolDefinition> staged = selected.stream().filter(tool -> allowed.contains(tool.id())).toList();
+        return staged.isEmpty() ? selected.stream().limit(8).toList() : staged;
     }
 
     public static String version() {
@@ -188,6 +250,7 @@ public final class LocalModelToolCatalog {
         List<ModelToolDefinition> tools = new ArrayList<>(AutomationCapabilityRegistry.modelTools());
         tools.addAll(MinecraftKnowledgeModelToolRegistry.modelTools());
         tools.addAll(ModelWorkspaceToolRegistry.modelTools());
+        tools.addAll(ProjectValidationModelToolRegistry.modelTools());
         tools.addAll(AutomationPlanModelToolRegistry.modelTools());
         tools.addAll(AutomationKtlSkillModelToolRegistry.modelTools());
         return List.copyOf(tools);

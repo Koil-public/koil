@@ -1776,6 +1776,11 @@ public final class KtlCompilerService {
     }
 
     private ResolvedTarget resolveItem(String rawText) {
+        Identifier exact = exactIdentifier(rawText);
+        if (exact != null) {
+            if (Registries.ITEM.containsId(exact)) return new ResolvedTarget(exact.toString(), exact.getPath());
+            throw new IllegalStateException("Item unresolved: " + rawText);
+        }
         String normalized = normalizeTarget(rawText);
         List<Identifier> matches = new ArrayList<>();
         for (Item item : Registries.ITEM) {
@@ -1835,6 +1840,11 @@ public final class KtlCompilerService {
     }
 
     private ResolvedTarget resolveEntity(String rawText) {
+        Identifier exact = exactIdentifier(rawText);
+        if (exact != null) {
+            if (Registries.ENTITY_TYPE.containsId(exact)) return new ResolvedTarget(exact.toString(), exact.getPath());
+            throw new IllegalStateException("Entity unresolved: " + rawText);
+        }
         String normalized = normalizeTarget(rawText);
         List<Identifier> matches = new ArrayList<>();
         for (var type : Registries.ENTITY_TYPE) {
@@ -1864,6 +1874,11 @@ public final class KtlCompilerService {
     }
 
     private ResolvedTarget resolveBlock(String rawText) {
+        Identifier exact = exactIdentifier(rawText);
+        if (exact != null) {
+            if (Registries.BLOCK.containsId(exact)) return new ResolvedTarget(exact.toString(), exact.getPath());
+            throw new IllegalStateException("Block unresolved: " + rawText);
+        }
         String normalized = normalizeTarget(rawText);
         List<Identifier> matches = new ArrayList<>();
         for (var block : Registries.BLOCK) {
@@ -2280,8 +2295,16 @@ public final class KtlCompilerService {
     }
 
     private static String normalizeTarget(String rawText) {
-        String lower = rawText.toLowerCase(Locale.ROOT).trim().replace("minecraft:", "");
+        String lower = rawText == null ? "" : rawText.toLowerCase(Locale.ROOT).trim();
+        int namespace = lower.indexOf(':');
+        if (namespace >= 0 && namespace + 1 < lower.length()) lower = lower.substring(namespace + 1);
         return lower.replace("_", " ").replace('-', ' ').trim();
+    }
+
+    private static Identifier exactIdentifier(String rawText) {
+        String value = rawText == null ? "" : rawText.toLowerCase(Locale.ROOT).strip();
+        if (!value.contains(":")) return null;
+        return Identifier.tryParse(value);
     }
 
     private static String stripPlural(String text) {

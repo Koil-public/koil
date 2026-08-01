@@ -2,6 +2,7 @@ package com.spirit.koil.api.model.chat;
 
 import com.spirit.koil.api.command.CommandOutputPresentation;
 import com.spirit.koil.api.model.BinaryStorageFormatter;
+import com.spirit.koil.api.model.catalog.LocalModelAutomationEligibility;
 import com.spirit.koil.api.model.catalog.LocalModelCapabilityTag;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
 import com.spirit.koil.api.model.catalog.LocalModelCompatibility;
@@ -62,13 +63,26 @@ public final class LocalModelCatalogChatRow {
             String command
     ) {
         boolean chats = entry.capabilityTags().contains(LocalModelCapabilityTag.CHAT);
+        boolean automationEligible = LocalModelAutomationEligibility.supportsAutomationTools(entry);
         MutableText tooltip = CommandOutputPresentation.text(entry.displayName(), Tone.PRIMARY)
                 .append(detail("Model ID", entry.id()))
                 .append(detail(
                         "Intent estimate",
                         entry.complexReasoningEstimatePercent() + "% complex (relative guidance)"
                 ))
-                .append(detail("Chat / tools", yesNo(chats) + " / " + yesNo(entry.toolCalling())))
+                .append(detail(
+                        "Chat / tools",
+                        yesNo(chats) + " / " + yesNo(automationEligible)
+                ))
+                .append(detail(
+                        "Automation",
+                        automationEligible
+                                ? "eligible — complex intent exceeds "
+                                        + LocalModelAutomationEligibility.REQUIRED_COMPLEX_INTENT_EXCLUSIVE + "%"
+                                : "blocked — complex intent must exceed "
+                                        + LocalModelAutomationEligibility.REQUIRED_COMPLEX_INTENT_EXCLUSIVE
+                                        + "%; /ask remains available"
+                ))
                 .append(detail("Storage", formatStorage(entry.downloadBytes())))
                 .append(detail("Parameters", entry.parameterCount()))
                 .append(detail("Quantization", entry.quantization()))

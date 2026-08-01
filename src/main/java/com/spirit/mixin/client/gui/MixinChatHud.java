@@ -17,6 +17,7 @@ import com.spirit.koil.api.chat.RichChatMaskedLinkBridge;
 import com.spirit.koil.api.chat.RichChatRenderContext;
 import com.spirit.koil.api.chat.RichChatRowClassifier;
 import com.spirit.koil.api.chat.RichChatRowType;
+import com.spirit.koil.api.chat.RichChatSectionFormatting;
 import com.spirit.koil.api.chat.RichChatTimestampBridge;
 import com.spirit.koil.api.chat.RichChatTableBridge;
 import com.spirit.koil.api.chat.latex.RichChatLatexFormatter;
@@ -69,10 +70,10 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
     @Unique private static final MessageIndicator KOIL_ADVANCEMENT_GOAL_INDICATOR_DIM = new MessageIndicator(0x395A8A, null, Text.literal("Goal reached"), "Goal");
     @Unique private static final MessageIndicator KOIL_ADVANCEMENT_CHALLENGE_INDICATOR_BRIGHT = new MessageIndicator(0xA35AC6, null, Text.literal("Challenge completed"), "Challenge");
     @Unique private static final MessageIndicator KOIL_ADVANCEMENT_CHALLENGE_INDICATOR_DIM = new MessageIndicator(0x7A4396, null, Text.literal("Challenge completed"), "Challenge");
-    @Unique private static final MessageIndicator KOIL_COMMAND_INDICATOR_BRIGHT = CommandOutputPresentation.indicator("Command output", "Command", CommandOutputPresentation.Tone.PRIMARY);
-    @Unique private static final MessageIndicator KOIL_COMMAND_INDICATOR_DIM = CommandOutputPresentation.indicator("Command output", "Command", CommandOutputPresentation.Tone.METADATA);
-    @Unique private static final MessageIndicator KOIL_COMMAND_FAILURE_INDICATOR_BRIGHT = CommandOutputPresentation.indicator("Command failed", "Command failure", CommandOutputPresentation.Tone.ERROR);
-    @Unique private static final MessageIndicator KOIL_COMMAND_FAILURE_INDICATOR_DIM = CommandOutputPresentation.indicator("Command failed", "Command failure", CommandOutputPresentation.Tone.ERROR);
+    @Unique private static final MessageIndicator KOIL_COMMAND_INDICATOR_BRIGHT = CommandOutputPresentation.commandIndicator("Command output", "Command", CommandOutputPresentation.Tone.PRIMARY, false);
+    @Unique private static final MessageIndicator KOIL_COMMAND_INDICATOR_DIM = CommandOutputPresentation.commandIndicator("Command output", "Command", CommandOutputPresentation.Tone.METADATA, true);
+    @Unique private static final MessageIndicator KOIL_COMMAND_FAILURE_INDICATOR_BRIGHT = CommandOutputPresentation.commandIndicator("Command failed", "Command failure", CommandOutputPresentation.Tone.ERROR, false);
+    @Unique private static final MessageIndicator KOIL_COMMAND_FAILURE_INDICATOR_DIM = CommandOutputPresentation.commandIndicator("Command failed", "Command failure", CommandOutputPresentation.Tone.ERROR, true);
     @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_IMPULSE_INDICATOR_BRIGHT = new MessageIndicator(0xD8872F, null, Text.literal("Impulse command block output"), "Impulse CB");
     @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_IMPULSE_INDICATOR_DIM = new MessageIndicator(0xA86724, null, Text.literal("Impulse command block output"), "Impulse CB");
     @Unique private static final MessageIndicator KOIL_COMMAND_BLOCK_CHAIN_INDICATOR_BRIGHT = new MessageIndicator(0x4F9C52, null, Text.literal("Chain command block output"), "Chain CB");
@@ -294,6 +295,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
                     rowType == RichChatRowType.COMMAND_BLOCK_REPEATING
             );
         }
+        rewritten = RichChatSectionFormatting.styleBeforeWrapping(rewritten);
         if (RichChatSettings.timestampsEnabled()) {
             RichChatTimestampBridge.remember(rewritten);
         }
