@@ -5,7 +5,6 @@ import com.google.gson.JsonPrimitive;
 import com.spirit.koil.api.automation.AutomationPresenceServerBridge;
 import com.spirit.koil.api.automation.KoilCommandPauseBridge;
 import com.spirit.koil.api.chat.AttentionCommandBridge;
-import com.spirit.koil.api.chat.sync.RichChatSyncServerBridge;
 import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.registry.ContentCommandBridge;
 import com.spirit.koil.api.registry.DynamicContentHolderRegistry;
@@ -18,8 +17,9 @@ import com.spirit.koil.api.util.file.FileSanitizer;
 import com.spirit.koil.api.util.file.KoilPackageManager;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.util.web.WebFileDownloader;
-import net.fabricmc.api.EnvType;
+import com.spirit.koil.api.chat.sync.RichChatSyncServerBridge;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
@@ -192,7 +192,7 @@ public class Main implements ModInitializer {
     }
 
     public static final String VERSION = "0.70.25";
-    public static final String BETA_VERSION = "0.70.26-unfinished.13";
+    public static final String BETA_VERSION = "0.70.26-unfinished.12";
     public static final String FREQUENT_BETA_VERSION = "0.70.26-frequent.0";
     public static final Identifier LOGO_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/icon.png");
     public static final Identifier AUTOMATION_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/automation.png");
@@ -349,9 +349,8 @@ public class Main implements ModInitializer {
     public void onInitialize() {
         if (!isFirstLaunchPending()) {
             try {
-                //KPakPrivateKeyStore.generate();
                 KoilPackageManager.packageMain();
-            } catch (Exception e) {
+            } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         } else {

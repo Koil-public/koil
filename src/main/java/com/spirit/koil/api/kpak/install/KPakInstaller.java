@@ -187,11 +187,7 @@ public final class KPakInstaller {
 
         String actual;
 
-        try (InputStream input =
-                 Files.newInputStream(
-                     kPak.getFile()
-                 )) {
-
+        try (InputStream input = Files.newInputStream(kPak.getFile())) {
             actual =
                 KPakHashUtil.sha256(
                     input

@@ -18,68 +18,71 @@ import java.util.List;
  * entries and actions here.
  */
 public final class ChatComposerMenuBridge {
+
     public static final String PRIVATE_SECTION = "composer:private";
     public static final String AUTOMATION_SECTION = "composer:automation";
     public static final String MODEL_SECTION = "composer:model";
     public static final String VOICE_SELECTOR = "composer:voice_selector";
+    public static final String GIF_SELECTOR = "composer:gif_selector";
 
     private ChatComposerMenuBridge() {
     }
 
     public static List<PopupMenu.MenuEntry> rootEntries() {
         return List.of(
-                new PopupMenu.MenuEntry(PRIVATE_SECTION, "/msg", 0, "", 0xFFAAB4C3, ">"),
-                new PopupMenu.MenuEntry(AUTOMATION_SECTION, "/automate", 0, "", 0xFFAAB4C3, ">"),
-                new PopupMenu.MenuEntry(MODEL_SECTION, "/model", 0, "", 0xFFAAB4C3, ">")
+            new PopupMenu.MenuEntry(PRIVATE_SECTION, "/msg", 0, "", 0xFFAAB4C3, ">"),
+            new PopupMenu.MenuEntry(AUTOMATION_SECTION, "/automate", 0, "", 0xFFAAB4C3, ">"),
+            new PopupMenu.MenuEntry(MODEL_SECTION, "/model", 0, "", 0xFFAAB4C3, ">"),
+            new PopupMenu.MenuEntry(GIF_SELECTOR, "/gif", 0, "", 0xFFAAB4C3, ">")
         );
     }
 
     public static List<PopupMenu.MenuEntry> childEntries(String section, MinecraftClient client) {
+        List<PopupMenu.MenuEntry> entries = new ArrayList<>();
+
         if (PRIVATE_SECTION.equals(section)) {
             return RichChatPrivateMessageBridge.menuEntries(client);
         }
         if (AUTOMATION_SECTION.equals(section)) {
-            List<PopupMenu.MenuEntry> entries = new ArrayList<>();
             entries.add(new PopupMenu.MenuEntry(
-                    "composer:automation_toggle",
-                    "Automation: " + (AutomationModeController.isAutomationMode() ? "On" : "Off")
+                "composer:automation_toggle",
+                "Automation: " + (AutomationModeController.isAutomationMode() ? "On" : "Off")
             ));
             entries.add(new PopupMenu.MenuEntry(
-                    "composer:automation_yolo",
-                    "unrestricted",
-                    AutomationModeController.isYoloMode() ? 0x00FF00FF : 0,
-                    AutomationModeController.isYoloMode() ? "•" : ""
+                "composer:automation_yolo",
+                "unrestricted",
+                AutomationModeController.isYoloMode() ? 0x00FF00FF : 0,
+                AutomationModeController.isYoloMode() ? "•" : ""
             ));
             entries.add(new PopupMenu.MenuEntry(
-                    "composer:automation_deep",
-                    "deep thought",
-                    AutomationModeController.isDeepThinkingEnabled() ? 0xFF4479C4 : 0,
-                    AutomationModeController.isDeepThinkingEnabled() ? "•" : ""
+                "composer:automation_deep",
+                "deep thought",
+                AutomationModeController.isDeepThinkingEnabled() ? 0xFF4479C4 : 0,
+                AutomationModeController.isDeepThinkingEnabled() ? "•" : ""
             ));
             entries.add(new PopupMenu.MenuEntry(
-                    "composer:automation_planning",
-                    "planning",
-                    AutomationModeController.isPlanningModeEnabled() ? 0xFFB067FF : 0,
-                    AutomationModeController.isPlanningModeEnabled() ? "•" : ""
+                "composer:automation_planning",
+                "planning",
+                AutomationModeController.isPlanningModeEnabled() ? 0xFFB067FF : 0,
+                AutomationModeController.isPlanningModeEnabled() ? "•" : ""
             ));
             entries.add(new PopupMenu.MenuEntry(
-                    "composer:automation_experimental",
-                    "experimental",
-                    AutomationModeController.isExperimentalCompactAgentEnabled() ? 0xFF55FF55 : 0,
-                    AutomationModeController.isExperimentalCompactAgentEnabled() ? "•" : ""
+                "composer:automation_experimental",
+                "experimental",
+                AutomationModeController.isExperimentalCompactAgentEnabled() ? 0xFF55FF55 : 0,
+                AutomationModeController.isExperimentalCompactAgentEnabled() ? "•" : ""
             ));
             return entries;
         }
         if (MODEL_SECTION.equals(section)) {
-            List<PopupMenu.MenuEntry> entries = new ArrayList<>();
             String selected = LocalModelService.selectedCatalogId();
             for (var model : LocalModelInstallationService.instance().installedEntries()) {
                 boolean active = model.id().equals(selected);
                 entries.add(new PopupMenu.MenuEntry(
-                        "composer:model:" + model.id(),
-                        model.displayName(),
-                        active ? 0xFF55AA55 : 0,
-                        active ? "•" : ""
+                    "composer:model:" + model.id(),
+                    model.displayName(),
+                    active ? 0xFF55AA55 : 0,
+                    active ? "•" : ""
                 ));
             }
             if (entries.isEmpty()) {
@@ -87,17 +90,47 @@ public final class ChatComposerMenuBridge {
             }
             var settings = ModelVoiceService.settings();
             entries.add(new PopupMenu.MenuEntry(
-                    "composer:voice_toggle",
-                    "Speak: " + (settings.enabled() ? "On" : "Off")
+                "composer:voice_toggle",
+                "Speak: " + (settings.enabled() ? "On" : "Off")
             ));
             entries.add(new PopupMenu.MenuEntry(
-                    VOICE_SELECTOR,
-                    "voice: " + ModelVoiceService.selectedVoiceLabel(),
-                    0,
-                    "",
-                    0xFFAAB4C3,
-                    ">"
+                VOICE_SELECTOR,
+                "voice: " + ModelVoiceService.selectedVoiceLabel(),
+                0,
+                "",
+                0xFFAAB4C3,
+                ">"
             ));
+            return entries;
+        }
+        if (GIF_SELECTOR.equals(section)) {
+            entries.add(new PopupMenu.MenuEntry(
+                "composer:gif:favourites",
+                "Favourites",
+                0,
+                "",
+                0xFFAAB4C3,
+                ">"
+            ));
+
+            entries.add(new PopupMenu.MenuEntry(
+                "composer:gif:search",
+                "Search",
+                0,
+                "",
+                0xFFAAB4C3,
+                ">"
+            ));
+
+            entries.add(new PopupMenu.MenuEntry(
+                "composer:gif:trending",
+                "Trending GIFs",
+                0,
+                "",
+                0xFFAAB4C3,
+                ">"
+            ));
+
             return entries;
         }
         return List.of();
@@ -107,8 +140,8 @@ public final class ChatComposerMenuBridge {
         if ("pm_target_header".equals(selector)) {
             List<PopupMenu.MenuEntry> targets = RichChatPrivateMessageBridge.targetMenuEntries(client);
             return targets.isEmpty()
-                    ? List.of(new PopupMenu.MenuEntry("composer:no_targets", "No other players"))
-                    : targets;
+                ? List.of(new PopupMenu.MenuEntry("composer:no_targets", "No other players"))
+                : targets;
         }
         if (VOICE_SELECTOR.equals(selector)) {
             String selectedVoice = ModelVoiceService.settings().voiceId();
@@ -116,16 +149,26 @@ public final class ChatComposerMenuBridge {
             for (var voice : ModelVoiceService.voices()) {
                 boolean selected = voice.id().equalsIgnoreCase(selectedVoice);
                 voices.add(new PopupMenu.MenuEntry(
-                        "composer:voice:" + voice.id(),
-                        voice.displayName(),
-                        selected ? 0xFF55AA55 : 0,
-                        selected ? "•" : ""
+                    "composer:voice:" + voice.id(),
+                    voice.displayName(),
+                    selected ? 0xFF55AA55 : 0,
+                    selected ? "•" : ""
                 ));
             }
             return voices.isEmpty()
-                    ? List.of(new PopupMenu.MenuEntry("composer:no_voices", "No voices available"))
-                    : List.copyOf(voices);
+                ? List.of(new PopupMenu.MenuEntry("composer:no_voices", "No voices available"))
+                : List.copyOf(voices);
         }
+
+        if (selector.startsWith("composer:gif:")) {
+            return List.of(
+                new PopupMenu.MenuEntry(
+                    "composer:gif:placeholder",
+                    "Placeholder"
+                )
+            );
+        }
+
         return List.of();
     }
 
@@ -186,7 +229,7 @@ public final class ChatComposerMenuBridge {
             String voiceId = actionId.substring("composer:voice:".length());
             if (ModelVoiceService.setVoice(voiceId)) {
                 LocalModelControlChatFeedback.success(
-                        "Local model voice set to " + ModelVoiceService.selectedVoiceLabel() + "."
+                    "Local model voice set to " + ModelVoiceService.selectedVoiceLabel() + "."
                 );
             } else {
                 LocalModelControlChatFeedback.error("That model voice is no longer available.");
@@ -198,12 +241,17 @@ public final class ChatComposerMenuBridge {
 
     public static boolean isSection(String actionId) {
         return PRIVATE_SECTION.equals(actionId)
-                || AUTOMATION_SECTION.equals(actionId)
-                || MODEL_SECTION.equals(actionId);
+            || AUTOMATION_SECTION.equals(actionId)
+            || MODEL_SECTION.equals(actionId)
+            || GIF_SELECTOR.equals(actionId);
     }
 
     public static boolean isNestedSelector(String actionId) {
-        return "pm_target_header".equals(actionId) || VOICE_SELECTOR.equals(actionId);
+        return "pm_target_header".equals(actionId)
+            || VOICE_SELECTOR.equals(actionId)
+            || "composer:gif:favourites".equals(actionId)
+            || "composer:gif:search".equals(actionId)
+            || "composer:gif:trending".equals(actionId);
     }
 
     public enum ActionResult {
