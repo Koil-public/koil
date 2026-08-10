@@ -107,10 +107,13 @@ public final class ColibriConfigurationStore {
         root.addProperty("kvSlots", configuration.kvSlots());
         root.addProperty("maximumRestartAttempts", configuration.maximumRestartAttempts());
         root.addProperty("restartBackoffSeconds", configuration.restartBackoff().toSeconds());
-        root.addProperty("persistentConversationHistory", false);
-        root.addProperty("persistentAssociativeMemory", false);
-        root.addProperty("gigatokenEnabled", false);
-        root.addProperty("expertPrefetchExperimentEnabled", false);
+        var experiments = com.spirit.koil.api.model.ModelExperimentalFeatures.snapshot();
+        root.addProperty("persistentConversationHistory", experiments.persistentConversationHistory());
+        root.addProperty("persistentAssociativeMemory", experiments.persistentAssociativeMemory());
+        root.addProperty("gigatokenEnabled", experiments.gigatokenEnabled());
+        root.addProperty("expertPrefetchExperimentEnabled", experiments.expertPrefetchEnabled());
+        root.addProperty("completionModeEnabled", experiments.completionModeEnabled());
+        root.addProperty("noFailEnabled", experiments.noFailEnabled());
         return root;
     }
 

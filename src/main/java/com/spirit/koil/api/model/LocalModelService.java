@@ -11,8 +11,14 @@ import com.spirit.koil.api.minecraft.MinecraftNbtSuggestionService;
 import com.spirit.koil.api.model.chat.ModelGenerationChatPanel;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
 import com.spirit.koil.api.model.chat.LocalModelControlChatFeedback;
+import com.spirit.koil.api.model.chat.ModelToolCallPresentation;
+import com.spirit.koil.api.model.planning.AutomationProgressGuard;
+import com.spirit.koil.api.model.planning.NoFailExecutionPolicy;
+import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
+import com.spirit.koil.api.model.chat.ModelActivityPresentation;
 import com.spirit.koil.api.model.format.RichChatModelOutputSanitizer;
 import com.spirit.koil.api.model.format.RichChatModelFormattingContract;
+import com.spirit.koil.api.model.format.RichChatModelFinalFormatValidator;
 import com.spirit.koil.api.model.hardware.HardwareCapabilityReport;
 import com.spirit.koil.api.model.hardware.LocalModelHardwarePreflight;
 import com.spirit.koil.api.model.catalog.LocalModelSelection;
@@ -29,7 +35,9 @@ import com.spirit.koil.api.model.provider.llamacpp.LlamaCppLocalModelProvider;
 import com.spirit.koil.api.model.voice.ModelVoiceService;
 import com.spirit.koil.api.model.tool.LocalModelToolCatalog;
 import com.spirit.koil.api.model.planning.AutomationThinkingPolicy;
+import com.spirit.koil.api.model.planning.AutomationToolCallLatencyPolicy;
 import com.spirit.koil.api.model.planning.ConversationalReasoningPolicy;
+import com.spirit.koil.api.model.planning.ModelInformationRetrievalPolicy;
 import com.spirit.koil.api.model.planning.ValidatedAutomationPlan;
 import com.spirit.koil.api.model.planning.ReviewedPlanAuthorization;
 import com.spirit.koil.api.model.prompt.LocalModelAutomationPrompt;
@@ -37,6 +45,8 @@ import com.spirit.koil.api.model.tool.AutomationPlanModelToolRegistry;
 import com.spirit.koil.api.model.tool.DeepThoughtReadOnlyToolCoordinator;
 import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
 import com.spirit.koil.api.model.tool.ProjectValidationModelToolRegistry;
+import com.spirit.koil.api.model.tool.MinecraftKnowledgeModelToolRegistry;
+import com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry;
 import com.spirit.koil.api.model.deepthought.DeepThoughtInvestigationController;
 import com.spirit.koil.api.model.deepthought.DeepThoughtSession;
 import com.spirit.koil.api.model.deepthought.DeepThoughtSessionStore;
@@ -81,6 +91,10 @@ public final class LocalModelService {
             return;
         }
         configuration = ColibriConfigurationStore.loadOrCreate();
+        ModelExperimentalFeatures.reload();
+        if (ModelExperimentalFeatures.snapshot().persistentConversationHistory()) {
+            ModelConversationPersistence.restore(CONVERSATIONS);
+        }
         selection = LocalModelSelectionStore.load();
         runtime = new LocalModelRuntimeManager(configuration.maximumQueueDepth());
         runtime.registerProvider(new ColibriLocalModelProvider(configuration));
@@ -102,6 +116,13 @@ public final class LocalModelService {
 
     public static boolean ask(String prompt) {
         return submitPrompt(prompt, RequestMode.ASK, true);
+    }
+
+    public static void refreshExperimentalFeatures() {
+        ModelExperimentalFeatures.reload();
+        if (ModelExperimentalFeatures.snapshot().persistentConversationHistory()) {
+            ModelConversationPersistence.restore(CONVERSATIONS);
+        }
     }
 
     public static boolean askDeep(String prompt) {
@@ -314,6 +335,10 @@ public final class LocalModelService {
         return runtime.queueDepth();
     }
 
+    public static boolean hasActiveWork() {
+        return SESSIONS.values().stream().anyMatch(session -> !session.terminal.get());
+    }
+
     public static List<QueuedPrompt> queuedPrompts() {
         return SESSIONS.values().stream()
                 .filter(session -> !session.dispatched.get() && !session.terminal.get())
@@ -485,9 +510,14 @@ public final class LocalModelService {
                 Reply only in the language used by the latest user message. For English input, use English only; never switch languages unless explicitly asked.
                 """;
         if (mode == RequestMode.ASK || mode == RequestMode.ASK_DEEP) {
-            return LocalModelSystemPrompt.load() + """
-
-                    /ask is conversational and has no tools. Never claim to run code, commands, KTL, automation, or Minecraft actions. Command links are suggestions only.
+            String askBoundary = toolsAvailable
+                    ? """
+                    /ask is conversational. Every supplied tool is a read-only evidence source only: it may inspect Minecraft knowledge/state, read bounded workspace text, or research public internet sources. It cannot execute commands or gameplay, synthesize player input, mutate files/workspaces, or perform Automation. Use one relevant lookup at a time, continue chunked reads with the returned nextStartLine when needed, preserve exact identifiers/evidence, and never substitute a nearby valid target for a requested target that does not exist.
+                    """
+                    : """
+                    /ask is conversational and has no tools for this turn. Never claim to run code, commands, KTL, automation, or Minecraft actions. Command links are suggestions only.
+                    """;
+            return LocalModelSystemPrompt.load() + askBoundary + """
                     When asked for an enchanted-item command, use Minecraft 1.20.1 item SNBT after the item id, for example `[Give Knockback 5 Stick](/give @s minecraft:stick{Enchantments:[{id:"minecraft:knockback",lvl:5s}]} 1)`. Never invent `/forge`.
                     """ + RichChatModelFormattingContract.askPrompt() + languageContract;
         }
@@ -498,7 +528,7 @@ public final class LocalModelService {
         }
         return LocalModelSystemPrompt.load()
                 + LocalModelAutomationPrompt.rules(
-                AutomationModeController.isYoloMode(),
+                AutomationModeController.isUnrestrictedMode(),
                 thinking != null && thinking.deepActive(),
                 AutomationModeController.isPlanningModeEnabled()
         )
@@ -526,7 +556,37 @@ public final class LocalModelService {
         ModelWorkspaceToolRegistry.modelTools().stream()
                 .filter(tool -> Set.of("workspace.roots", "workspace.list", "workspace.read", "workspace.search").contains(tool.id()))
                 .forEach(available::add);
+        available.addAll(InternetResearchModelToolRegistry.modelTools());
         return List.copyOf(available);
+    }
+
+    private static List<ModelToolDefinition> readOnlyAskTools(
+            String prompt,
+            ConversationalReasoningPolicy.Decision decision
+    ) {
+        if (decision == null || decision.depth() == ConversationalReasoningPolicy.Depth.DIRECT) return List.of();
+        String normalized = prompt == null ? "" : prompt.toLowerCase(java.util.Locale.ROOT);
+        LinkedHashMap<String, ModelToolDefinition> selected = new LinkedHashMap<>();
+        if (decision.groundedMinecraft()) {
+            MinecraftKnowledgeModelToolRegistry.toolsForQuestion(prompt)
+                    .forEach(tool -> selected.put(tool.id(), tool));
+        }
+        if (hasAny(normalized, "file", "folder", "directory", "config", "log", "workspace", "read ", "document")) {
+            ModelWorkspaceToolRegistry.modelTools().stream()
+                    .filter(tool -> Set.of("workspace.roots", "workspace.list", "workspace.stat", "workspace.read", "workspace.search").contains(tool.id()))
+                    .forEach(tool -> selected.put(tool.id(), tool));
+        }
+        if (hasAny(normalized, "internet", "web search", "search online", "look online", "latest", "current version",
+                "documentation", "wiki", "release notes", "public source")) {
+            InternetResearchModelToolRegistry.modelTools().forEach(tool -> selected.put(tool.id(), tool));
+        }
+        return List.copyOf(selected.values());
+    }
+
+    private static boolean hasAny(String value, String... needles) {
+        if (value == null) return false;
+        for (String needle : needles) if (value.contains(needle)) return true;
+        return false;
     }
 
     private static String deepThoughtScope() {
@@ -586,6 +646,7 @@ public final class LocalModelService {
         private final ModelDurableTaskState durableState;
         private final ModelObjectiveLedger objectiveLedger;
         private final SessionCancellation cancellation;
+        private final AutomationProgressGuard automationProgress = new AutomationProgressGuard();
         private final AtomicBoolean terminal = new AtomicBoolean();
         private final AtomicBoolean finalizationRequested = new AtomicBoolean();
         private final AtomicBoolean dispatched = new AtomicBoolean();
@@ -596,16 +657,25 @@ public final class LocalModelService {
         private final AtomicReference<String> streamedVoiceResponse = new AtomicReference<>("");
         private int toolCallCount;
         private int toolResultsReceived;
+        private int successfulToolOutputs;
+        private int successfulActionToolOutputs;
+        private boolean actionToolAttempted;
         private int continuationCorrectionCount;
         private int askFormattingCorrectionCount;
         private int providerRoundCount;
         private int emptyResponseCorrections;
+        private int groundedAskToolRounds;
+        private int groundedAskCorrectionCount;
+        private boolean groundedAskFinalizing;
+        private int finalFormattingCorrectionCount;
+        private boolean formattingCorrectionActive;
         private boolean groundedAskCommandAttempted;
         private ValidatedAutomationPlan validatedPlan;
         private ReviewedPlanAuthorization planAuthorization;
         private PlanPhase planPhase = PlanPhase.NONE;
         private int planRevisionCount;
         private String lastReplanEvidenceFingerprint = "";
+        private boolean directToolDecisionSession;
 
         private GenerationSession(UUID displayId, String prompt, RequestMode mode, ModelConversation conversation) {
             this(displayId, prompt, mode, conversation, null);
@@ -641,7 +711,7 @@ public final class LocalModelService {
                     ? LocalModelToolCatalog.toolsForPrompt(prompt, this.thinking.includePlanTool())
                     : mode == RequestMode.ASK_DEEP
                     ? readOnlyDeepThoughtTools(prompt)
-                    : List.of();
+                    : readOnlyAskTools(prompt, this.conversationalThinking);
             this.requiredToolIds = mode == RequestMode.AUTOMATION
                     ? LocalModelToolCatalog.requiredToolIdsForPrompt(prompt)
                     : Set.of();
@@ -669,6 +739,18 @@ public final class LocalModelService {
                     displayId,
                     this.conversationalThinking != null && this.conversationalThinking.answerNowAvailable()
             );
+            if (mode == RequestMode.ASK) {
+                String summary = this.conversationalThinking.depth() == ConversationalReasoningPolicy.Depth.DIRECT
+                        ? "I’m preparing a brief direct response."
+                        : this.conversationalThinking.reviewContext()
+                        ? "I’m reviewing the request and the relevant conversation context."
+                        : "I’m interpreting the request and preparing the most useful response.";
+                ModelGenerationHudState.appendEvent(
+                        displayId,
+                        ModelGenerationHudState.ActivityEventType.THOUGHT_SUMMARY,
+                        summary
+                );
+            }
         }
 
         private void submitGeneration() {
@@ -678,9 +760,11 @@ public final class LocalModelService {
             }
             this.providerRoundCount++;
             int maximumRounds = this.mode == RequestMode.AUTOMATION
-                    ? this.thinking.maximumProviderRounds()
+                    ? Integer.MAX_VALUE
                     : this.conversationalThinking.maximumProviderRounds();
-            if (this.providerRoundCount > maximumRounds && !this.finalizationRequested.get()) {
+            if (this.formattingCorrectionActive) maximumRounds++;
+            if (this.mode != RequestMode.AUTOMATION
+                    && this.providerRoundCount > maximumRounds && !this.finalizationRequested.get()) {
                 fail(
                         "model_reasoning_loop",
                         "The model exceeded the bounded planning-round budget without reaching a final result.",
@@ -691,6 +775,7 @@ public final class LocalModelService {
             UUID providerRequestId = UUID.randomUUID();
             this.activeProviderRoundId.set(providerRequestId);
             boolean streamUserFacingVoice = this.mode == RequestMode.ASK
+                    || this.mode == RequestMode.AUTOMATION
                     || this.mode == RequestMode.ASK_DEEP
                     && (this.finalizationRequested.get()
                     || this.deepThought != null
@@ -700,7 +785,17 @@ public final class LocalModelService {
                     ? ModelVoiceService.beginStreaming()
                     : null;
             ModelGenerationHudState.replaceText(this.displayId, "");
-            List<ModelToolDefinition> requestTools = this.mode == RequestMode.AUTOMATION
+            boolean directVerifiedResult = !this.formattingCorrectionActive
+                    && AutomationToolCallLatencyPolicy.useDirectVerifiedResultRound(
+                            this.directToolDecisionSession,
+                            this.toolResultsReceived,
+                            this.successfulActionToolOutputs,
+                            this.objectiveLedger.allCompleted(),
+                            this.validatedPlan != null
+                    );
+            List<ModelToolDefinition> requestTools = this.formattingCorrectionActive || directVerifiedResult
+                    ? List.of()
+                    : this.mode == RequestMode.AUTOMATION
                     ? LocalModelToolCatalog.toolsForRound(
                             this.prompt,
                             this.thinking.includePlanTool(),
@@ -709,12 +804,43 @@ public final class LocalModelService {
                     )
                     : this.mode == RequestMode.ASK_DEEP && !this.finalizationRequested.get()
                     ? this.tools
+                    : this.mode == RequestMode.ASK && !this.groundedAskFinalizing
+                    ? this.tools
                     : List.of();
             if (this.mode == RequestMode.AUTOMATION && this.capabilityProfile.stagedExecution()) {
                 requestTools = limitToolsForProfile(requestTools, remainingRequiredToolIds(),
                         this.capabilityProfile.maximumRecommendedToolsPerRound());
             }
-            String promptContract = systemPrompt(this.mode, !requestTools.isEmpty(), this.thinking);
+            AutomationToolCallLatencyPolicy.Decision latencyDecision = this.mode == RequestMode.AUTOMATION
+                    ? AutomationToolCallLatencyPolicy.evaluate(
+                            this.prompt,
+                            this.thinking,
+                            this.requiredToolIds,
+                            requestTools,
+                            AutomationModeController.isPlanningModeEnabled(),
+                            this.providerRoundCount == 1 && !this.finalizationRequested.get()
+                    )
+                    : null;
+            boolean directToolDecision = latencyDecision != null && latencyDecision.directToolDecision();
+            if (directToolDecision) this.directToolDecisionSession = true;
+            String promptContract = directVerifiedResult
+                    ? LocalModelSystemPrompt.directAutomationResultPrompt()
+                    : directToolDecision
+                    ? LocalModelSystemPrompt.directAutomationToolPrompt()
+                    + "\n\n"
+                    + LocalModelAutomationPrompt.directActionRules(
+                            AutomationModeController.isUnrestrictedMode(),
+                            ModelExperimentalFeatures.snapshot().noFailEnabled(),
+                            AutomationModeController.isVerificationEnabled()
+                    )
+                    : this.mode == RequestMode.ASK
+                    && this.conversationalThinking.depth() == ConversationalReasoningPolicy.Depth.DIRECT
+                    ? LocalModelSystemPrompt.directConversationPrompt()
+                    : systemPrompt(this.mode, !requestTools.isEmpty(), this.thinking);
+            String informationPolicy = ModelInformationRetrievalPolicy.promptFor(requestTools);
+            if (!informationPolicy.isBlank()) {
+                promptContract += "\n\n" + informationPolicy;
+            }
             if (this.finalizationRequested.get()) {
                 promptContract += "\nAnswer Now is active. Produce one complete user-facing answer from the verified work already available. Do not begin optional analysis or a new tool action.";
             }
@@ -729,10 +855,38 @@ public final class LocalModelService {
             if (this.mode == RequestMode.AUTOMATION && (this.toolResultsReceived > 0 || this.validatedPlan != null)) {
                 promptContract += "\n\n" + this.durableState.promptSummary();
             }
-            List<ModelMessage> requestMessages = new ArrayList<>(this.conversation.snapshotWithin(
-                    conversationMessageBudget(this.mode),
-                    conversationCharacterBudget(this.mode)
-            ));
+            if (this.mode == RequestMode.AUTOMATION
+                    && !directToolDecision
+                    && !directVerifiedResult
+                    && ModelExperimentalFeatures.snapshot().noFailEnabled()
+                    && !this.finalizationRequested.get()) {
+                promptContract += """
+
+
+                        No-Fail experiment is active for this Automation request. Continue through the registered tool loop until a validated successful tool output satisfies every known objective. A failed, blocked, partial, missing, unsupported, or unchanged result is evidence for a changed tool, changed arguments, a new observation, or a re-plan; it is not permission to claim completion. Verification, when enabled, must pass before a completed output counts. Never bypass approval or Minecraft permissions, never substitute a different target, never repeat an identical call against unchanged evidence, and always honor explicit Stop/cancellation.
+                        """;
+            }
+            if (!directToolDecision
+                    && ModelExperimentalFeatures.snapshot().expertPrefetchEnabled()
+                    && this.providerRoundCount == 1) {
+                promptContract += "\n\n" + ModelExpertPrefetch.capture();
+            }
+            if (!directToolDecision && !directVerifiedResult
+                    && ModelExperimentalFeatures.snapshot().persistentAssociativeMemory()) {
+                String memory = ModelAssociativeMemory.relevantContext(this.prompt);
+                if (!memory.isBlank()) {
+                    promptContract += "\n\nRelevant associative memory (prior final exchanges; verify against current state):\n" + memory;
+                }
+            }
+            List<ModelMessage> requestMessages = new ArrayList<>(directVerifiedResult
+                    ? this.conversation.snapshotWithin(3, 8 * 1024)
+                    : directToolDecision
+                    && latencyDecision.freshConversationWindow()
+                    ? List.of()
+                    : this.conversation.snapshotWithin(
+                            conversationMessageBudget(this.mode),
+                            conversationCharacterBudget(this.mode)
+                    ));
             if (!this.dispatched.get()) requestMessages.add(ModelMessage.user(this.prompt));
             requestMessages = List.copyOf(requestMessages);
             int requestContextCharacters = requestMessages.stream()
@@ -744,6 +898,8 @@ public final class LocalModelService {
                             + " | system_chars=" + promptContract.length()
                             + " | history_chars=" + requestContextCharacters
                             + " | tools=" + requestTools.size()
+                            + " | latency_path=" + (directToolDecision ? "direct_tool"
+                            : directVerifiedResult ? "direct_result" : "full_agent")
             );
             StreamingModelRequest request = new StreamingModelRequest(
                     providerRequestId,
@@ -752,7 +908,11 @@ public final class LocalModelService {
                     requestMessages,
                     this.finalizationRequested.get() ? List.of() : requestTools,
                     this.mode == RequestMode.AUTOMATION
-                            ? (this.capabilityProfile.stagedExecution() ? 768 : 1280)
+                            ? directToolDecision
+                            ? latencyDecision.maximumOutputTokens()
+                            : directVerifiedResult
+                            ? 192
+                            : (this.capabilityProfile.stagedExecution() ? 768 : 1280)
                             : this.conversationalThinking.maximumOutputTokens(),
                     configuration.requestTimeout(),
                     Map.of(
@@ -769,7 +929,9 @@ public final class LocalModelService {
                             "reasoning_depth", this.mode == RequestMode.AUTOMATION
                                     ? this.thinking.depth().name().toLowerCase(java.util.Locale.ROOT)
                                     : this.conversationalThinking.depth().name().toLowerCase(java.util.Locale.ROOT),
-                            "staged_execution", Boolean.toString(this.capabilityProfile.stagedExecution())
+                            "staged_execution", Boolean.toString(this.capabilityProfile.stagedExecution()),
+                            "latency_path", directToolDecision ? "direct_tool"
+                                    : directVerifiedResult ? "direct_result" : "full_agent"
                     )
             );
             ManagedModelRequest managed = runtime.submit(request, new StreamingModelObserver() {
@@ -913,6 +1075,7 @@ public final class LocalModelService {
         }
 
         private int conversationMessageBudget(RequestMode requestMode) {
+            if (ModelExperimentalFeatures.snapshot().gigatokenEnabled()) return 48;
             if (requestMode == RequestMode.AUTOMATION) {
                 return 20;
             }
@@ -939,6 +1102,7 @@ public final class LocalModelService {
         }
 
         private int conversationCharacterBudget(RequestMode requestMode) {
+            if (ModelExperimentalFeatures.snapshot().gigatokenEnabled()) return 64 * 1024;
             double parameters = selectedModelParametersBillions();
             if (parameters <= 3.5D) {
                 return requestMode == RequestMode.AUTOMATION ? 16 * 1024 : 12 * 1024;
@@ -954,7 +1118,10 @@ public final class LocalModelService {
                 return;
             }
             if (response != null && response.text().isBlank() && response.toolCalls().isEmpty()) {
-                if (this.emptyResponseCorrections++ < 2) {
+                if (noFailExecutionRequired()) {
+                    this.emptyResponseCorrections++;
+                    continueNoFail("empty_provider_response", "");
+                } else if (this.emptyResponseCorrections++ < 2) {
                     this.conversation.add(ModelMessage.user(
                             "The provider returned no visible answer or tool call. Return one concise non-empty answer, "
                                     + "or one valid supported tool call if this mode permits tools."
@@ -969,11 +1136,16 @@ public final class LocalModelService {
             String responseFingerprint = responseFingerprint(response);
             int repeatedResponse = this.repeatedResponses.merge(responseFingerprint, 1, Integer::sum);
             if (repeatedResponse > MAXIMUM_IDENTICAL_RESPONSES) {
-                fail(
-                        "model_reasoning_loop",
-                        "The model repeated the same planning response without making progress.",
-                        null
-                );
+                if (noFailExecutionRequired()) {
+                    this.repeatedResponses.clear();
+                    continueNoFail("identical_model_response", "");
+                } else {
+                    fail(
+                            "model_reasoning_loop",
+                            "The model repeated the same planning response without making progress.",
+                            null
+                    );
+                }
                 return;
             }
             LocalModelRuntimeLog.write(
@@ -988,6 +1160,10 @@ public final class LocalModelService {
                 return;
             }
             if (this.mode != RequestMode.AUTOMATION) {
+                if (!response.toolCalls().isEmpty()) {
+                    handleGroundedAskToolCalls(response.text(), response.toolCalls());
+                    return;
+                }
                 validateAskCommandResponse(this.prompt, response.text()).whenComplete((validation, failure) -> {
                     if (this.terminal.get()) {
                         return;
@@ -1055,11 +1231,115 @@ public final class LocalModelService {
             }
             boolean freshApprovalRequired = response.toolCalls().stream()
                     .anyMatch(call -> LocalModelToolCatalog.requiresFreshApproval(call.toolId()));
-            if (freshApprovalRequired && !AutomationModeController.isYoloMode()) {
+            if (freshApprovalRequired && !AutomationModeController.isUnrestrictedMode()) {
                 requestToolBatchApproval(response.text(), response.toolCalls());
                 return;
             }
             handleToolCalls(response.text(), response.toolCalls(), 0, false);
+        }
+
+        private void handleGroundedAskToolCalls(String assistantText, List<ModelToolCall> calls) {
+            if (this.tools.isEmpty() || this.groundedAskFinalizing) {
+                fail("ask_tool_boundary", "Normal /ask attempted a tool outside its read-only evidence boundary.", null);
+                return;
+            }
+            if (calls == null || calls.isEmpty()) {
+                submitGeneration();
+                return;
+            }
+            if (calls.size() != 1) {
+                if (this.groundedAskCorrectionCount++ >= 1) {
+                    fail("ask_tool_batch", "Grounded /ask repeatedly requested multiple lookups instead of one staged decision.", null);
+                    return;
+                }
+                archiveVisibleSummary(assistantText);
+                this.conversation.add(ModelMessage.assistant(assistantText));
+                this.conversation.add(ModelMessage.user(
+                        "Use exactly one supplied read-only Minecraft lookup for the next decision. Do not batch calls and do not perform an action."
+                ));
+                ModelGenerationHudState.state(this.displayId, ModelRequestState.RETRYING, "staging one knowledge lookup");
+                submitGeneration();
+                return;
+            }
+            ModelToolCall call = calls.get(0);
+            boolean supplied = this.tools.stream().anyMatch(tool -> tool.id().equals(call.toolId()));
+            if (!supplied || !DeepThoughtReadOnlyToolCoordinator.supports(call.toolId())) {
+                fail("ask_tool_boundary", "Grounded /ask requested an unsupported or side-effecting tool: " + call.toolId(), null);
+                return;
+            }
+            String signature = call.toolId() + ":" + call.arguments();
+            if (this.repeatedCalls.merge(signature, 1, Integer::sum) > 1) {
+                fail("repeated_tool_loop", "Grounded /ask repeated the identical read-only lookup without a new observation.", null);
+                return;
+            }
+            if (this.groundedAskToolRounds >= 8) {
+                this.groundedAskFinalizing = true;
+                this.conversation.add(ModelMessage.user(
+                        "The read-only evidence budget is exhausted. Give one compact honest answer from the evidence already returned."
+                ));
+                submitGeneration();
+                return;
+            }
+            this.groundedAskToolRounds++;
+            this.toolCallCount++;
+            ModelGenerationHudState.toolCallCount(this.displayId, this.toolCallCount);
+            archiveVisibleSummary(assistantText);
+            this.conversation.add(ModelMessage.assistantToolCall(assistantText, call));
+            ModelGenerationHudState.toolProgress(this.displayId, 1, 1, call.toolId(), toolActivityDetail(call));
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.INSPECTING, call.toolId());
+            com.google.gson.JsonObject eventData = new com.google.gson.JsonObject();
+            eventData.addProperty("toolId", call.toolId());
+            eventData.add("arguments", call.arguments());
+            ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
+                    this.displayId,
+                    this.displayId.toString(),
+                    "grounded-tool-" + call.id(),
+                    ModelExecutionEvent.Type.TOOL_STARTED,
+                    ModelRequestState.INSPECTING,
+                    ModelActivityState.INSPECTING,
+                    groundedActivitySummary(call),
+                    eventData,
+                    System.currentTimeMillis()
+            ));
+            DeepThoughtReadOnlyToolCoordinator.execute(call).whenComplete((result, failure) -> {
+                if (this.terminal.get()) return;
+                ModelToolResult resolved = failure == null ? result : new ModelToolResult(
+                        call.id(), call.toolId(), "failed", new com.google.gson.JsonObject(),
+                        "knowledge_lookup_failed", message(failure)
+                );
+                this.toolResultsReceived++;
+                recordToolResult(resolved);
+                boolean terminalEvidence = terminalGroundedEvidence(resolved);
+                this.groundedAskFinalizing = terminalEvidence || this.groundedAskToolRounds >= 8;
+                String instruction = terminalEvidence
+                        ? "The read-only source returned an authoritative terminal result. Do not retry, substitute, or invent a nearby target. Give one compact honest answer preserving the exact requested identifier and evidence."
+                        : "Use the exact structured evidence above. Give the compact final answer now, or make one changed read-only lookup only if a specific unanswered fact is necessary. Never claim an action occurred.";
+                this.conversation.add(ModelMessage.user(instruction));
+                ModelGenerationHudState.state(this.displayId, ModelRequestState.OBSERVING_RESULT,
+                        terminalEvidence ? "authoritative evidence received" : "grounded evidence received");
+                submitGeneration();
+            });
+        }
+
+        private static String groundedActivitySummary(ModelToolCall call) {
+            if (MinecraftKnowledgeModelToolRegistry.COMMAND_TOOL_ID.equals(call.toolId())) {
+                return "Checking active command syntax";
+            }
+            if (call.toolId().startsWith("internet.")) return "Researching public information";
+            if (call.toolId().startsWith("workspace.")) return "Reading workspace evidence";
+            String name = ModelToolCallPresentation.toolName(call.toolId());
+            return "Inspecting " + Character.toLowerCase(name.charAt(0)) + name.substring(1);
+        }
+
+        private static boolean terminalGroundedEvidence(ModelToolResult result) {
+            if (result == null) return true;
+            String status = result.status().toLowerCase(java.util.Locale.ROOT);
+            String code = result.failureCode().toLowerCase(java.util.Locale.ROOT);
+            String detail = result.detail().toLowerCase(java.util.Locale.ROOT);
+            return !result.retryable() && (status.equals("unsupported")
+                    || code.contains("not_found") || detail.contains("not found")
+                    || code.contains("unsupported") || code.contains("permission")
+                    || code.contains("impossible") || code.startsWith("unknown_"));
         }
 
         private void handleDeepThoughtResponse(StreamingModelResponse response) {
@@ -1106,22 +1386,11 @@ public final class LocalModelService {
                         "deep_thought_tool_failed", message(failure)
                 );
                 recordToolResult(resolved);
-                ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
-                        this.displayId, this.deepThought.session().deepThoughtSessionId,
-                        "event-" + UUID.randomUUID(), ModelExecutionEvent.Type.TOOL_RESULT,
-                        ModelRequestState.OBSERVING_RESULT,
-                        resolved.status() + " — " + abbreviate(resolved.detail(), 300),
-                        resolved.output(), System.currentTimeMillis()
-                ));
                 handleDeepThoughtToolCalls("", calls, index + 1);
             });
         }
 
         private void validateAndReviewPlan(String assistantText, ModelToolCall planCall) {
-            if (this.toolCallCount >= this.thinking.maximumToolCalls()) {
-                fail("tool_call_budget_exceeded", "The model exceeded the tool-call budget while planning.", null);
-                return;
-            }
             this.toolCallCount++;
             ModelGenerationHudState.toolCallCount(this.displayId, this.toolCallCount);
             this.conversation.add(ModelMessage.assistantToolCall(assistantText, planCall));
@@ -1175,16 +1444,20 @@ public final class LocalModelService {
                 return;
             }
             StringBuilder message = new StringBuilder()
-                    .append("Plan ").append(plan.id()).append("\n")
-                    .append(plan.objective()).append("\n\n");
+                    .append("§5Plan §f").append(plan.id()).append("§r | ").append(plan.objective()).append('\n');
             for (ValidatedAutomationPlan.Step step : plan.steps()) {
-                message.append(step.index()).append(". ").append(step.toolId());
-                if (!step.reason().isBlank()) {
-                    message.append(" — ").append(step.reason());
+                ModelToolCall call = step.asToolCall(plan.id());
+                message.append("- §fStep ").append(step.index()).append('/').append(plan.steps().size())
+                        .append(": ").append(ModelToolCallPresentation.toolName(step.toolId())).append("§r\n");
+                String arguments = ModelToolCallPresentation.arguments(call.arguments());
+                if (!arguments.isBlank()) {
+                    message.append("-# §7").append(arguments).append("§r\n");
                 }
-                message.append('\n');
+                if (!step.reason().isBlank()) {
+                    message.append("-# §7Why: ").append(step.reason()).append("§r\n");
+                }
             }
-            message.append("\nApproval authorizes only these exact validated steps. "
+            message.append("-# §8Approval authorizes only these exact validated steps. "
                     + "Changed or additional side effects require another reviewed plan.");
             ModelGenerationHudState.state(this.displayId, ModelRequestState.WAITING_FOR_PLAN_APPROVAL, "plan review");
             ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
@@ -1273,10 +1546,6 @@ public final class LocalModelService {
                 fail("cancelled", this.cancellation.cancellationReason(), null);
                 return;
             }
-            if (this.toolCallCount >= this.thinking.maximumToolCalls()) {
-                fail("tool_call_budget_exceeded", "The approved plan exceeds the remaining tool-call budget.", null);
-                return;
-            }
             ValidatedAutomationPlan.Step step = plan.steps().get(position);
             ModelToolCall call = step.asToolCall(plan.id());
             if (this.planAuthorization == null
@@ -1289,6 +1558,7 @@ public final class LocalModelService {
                 return;
             }
             this.toolCallCount++;
+            this.actionToolAttempted |= isActionTool(step.toolId());
             ModelGenerationHudState.toolCallCount(this.displayId, this.toolCallCount);
             ModelGenerationHudState.toolProgress(
                     this.displayId,
@@ -1303,11 +1573,19 @@ public final class LocalModelService {
                     ModelGenerationHudState.PlanStepStatus.ACTIVE,
                     ""
             );
-            ModelGenerationHudState.appendEvent(
+            com.google.gson.JsonObject toolEventData = new com.google.gson.JsonObject();
+            toolEventData.addProperty("toolId", call.toolId());
+            toolEventData.add("arguments", call.arguments());
+            ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
                     this.displayId,
-                    ModelGenerationHudState.ActivityEventType.TOOL_START,
-                    "Step " + step.index() + "/" + plan.steps().size() + ": " + readableToolName(step.toolId())
-            );
+                    plan.id(),
+                    "tool-" + call.id(),
+                    ModelExecutionEvent.Type.TOOL_STARTED,
+                    ModelRequestState.EXECUTING_TOOL,
+                    stepLabel(step.index(), plan.steps().size(), step.toolId()),
+                    toolEventData,
+                    System.currentTimeMillis()
+            ));
             this.conversation.add(ModelMessage.assistantToolCall("", call));
             ModelGenerationHudState.state(this.displayId, ModelRequestState.EXECUTING_TOOL, step.toolId());
             AutomationModeController.executing("tool: " + step.toolId());
@@ -1319,23 +1597,29 @@ public final class LocalModelService {
                         }
                         this.toolResultsReceived++;
                         recordToolResult(result);
-                        boolean successful = result.completedAndValidated();
+                        boolean successful = toolSatisfied(result);
                         if (successful) {
                             this.completedToolIds.add(step.toolId());
+                            recordSuccessfulToolOutput(step.toolId(), result);
                             ModelGenerationHudState.updatePlanStep(
                                     this.displayId,
                                     step.index(),
                                     ModelGenerationHudState.PlanStepStatus.COMPLETED,
                                     result.status()
                             );
-                            ModelGenerationHudState.appendEvent(
-                                    this.displayId,
-                                    ModelGenerationHudState.ActivityEventType.RESULT,
-                                    "Step " + step.index() + " " + result.status()
-                                            + (result.detail().isBlank() ? "" : ": " + abbreviate(result.detail(), 300))
-                            );
                             executeApprovedPlanStep(position + 1);
                         } else {
+                            if (terminalToolFailure(result)) {
+                                ModelGenerationHudState.updatePlanStep(
+                                        this.displayId,
+                                        step.index(),
+                                        ModelGenerationHudState.PlanStepStatus.BLOCKED,
+                                        result.detail()
+                                );
+                                AutomationModeController.setPlanningActive(false);
+                                complete(terminalFailureMessage(result));
+                                return;
+                            }
                             handleApprovedPlanFailure(step, result, result.detail());
                         }
                     });
@@ -1350,8 +1634,7 @@ public final class LocalModelService {
             String safeDetail = detail == null || detail.isBlank()
                     ? result == null ? "step failed" : result.status()
                     : detail;
-            String evidenceFingerprint = step.id() + "|" + (result == null ? "exception" : result.status()
-                    + "|" + result.failureCode() + "|" + result.output());
+            String evidenceFingerprint = step.id() + "|" + resultProgressFingerprint(result);
             if (evidenceFingerprint.equals(this.lastReplanEvidenceFingerprint)) {
                 AutomationModeController.setPlanningActive(false);
                 complete("The plan stopped because the same failure produced no new evidence. No replacement action was executed.");
@@ -1377,11 +1660,6 @@ public final class LocalModelService {
                     ModelGenerationHudState.ActivityEventType.FAILURE,
                     "Step " + step.index() + " failed: " + abbreviate(safeDetail, 300)
             );
-            if (this.planRevisionCount >= 2) {
-                AutomationModeController.setPlanningActive(false);
-                complete("The approved plan stopped after a failed step. No unsupported replacement action was run.");
-                return;
-            }
             this.planRevisionCount++;
             ModelGenerationHudState.markPlanRevised(this.displayId);
             ModelGenerationHudState.appendEvent(
@@ -1446,24 +1724,19 @@ public final class LocalModelService {
         }
 
         private void requestToolBatchApproval(String assistantText, List<ModelToolCall> calls) {
-            int remainingBudget = this.thinking.maximumToolCalls() - this.toolCallCount;
-            if (calls.size() > remainingBudget) {
-                fail("tool_call_budget_exceeded", "The model requested more actions than the remaining tool-call budget.", null);
-                return;
-            }
-            StringBuilder message = new StringBuilder()
-                    .append(calls.size() == 1
-                            ? "The model requested this action:\n"
-                            : "The model requested these " + calls.size() + " actions:\n");
-            for (ModelToolCall call : calls) {
-                message.append("- ").append(call.toolId());
-                String arguments = call.arguments().toString();
-                if (!arguments.equals("{}")) {
-                    message.append(" ").append(abbreviate(arguments, 220));
+            StringBuilder message = new StringBuilder(calls.size() == 1
+                    ? "§fThe model is asking to run this action:§r\n"
+                    : "§fThe model is asking to run these " + calls.size() + " actions:§r\n");
+            for (int index = 0; index < calls.size(); index++) {
+                ModelToolCall call = calls.get(index);
+                message.append("- §f").append(calls.size() == 1 ? "" : (index + 1) + ". ")
+                        .append(ModelToolCallPresentation.toolName(call.toolId())).append("§r\n");
+                String arguments = ModelToolCallPresentation.arguments(call.arguments());
+                if (!arguments.isBlank()) {
+                    message.append("-# §7").append(arguments).append("§r\n");
                 }
-                message.append('\n');
             }
-            message.append("\nThis approval applies only to this request. Later actions ask again.");
+            message.append("-# §8This approval applies only to the actions shown here. Later actions ask again.§r");
             ModelGenerationHudState.state(this.displayId, ModelRequestState.WAITING_FOR_ACTION_APPROVAL, "approval");
             ModelGenerationHudState.requestApproval(
                             this.displayId,
@@ -1517,17 +1790,22 @@ public final class LocalModelService {
                 return;
             }
             ModelToolCall call = calls.get(index);
-            if (this.toolCallCount >= this.thinking.maximumToolCalls()) {
-                fail("tool_call_budget_exceeded", "The model exceeded the tool-call budget.", null);
-                return;
-            }
-            String signature = call.toolId() + ":" + call.arguments();
-            int repeated = this.repeatedCalls.merge(signature, 1, Integer::sum);
-            if (repeated > MAXIMUM_IDENTICAL_CALLS) {
-                fail("repeated_tool_loop", "The model repeated the same automation tool call without making progress.", null);
+            AutomationProgressGuard.Decision progressDecision = this.automationProgress.before(call);
+            if (!progressDecision.allowed()) {
+                if (noFailExecutionRequired()) {
+                    this.conversation.add(ModelMessage.assistantToolCall(index == 0 ? assistantText : "", call));
+                    recordToolResult(new ModelToolResult(
+                            call.id(), call.toolId(), "rejected", new com.google.gson.JsonObject(),
+                            "no_progress", "Identical action rejected against unchanged observation: " + progressDecision.reason()
+                    ));
+                    continueNoFail("identical_tool_call_without_new_observation", "");
+                } else {
+                    fail("repeated_tool_loop", "The same automation action produced no new observation: " + progressDecision.reason(), null);
+                }
                 return;
             }
             this.toolCallCount++;
+            this.actionToolAttempted |= isActionTool(call.toolId());
             ModelGenerationHudState.toolCallCount(this.displayId, this.toolCallCount);
             ModelGenerationHudState.toolProgress(
                     this.displayId,
@@ -1538,11 +1816,19 @@ public final class LocalModelService {
             );
             this.conversation.add(ModelMessage.assistantToolCall(index == 0 ? assistantText : "", call));
             ModelGenerationHudState.state(this.displayId, ModelRequestState.EXECUTING_TOOL, call.toolId());
-            ModelGenerationHudState.appendEvent(
+            com.google.gson.JsonObject toolEventData = new com.google.gson.JsonObject();
+            toolEventData.addProperty("toolId", call.toolId());
+            toolEventData.add("arguments", call.arguments());
+            ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
                     this.displayId,
-                    ModelGenerationHudState.ActivityEventType.TOOL_START,
-                    "Step " + (index + 1) + "/" + calls.size() + ": " + readableToolName(call.toolId())
-            );
+                    this.validatedPlan == null ? this.displayId.toString() : this.validatedPlan.id(),
+                    "tool-" + call.id(),
+                    ModelExecutionEvent.Type.TOOL_STARTED,
+                    ModelRequestState.EXECUTING_TOOL,
+                    stepLabel(index + 1, calls.size(), call.toolId()),
+                    toolEventData,
+                    System.currentTimeMillis()
+            ));
             AutomationModeController.executing("tool: " + call.toolId());
             LocalModelRuntimeLog.write(
                     "tool_start",
@@ -1550,7 +1836,18 @@ public final class LocalModelService {
             );
             AutomationToolCoordinator.execute(this.displayId, call, preapproved).whenComplete((toolResult, failure) -> {
                 if (failure != null) {
-                    fail("tool_execution_failed", message(failure), failure);
+                    if (noFailExecutionRequired()) {
+                        ModelToolResult failedResult = new ModelToolResult(
+                                call.id(), call.toolId(), "failed", new com.google.gson.JsonObject(),
+                                "tool_execution_failed", message(failure)
+                        );
+                        this.toolResultsReceived++;
+                        recordToolResult(failedResult);
+                        this.automationProgress.record(call, failedResult);
+                        continueNoFail("tool_execution_failed", "");
+                    } else {
+                        fail("tool_execution_failed", message(failure), failure);
+                    }
                     return;
                 }
                 if (this.cancellation.isCancellationRequested()) {
@@ -1558,10 +1855,15 @@ public final class LocalModelService {
                     return;
                 }
                 this.toolResultsReceived++;
-                if (toolResult.completedAndValidated()) {
+                if (toolSatisfied(toolResult)) {
                     this.completedToolIds.add(call.toolId());
+                    recordSuccessfulToolOutput(call.toolId(), toolResult);
                 }
                 recordToolResult(toolResult);
+                AutomationProgressGuard.Observation progress = this.automationProgress.record(call, toolResult);
+                if (progress.newObservation() || progress.stateChanged()) {
+                    this.repeatedResponses.clear();
+                }
                 String resultDetail = toolResult.status();
                 if (!toolResult.failureCode().isBlank()) {
                     resultDetail += " | " + toolResult.failureCode();
@@ -1574,16 +1876,6 @@ public final class LocalModelService {
                         ModelRequestState.WAITING_FOR_TOOL_RESULT,
                         resultDetail
                 );
-                ModelGenerationHudState.appendEvent(
-                        this.displayId,
-                        "failed".equals(toolResult.status())
-                                ? ModelGenerationHudState.ActivityEventType.FAILURE
-                                : ModelGenerationHudState.ActivityEventType.RESULT,
-                        toolResult.status()
-                                + (toolResult.detail().isBlank()
-                                ? ""
-                                : " — " + abbreviate(toolResult.detail(), 360))
-                );
                 LocalModelRuntimeLog.write(
                         "tool_result",
                         this.displayId
@@ -1594,9 +1886,17 @@ public final class LocalModelService {
                                 ? ""
                                 : " | failure=" + toolResult.failureCode())
                 );
-                if (toolResult.completedAndValidated()) {
+                if (toolSatisfied(toolResult)) {
                     handleToolCalls("", calls, index + 1, preapproved);
                 } else {
+                    if (terminalToolFailure(toolResult)) {
+                        if (noFailExecutionRequired()) {
+                            continueNoFail("terminal_tool_result_" + toolResult.failureCode(), "");
+                        } else {
+                            complete(terminalFailureMessage(toolResult));
+                        }
+                        return;
+                    }
                     this.conversation.add(ModelMessage.user(
                             "The previous tool did not produce validated completion. Status: "
                                     + toolResult.status() + "; failure: " + toolResult.failureCode()
@@ -1607,6 +1907,110 @@ public final class LocalModelService {
                     submitGeneration();
                 }
             });
+        }
+
+        private boolean terminalToolFailure(ModelToolResult result) {
+            if (result == null || result.retryable()) return false;
+            String code = result.failureCode().toLowerCase(java.util.Locale.ROOT);
+            return code.startsWith("unknown_")
+                    || code.contains("invalid_id")
+                    || code.contains("unsupported")
+                    || code.contains("permission");
+        }
+
+        private static boolean toolSatisfied(ModelToolResult result) {
+            return result != null && (result.completedAndValidated()
+                    || "already_satisfied".equalsIgnoreCase(result.status()));
+        }
+
+        private void recordSuccessfulToolOutput(String toolId, ModelToolResult result) {
+            if (!AutomationPlanModelToolRegistry.supports(toolId)
+                    && NoFailExecutionPolicy.accepts(
+                    result,
+                    AutomationModeController.isVerificationEnabled()
+            )) {
+                this.successfulToolOutputs++;
+                if (isActionTool(toolId)) {
+                    this.successfulActionToolOutputs++;
+                }
+            }
+        }
+
+        private static boolean isActionTool(String toolId) {
+            if (toolId == null || toolId.isBlank() || AutomationPlanModelToolRegistry.supports(toolId)) {
+                return false;
+            }
+            return LocalModelToolCatalog.automationModeTools().stream()
+                    .filter(definition -> toolId.equals(definition.id()))
+                    .findFirst()
+                    .map(definition -> definition.confirmationRequired() || !definition.sideEffects().isEmpty())
+                    .orElse(false);
+        }
+
+        private boolean noFailExecutionRequired() {
+            return this.mode == RequestMode.AUTOMATION
+                    && ModelExperimentalFeatures.snapshot().noFailEnabled()
+                    && !this.finalizationRequested.get()
+                    && (this.toolCallCount > 0 || !this.requiredToolIds.isEmpty() || this.validatedPlan != null);
+        }
+
+        private NoFailExecutionPolicy.Decision noFailDecision() {
+            return NoFailExecutionPolicy.evaluate(
+                    ModelExperimentalFeatures.snapshot().noFailEnabled() && !this.finalizationRequested.get(),
+                    this.mode == RequestMode.AUTOMATION,
+                    this.toolCallCount > 0 || !this.requiredToolIds.isEmpty() || this.validatedPlan != null,
+                    this.actionToolAttempted ? this.successfulActionToolOutputs : this.successfulToolOutputs,
+                    this.objectiveLedger.allCompleted()
+            );
+        }
+
+        private void continueNoFail(String reason, String assistantText) {
+            if (this.cancellation.isCancellationRequested()) {
+                fail("cancelled", this.cancellation.cancellationReason(), null);
+                return;
+            }
+            if (assistantText != null && !assistantText.isBlank()) {
+                archiveVisibleSummary(assistantText);
+                this.conversation.add(ModelMessage.assistant(assistantText));
+            }
+            String safeReason = reason == null || reason.isBlank() ? "validated_success_not_reached" : reason;
+            this.conversation.add(ModelMessage.user(
+                    "No-Fail remains active because " + safeReason.replace('_', ' ') + ". "
+                            + "Do not finalize or claim success. Inspect the latest structured result and current state, then call a changed supported tool or changed arguments that can advance the original objective. "
+                            + "An identical call against unchanged evidence is forbidden. Preserve the exact requested target and all approval/permission boundaries."
+                            + (AutomationModeController.isVerificationEnabled()
+                            ? " Verification is also active, so only passed objective evidence counts as success."
+                            : "")
+            ));
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.REPLANNING, safeReason);
+            AutomationCliViewModel.activeState("recovering", "", safeReason);
+            LocalModelRuntimeLog.write("no_fail_continue", this.displayId + " | " + safeReason);
+            submitGeneration();
+        }
+
+        private static String resultProgressFingerprint(ModelToolResult result) {
+            if (result == null) return "exception";
+            com.google.gson.JsonObject evidence = result.output();
+            if (evidence.has("structuredResult") && evidence.get("structuredResult").isJsonObject()) {
+                evidence = evidence.getAsJsonObject("structuredResult").deepCopy();
+                if (evidence.has("metrics") && evidence.get("metrics").isJsonObject()) {
+                    evidence.getAsJsonObject("metrics").remove("duration_ms");
+                    evidence.getAsJsonObject("metrics").remove("attempts");
+                }
+            }
+            return result.status() + '|' + result.failureCode() + '|' + evidence;
+        }
+
+        private String terminalFailureMessage(ModelToolResult result) {
+            String target = result.output().has("result.requested_target_id")
+                    ? result.output().get("result.requested_target_id").getAsString()
+                    : "the exact requested target";
+            if (result.failureCode().startsWith("unknown_")) {
+                return "I stopped without substituting another target because " + target
+                        + " does not exist in the active Minecraft registry.";
+            }
+            return "I stopped without running a replacement action. "
+                    + abbreviate(result.detail().isBlank() ? result.failureCode() : result.detail(), 500);
         }
 
         private void continueUnresolvedObjective(String assistantText) {
@@ -1770,7 +2174,10 @@ public final class LocalModelService {
         }
 
         private Set<String> remainingRequiredToolIds() {
-            return this.objectiveLedger.pendingToolIds();
+            return this.mode == RequestMode.AUTOMATION
+                    && ModelExperimentalFeatures.snapshot().noFailEnabled()
+                    ? this.objectiveLedger.incompleteToolIds()
+                    : this.objectiveLedger.pendingToolIds();
         }
 
         private void recordToolResult(ModelToolResult result) {
@@ -1778,18 +2185,47 @@ public final class LocalModelService {
             this.durableState.record(result);
             this.objectiveLedger.record(result);
             if (this.deepThought != null) this.deepThought.recordToolResult(result);
+            if (this.mode == RequestMode.AUTOMATION && AutomationModeController.isVerificationEnabled()) {
+                boolean verified = "completed".equals(result.status())
+                        && !"failed".equals(result.validationStatus());
+                com.google.gson.JsonObject validation = new com.google.gson.JsonObject();
+                validation.addProperty("toolId", result.toolId());
+                validation.addProperty("status", verified ? "passed" : "failed");
+                validation.addProperty("validationStatus", result.validationStatus());
+                validation.addProperty("failureCode", result.failureCode());
+                validation.addProperty("detail", result.detail());
+                ModelGenerationHudState.state(this.displayId, ModelRequestState.VALIDATING, result.toolId());
+                ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
+                        this.displayId,
+                        this.validatedPlan == null ? this.displayId.toString() : this.validatedPlan.id(),
+                        "validation-" + result.callId(),
+                        verified ? ModelExecutionEvent.Type.VALIDATION_PASSED : ModelExecutionEvent.Type.VALIDATION_FAILED,
+                        ModelRequestState.VALIDATING,
+                        (verified ? "Verified " : "Verification failed for ")
+                                + ModelToolCallPresentation.toolName(result.toolId()),
+                        validation,
+                        System.currentTimeMillis()
+                ));
+            }
             ModelExecutionEvent.Type type = result.toolId().startsWith("workspace.")
                     ? result.output().has("diffHunks") ? ModelExecutionEvent.Type.DIFF_PRODUCED : ModelExecutionEvent.Type.FILE_READ
                     : result.toolId().startsWith("development.") ? ModelExecutionEvent.Type.COMMAND_COMPLETED
                     : ModelExecutionEvent.Type.TOOL_RESULT;
+            com.google.gson.JsonObject evidence = result.output().deepCopy();
+            evidence.addProperty("toolId", result.toolId());
+            evidence.addProperty("status", result.status());
+            evidence.addProperty("detail", result.detail());
+            evidence.addProperty("failureCode", result.failureCode());
+            evidence.addProperty("validationStatus", result.validationStatus());
+            evidence.addProperty("retryable", result.retryable());
             ModelGenerationHudState.appendEvent(this.displayId, new ModelExecutionEvent(
                     this.displayId,
                     this.validatedPlan == null ? this.displayId.toString() : this.validatedPlan.id(),
                     "event-" + UUID.randomUUID(), type,
-                    result.completedAndValidated() ? ModelRequestState.OBSERVING_RESULT : ModelRequestState.RETRYING,
+                    toolSatisfied(result) ? ModelRequestState.OBSERVING_RESULT : ModelRequestState.RETRYING,
                     result.toolId() + " — " + result.status()
                             + (result.detail().isBlank() ? "" : ": " + abbreviate(result.detail(), 260)),
-                    result.output(), System.currentTimeMillis()
+                    evidence, System.currentTimeMillis()
             ));
         }
 
@@ -1836,12 +2272,34 @@ public final class LocalModelService {
         }
 
         private void complete(String text) {
+            NoFailExecutionPolicy.Decision noFail = noFailDecision();
+            if (!noFail.allowFinalization()) {
+                continueNoFail(noFail.reason(), text);
+                return;
+            }
             boolean voiceAlreadyStreamed = text != null && text.equals(this.streamedVoiceResponse.getAndSet(""));
-            RichChatModelOutputSanitizer.Result sanitized = RichChatModelOutputSanitizer.sanitize(text);
-            if (sanitized.text().isBlank()) {
+            RichChatModelFinalFormatValidator.Result formatted = RichChatModelFinalFormatValidator.validateAndRepair(text);
+            if (formatted.text().isBlank()) {
                 fail("empty_response", "The model generated no visible text.", null);
                 return;
             }
+            if (!formatted.valid()) {
+                if (this.finalFormattingCorrectionCount++ < 1) {
+                    this.formattingCorrectionActive = true;
+                    if (text != null && !text.isBlank()) this.conversation.add(ModelMessage.assistant(text));
+                    this.conversation.add(ModelMessage.user(
+                            "Correct only the final presentation in one compact response. Preserve every literal command argument, path, namespaced ID, and mathematical expression exactly. "
+                                    + String.join("; ", formatted.issues())
+                                    + ". Do not add a heading. Use $...$ or \\(...\\) inline and $$...$$ or \\[...\\] for block math. Commands must be validated masked suggestions and never code."
+                    ));
+                    ModelGenerationHudState.state(this.displayId, ModelRequestState.PREPARING_CONTEXT, "formatting final response");
+                    submitGeneration();
+                    return;
+                }
+                text = "§cBlocked§r: The model repeatedly returned an unsafe or unsupported final format. No command or formula was altered.";
+                formatted = RichChatModelFinalFormatValidator.validateAndRepair(text);
+            }
+            RichChatModelOutputSanitizer.Result sanitized = new RichChatModelOutputSanitizer.Result(formatted.text(), formatted.changed());
             if (!this.terminal.compareAndSet(false, true)) {
                 return;
             }
@@ -1854,7 +2312,19 @@ public final class LocalModelService {
                 this.deepThought.complete(sanitized.text());
             }
             this.conversation.add(ModelMessage.assistant(sanitized.text()));
+            if (ModelExperimentalFeatures.snapshot().persistentConversationHistory()) {
+                CompletableFuture.runAsync(() -> ModelConversationPersistence.save(CONVERSATIONS));
+            }
+            if (ModelExperimentalFeatures.snapshot().persistentAssociativeMemory()) {
+                String finalText = sanitized.text();
+                CompletableFuture.runAsync(() -> ModelAssociativeMemory.remember(this.prompt, finalText));
+            }
             ModelGenerationHudState.replaceText(this.displayId, sanitized.text());
+            ModelGenerationHudState.appendEvent(
+                    this.displayId,
+                    ModelGenerationHudState.ActivityEventType.RESULT,
+                    "Prepared the final user-facing response."
+            );
             ModelGenerationHudState.state(this.displayId, ModelRequestState.COMPLETED, "response added to chat");
             if (!voiceAlreadyStreamed) {
                 ModelVoiceService.speakFinalAnswer(sanitized.text());
@@ -1862,7 +2332,11 @@ public final class LocalModelService {
             MinecraftClient current = MinecraftClient.getInstance();
             if (current != null) {
                 current.execute(() -> {
-                    ModelChatMessageBridge.addToChat(current, sanitized.text());
+                    ModelChatMessageBridge.addToChat(
+                            current,
+                            sanitized.text(),
+                            ModelActivityPresentation.capture(ModelGenerationHudState.snapshot(this.displayId))
+                    );
                     ModelGenerationHudState.messagePresented(this.displayId);
                     if (this.deepThought != null) {
                         CompletableFuture.runAsync(this.deepThought::markFinalPresented);
@@ -1880,10 +2354,10 @@ public final class LocalModelService {
                 ModelGenerationHudState.appendEvent(
                         this.displayId,
                         ModelGenerationHudState.ActivityEventType.THOUGHT_SUMMARY,
-                        visiblePlanSummary(summary.text())
+                        firstPersonVisibleSummary(visiblePlanSummary(summary.text()))
                 );
                 if (this.deepThought != null && this.mode == RequestMode.AUTOMATION) {
-                    this.deepThought.acceptRoundSummary(visiblePlanSummary(summary.text()));
+                    this.deepThought.acceptRoundSummary(firstPersonVisibleSummary(visiblePlanSummary(summary.text())));
                 }
             }
             ModelGenerationHudState.replaceText(this.displayId, "");
@@ -1911,11 +2385,27 @@ public final class LocalModelService {
             return abbreviate(sentences[0], 260);
         }
 
+        private static String firstPersonVisibleSummary(String summary) {
+            String value = summary == null ? "" : summary.strip();
+            if (value.isBlank()) return "";
+            String lower = value.toLowerCase(java.util.Locale.ROOT);
+            if (lower.startsWith("i ") || lower.startsWith("i’m ") || lower.startsWith("i'm ")
+                    || lower.startsWith("i’ll ") || lower.startsWith("i'll ")) {
+                return value;
+            }
+            return "I’m considering: " + Character.toLowerCase(value.charAt(0)) + value.substring(1);
+        }
+
         private static String readableToolName(String toolId) {
             if (toolId == null || toolId.isBlank()) {
                 return "tool";
             }
             return toolId.replace('.', ' ').replace('_', ' ').strip();
+        }
+
+        private static String stepLabel(int index, int total, String toolId) {
+            String name = readableToolName(toolId);
+            return total > 1 ? "Step " + index + "/" + total + ": " + name : name;
         }
 
         private static String toolActivityDetail(ModelToolCall call) {

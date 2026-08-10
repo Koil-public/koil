@@ -1,0 +1,33 @@
+version: 2
+kind: task_template
+id: template.blocks_core_mine_relative_block
+template_id: blocks/core/mine_relative_block
+semantic_operation: sem.task.mine_block_count
+params: [target.id, target.selector, radius]
+metadata:
+  semantic_operations: [sem.task.mine_block_count]
+  target_kinds: [block]
+  required_params: [target.id, target.selector]
+  optional_params: [radius]
+  tags: [block, mine, relative, verify]
+  description: Mine one exact block below, above, or at the crosshair without unnecessary navigation
+  visibility: public
+  model_callable: true
+  resource_locks: [look, input, world]
+  side_effects: [changes_world_blocks]
+  timeout_ticks: 300
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.world.scan_target
+    params:
+      target.id: ${target.id}
+      target.kind: block
+      target.selector: ${target.selector}
+      radius: ${radius}
+  - type: run_primitive
+    action: cap.interaction.break_block_target
+    params:
+      target.id: ${target.id}
+  - type: return
+    label: done

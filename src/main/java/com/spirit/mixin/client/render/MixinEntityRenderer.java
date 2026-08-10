@@ -2,6 +2,7 @@ package com.spirit.mixin.client.render;
 
 import com.spirit.koil.api.model.presence.ModelPresenceLineGeometry;
 import com.spirit.koil.api.model.presence.ModelPresenceState;
+import com.spirit.koil.api.model.presence.ModelPresenceWorldLineStyle;
 import net.minecraft.client.render.entity.EntityRenderer;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
@@ -18,6 +19,7 @@ import net.minecraft.client.render.entity.EntityRenderDispatcher;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.entity.Entity;
 import net.minecraft.text.Text;
+import net.minecraft.world.LightType;
 import org.joml.Matrix4f;
 
 @Mixin(EntityRenderer.class)
@@ -40,6 +42,15 @@ public abstract class MixinEntityRenderer<T extends Entity> {
 
         TextRenderer textRenderer = getTextRenderer();
         int color = ModelPresenceState.colorFor(player);
+        int effectiveLight = ModelPresenceWorldLineStyle.effectiveLightLevel(
+                entity.getWorld().getLightLevel(LightType.BLOCK, entity.getBlockPos()),
+                entity.getWorld().getLightLevel(LightType.SKY, entity.getBlockPos()),
+                entity.getWorld().getTimeOfDay()
+        );
+        ModelPresenceWorldLineStyle.Colors colors = ModelPresenceWorldLineStyle.colors(
+                color,
+                effectiveLight
+        );
         int textWidth = textRenderer.getWidth(text);
         if (textWidth <= 0) {
             return;
@@ -57,6 +68,9 @@ public abstract class MixinEntityRenderer<T extends Entity> {
         matrices.multiply(this.dispatcher.getRotation());
         matrices.scale(-0.025F, -0.025F, 0.025F);
         matrices.translate(0.0F, 0.0F, 0.01F);
+        // Match vanilla nameplate visibility: the first pass is visible
+        // through terrain but deliberately dim; the normal pass restores the
+        // semantic color only when the nameplate is not occluded.
         drawUnderlineQuad(
                 matrices.peek().getPositionMatrix(),
                 vertexConsumers.getBuffer(RenderLayer.getTextBackgroundSeeThrough()),
@@ -64,7 +78,17 @@ public abstract class MixinEntityRenderer<T extends Entity> {
                 line.right(),
                 line.top(),
                 line.bottom(),
-                color,
+                colors.occludedArgb(),
+                light
+        );
+        drawUnderlineQuad(
+                matrices.peek().getPositionMatrix(),
+                vertexConsumers.getBuffer(RenderLayer.getTextBackground()),
+                line.left(),
+                line.right(),
+                line.top(),
+                line.bottom(),
+                colors.visibleArgb(),
                 light
         );
         matrices.pop();

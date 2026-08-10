@@ -3,7 +3,11 @@ package com.spirit.koil.api.automation.cli;
 import com.spirit.client.gui.console.ConsoleScreen;
 import com.spirit.koil.api.automation.feedback.AutomationFailureType;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackNode;
+import com.spirit.koil.api.automation.AutomationRuntimeStatus;
 import com.spirit.koil.api.console.ConsoleLevel;
+import com.spirit.koil.api.model.KoilLifetimeCounters;
+import com.spirit.koil.api.model.chat.ModelActivityTreeGlyphs;
+import com.spirit.koil.api.model.chat.ModelGenerationHudState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
@@ -13,28 +17,23 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public final class AutomationCliViewModel {
     private static final int MAX_ROWS = 900;
     private static final int COMPACT_TO_ROWS = 720;
     private static final long PERSIST_INTERVAL_NANOS = 40_000_000L;
-    private static final AtomicInteger SESSION_COUNTER = new AtomicInteger();
     private static final List<AutomationCliRow> ROWS = new ArrayList<>();
     private static final Map<String, Integer> ROW_INDEX = new LinkedHashMap<>();
     private static final Map<String, Integer> FRAME_DEPTHS = new LinkedHashMap<>();
     private static final Map<String, String> FRAME_TEMPLATES = new LinkedHashMap<>();
     private static final Map<String, String> FRAME_PARENTS = new LinkedHashMap<>();
-    private static String sessionId = "kts-00000";
+    private static String sessionId = "kes-00000";
     private static String mode = "AUTOMATION";
     private static String actor = "local_player";
     private static String detail = "DEBUG";
     private static int rowCounter;
     private static int frameDepth;
     private static long lastPersistNanos;
-    private static long lastCompactChatNanos;
-    private static String lastCompactChatLine = "";
-    private static String lastCompactChatState = "idle";
     private static String currentRuntimeState = "idle";
     private static String currentPrompt = "";
     private static boolean compactingRows;
@@ -47,7 +46,9 @@ public final class AutomationCliViewModel {
     }
 
     public static synchronized void beginSession(String rawInput, String actorOverride) {
-        sessionId = String.format("kts-%05d", SESSION_COUNTER.incrementAndGet());
+        KoilLifetimeCounters.Snapshot counters = KoilLifetimeCounters.automationSessionStarted();
+        sessionId = String.format("kes-%05d", counters.kes());
+        ModelGenerationHudState.refreshLifetimeCounters();
         mode = "AUTOMATION";
         actor = actorOverride == null || actorOverride.isBlank() ? currentActor() : actorOverride;
         detail = "DEBUG";
@@ -59,12 +60,10 @@ public final class AutomationCliViewModel {
         rowCounter = 0;
         frameDepth = 0;
         lastPersistNanos = 0L;
-        lastCompactChatNanos = 0L;
-        lastCompactChatLine = "";
-        lastCompactChatState = "idle";
         currentRuntimeState = "idle";
         currentPrompt = rawInput == null ? "" : rawInput;
         compactingRows = false;
+        AutomationRuntimeStatus.active("preparing", "waiting for the next executable action");
         upsert("header:mode", "header", "header", 0, "[info]", "mode", mode, true);
         upsert("header:actor", "header", "header", 0, "[info]", "actor", actor, true);
         upsert("header:session", "header", "header", 0, "[info]", "session", sessionId, true);
@@ -171,16 +170,16 @@ public final class AutomationCliViewModel {
     }
 
     public static synchronized void feedbackHelp() {
-        upsertDetailed("feedback:help", "feedback", "feedback_help", 1, "[info]", "feedback.commands", "/feedback good | /feedback bad | /feedback node <id> | /feedback type <id>", true,
+        upsertDetailed("feedback:help", "feedback", "feedback_help", 1, "[info]", "feedback.commands", "/automate feedback good | /automate feedback bad | /automate feedback node <id> | /automate feedback type <id>", true,
                 "", "structured command input", "", "deterministic feedback flow", "", "", "automation feedback");
-        publishFeedbackChatResult("Feedback commands", "/feedback good | /feedback bad", "header");
+        publishFeedbackChatResult("Feedback commands", "/automate feedback good | /automate feedback bad", "header");
         persist();
     }
 
     public static synchronized void feedbackNodeSelection(List<AutomationFeedbackNode> nodes) {
         hideRowsByPrefix("feedback:node:");
         hideRowsByPrefix("feedback:type:");
-        upsertDetailed("feedback:select-node:title", "feedback", "feedback_node_prompt", 0, "[branch]", "Select where it failed:", "use /feedback node <node_id>", true,
+        upsertDetailed("feedback:select-node:title", "feedback", "feedback_node_prompt", 0, "[branch]", "Select where it failed:", "use /automate feedback node <node_id>", true,
                 "executed node list", "runtime trace", "", "waiting for selected_node", "", "", "automation feedback");
         if (nodes == null || nodes.isEmpty()) {
             upsertDetailed("feedback:select-node:none", "feedback", "feedback_node_empty", 1, "[block]", "nodes", "no executable nodes in current trace", true,
@@ -194,7 +193,7 @@ public final class AutomationCliViewModel {
             String id = node.nodeId().isBlank() ? node.rowId() : node.nodeId();
             String value = "node_id=" + id + "  type=" + node.nodeType() + (node.source().isBlank() ? "" : "  source=" + node.source());
             upsertDetailed("feedback:node:" + sanitize(node.rowId().isBlank() ? id : node.rowId()), "feedback", "feedback_node_option", index, "[info]", node.label().isBlank() ? id : node.label(), value, true,
-                    node.label(), "click node or /feedback node " + id, "runtime trace row", "selected_node = " + id, "", "", node.source());
+                    node.label(), "click node or /automate feedback node " + id, "runtime trace row", "selected_node = " + id, "", "", node.source());
             index++;
         }
         publishFeedbackNodeChatPrompt(nodes);
@@ -205,7 +204,7 @@ public final class AutomationCliViewModel {
         hideRowsByPrefix("feedback:type:");
         String nodeId = node == null ? "" : (node.nodeId().isBlank() ? node.rowId() : node.nodeId());
         String nodeType = node == null ? "ui" : node.nodeType();
-        upsertDetailed("feedback:select-type:title", "feedback", "feedback_type_prompt", 0, "[branch]", "Select what went wrong:", "node=" + nodeId + "  type=" + nodeType + "  use /feedback type <failure_id>", true,
+        upsertDetailed("feedback:select-type:title", "feedback", "feedback_type_prompt", 0, "[branch]", "Select what went wrong:", "node=" + nodeId + "  type=" + nodeType + "  use /automate feedback type <failure_id>", true,
                 "failure type list", "selected_node = " + nodeId, "", "waiting for failure_type", "", "", "automation feedback");
         if (types == null || types.isEmpty()) {
             upsertDetailed("feedback:type:none", "feedback", "feedback_type_empty", 1, "[block]", "failure_types", "no registered failure types for " + nodeType, true,
@@ -245,7 +244,7 @@ public final class AutomationCliViewModel {
         hideRowsByPrefix("feedback:file:");
         hideRowsByPrefix("feedback:node:");
         hideRowsByPrefix("feedback:type:");
-        upsertDetailed("feedback:select-file:title", "feedback", "feedback_file_prompt", 0, "[branch]", "Select the KTL file:", "use /feedback file <file>", true,
+        upsertDetailed("feedback:select-file:title", "feedback", "feedback_file_prompt", 0, "[branch]", "Select the KTL file:", "use /automate feedback file <file>", true,
                 "executed ktl file list", "runtime trace sources", "", "waiting for selected_file", "", "", "automation feedback");
         if (files == null || files.isEmpty()) {
             upsertDetailed("feedback:file:none", "feedback", "feedback_file_empty", 1, "[block]", "files", "no KTL source files in current trace", true,
@@ -258,7 +257,7 @@ public final class AutomationCliViewModel {
         for (String file : files) {
             String clean = file == null || file.isBlank() ? "task root" : file;
             upsertDetailed("feedback:file:" + sanitize(clean), "feedback", "feedback_file_option", index, "[info]", index + ". " + shortSource(clean), clean, true,
-                    clean, "click file or /feedback file " + clean, "runtime trace source", "selected_file = " + clean, "", "", clean);
+                    clean, "click file or /automate feedback file " + clean, "runtime trace source", "selected_file = " + clean, "", "", clean);
             index++;
         }
         publishFeedbackFileChatPrompt(files);
@@ -273,11 +272,11 @@ public final class AutomationCliViewModel {
         String detailText = reason == null || reason.isBlank() ? "task finished" : reason;
         MutableText header = automationChatHeader();
         MutableText prompt = promptLine("Feedback: " + detailText + ". How did it do?");
-        MutableText active = Text.literal("click a button, or type /feedback good or /feedback bad").formatted(Formatting.DARK_GRAY);
+        MutableText active = Text.literal("│ └click a button, or type /automate feedback").formatted(Formatting.DARK_GRAY);
         List<AutomationChatHudState.Action> actions = List.of(
-                new AutomationChatHudState.Action("feedback.good", "[ ✓ Good ]", "/feedback good", "", "good"),
-                new AutomationChatHudState.Action("feedback.bad", "[ ✗ Bad ]", "/feedback bad", "", "bad"),
-                new AutomationChatHudState.Action("feedback.note", "[ Add Note ]", "/feedback note ", "", "feedback_note")
+                new AutomationChatHudState.Action("feedback.good", "Good", "/automate feedback good", "", "good"),
+                new AutomationChatHudState.Action("feedback.bad", "Bad", "/automate feedback bad", "", "bad"),
+                new AutomationChatHudState.Action("feedback.note", "Add Note", "/automate feedback note ", "", "feedback_note")
         );
         AutomationChatHudState.showHeader(header, prompt, active, "feedback_prompt", actions);
     }
@@ -296,12 +295,19 @@ public final class AutomationCliViewModel {
                 if (first.isBlank()) {
                     first = file;
                 }
-                actions.add(new AutomationChatHudState.Action("feedback.file." + i, trimButton((i + 1) + ". " + shortSource(file)), "/feedback file " + file, file, "file"));
+                actions.add(new AutomationChatHudState.Action(
+                        "feedback.file." + i,
+                        trimButton((i + 1) + ". " + shortSource(file)),
+                        "/automate feedback file " + file,
+                        file,
+                        "file",
+                        "KTL file: " + file + "\nSelect this executed source for feedback."
+                ));
             }
         }
         MutableText header = automationChatHeader();
         MutableText prompt = promptLine(files == null ? "Select the KTL file: 0 files" : "Select the KTL file: " + files.size() + " files ran");
-        MutableText active = Text.literal(first.isBlank() ? "type /feedback file <file>" : "pick one file; for two files, submit this one then choose Bad again").formatted(Formatting.DARK_GRAY);
+        MutableText active = Text.literal(first.isBlank() ? "type /automate feedback file <file>" : "pick one file; for two files, submit this one then choose Bad again").formatted(Formatting.DARK_GRAY);
         AutomationChatHudState.showHeader(header, prompt, active, "feedback_file_select", actions);
     }
 
@@ -321,12 +327,21 @@ public final class AutomationCliViewModel {
                     first = id;
                 }
                 String label = node.label().isBlank() ? id : node.label();
-                actions.add(new AutomationChatHudState.Action("feedback.node." + i, trimButton(label), "/feedback node " + id, id, "node"));
+                actions.add(new AutomationChatHudState.Action(
+                        "feedback.node." + i,
+                        trimButton(label),
+                        "/automate feedback node " + id,
+                        id,
+                        "node",
+                        feedbackNodeHover(node)
+                ));
             }
         }
         MutableText header = automationChatHeader();
         MutableText prompt = promptLine(nodes == null ? "Select where it failed: 0 nodes" : "Select where it failed: " + nodes.size() + " nodes");
-        MutableText active = Text.literal(first.isBlank() ? "type /feedback node <node_id>" : "click a node button, or type /feedback node " + first).formatted(Formatting.DARK_GRAY);
+        MutableText active = Text.literal(first.isBlank()
+                ? "type /automate feedback node <node_id>"
+                : "choose a summarized step; hover it for KTL source and execution data").formatted(Formatting.DARK_GRAY);
         AutomationChatHudState.showHeader(header, prompt, active, "feedback_node_select", actions);
     }
 
@@ -345,13 +360,58 @@ public final class AutomationCliViewModel {
                 if (first.isBlank()) {
                     first = type.id();
                 }
-                actions.add(new AutomationChatHudState.Action("feedback.type." + i, trimButton(type.label()), "/feedback type " + type.id(), type.id(), "failure"));
+                actions.add(new AutomationChatHudState.Action(
+                        "feedback.type." + i,
+                        trimButton(type.label()),
+                        "/automate feedback type " + type.id(),
+                        type.id(),
+                        "failure",
+                        feedbackTypeHover(node, type)
+                ));
             }
         }
         MutableText header = automationChatHeader();
-        MutableText prompt = promptLine(nodeId.isBlank() ? "Select what went wrong" : "Select what went wrong: " + nodeId);
-        MutableText active = Text.literal(first.isBlank() ? "type /feedback type <failure_id>" : "click a failure button, or type /feedback type " + first).formatted(Formatting.DARK_GRAY);
+        MutableText prompt = promptLine(nodeId.isBlank() ? "Select what went wrong" : "Select what went wrong for this step");
+        MutableText active = Text.literal(first.isBlank()
+                ? "type /automate feedback type <failure_id>"
+                : "choose the closest failure summary; hover it for matching and recovery data").formatted(Formatting.DARK_GRAY);
         AutomationChatHudState.showHeader(header, prompt, active, "feedback_type_select", actions);
+    }
+
+    private static String feedbackNodeHover(AutomationFeedbackNode node) {
+        if (node == null) return "Execution step";
+        List<String> lines = new ArrayList<>();
+        lines.add("Step: " + firstNonBlank(node.label(), node.shortNodeId(), "task root"));
+        if (!node.source().isBlank()) lines.add("KTL file: " + node.source());
+        if (!node.nodeType().isBlank()) lines.add("Type: " + node.nodeType());
+        if (!node.frameId().isBlank()) lines.add("Frame: " + node.frameId());
+        if (!node.inputs().isBlank()) lines.add("Inputs: " + node.inputs());
+        if (!node.value().isBlank()) lines.add("Observed: " + node.value());
+        return String.join("\n", lines);
+    }
+
+    private static String feedbackTypeHover(AutomationFeedbackNode node, AutomationFailureType type) {
+        if (type == null) return feedbackNodeHover(node);
+        List<String> lines = new ArrayList<>();
+        lines.add("Failure: " + firstNonBlank(type.label(), type.id(), "unknown"));
+        if (node != null && !node.source().isBlank()) lines.add("KTL file: " + node.source());
+        if (node != null && !node.shortNodeId().isBlank()) lines.add("Step: " + node.shortNodeId());
+        if (!type.id().isBlank()) lines.add("Classification: " + type.id());
+        if (!type.suggested_fix_rules().isEmpty()) {
+            lines.add("Recovery: " + String.join(", ", type.suggested_fix_rules()));
+        } else if (!type.auto_fix_rule().isBlank()) {
+            lines.add("Recovery: " + type.auto_fix_rule());
+        }
+        return String.join("\n", lines);
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values != null) {
+            for (String value : values) {
+                if (value != null && !value.isBlank()) return value;
+            }
+        }
+        return "";
     }
 
     private static void publishFeedbackChatResult(String headerText, String detailText, String state) {
@@ -364,8 +424,8 @@ public final class AutomationCliViewModel {
         String detail = detailText == null || detailText.isBlank() ? "" : " - " + detailText;
         MutableText prompt = promptLine(title + detail);
         List<AutomationChatHudState.Action> actions = title.equals("Bad feedback recorded") ? List.of(
-                new AutomationChatHudState.Action("feedback.note", "[ Add Note ]", "/feedback note ", "", "feedback_note"),
-                new AutomationChatHudState.Action("feedback.another", "[ + Another File ]", "/feedback bad", "", "file")
+                new AutomationChatHudState.Action("feedback.note", "Add Note", "/automate feedback note ", "", "feedback_note"),
+                new AutomationChatHudState.Action("feedback.another", "Another File", "/automate feedback bad", "", "file")
         ) : List.of();
         AutomationChatHudState.showHeader(header, prompt, Text.empty(), state == null || state.isBlank() ? "header" : state, actions);
     }
@@ -388,11 +448,23 @@ public final class AutomationCliViewModel {
                 failures++;
             }
         }
-        return Text.literal("Automation").formatted(Formatting.GRAY).append(Text.literal(" | ").formatted(Formatting.DARK_GRAY).append(Text.literal("session ").formatted(Formatting.GRAY).append(Text.literal(sessionId).formatted(Formatting.WHITE).append(Text.literal(" | ").formatted(Formatting.DARK_GRAY).append(Text.literal(String.valueOf(executableNodes)).formatted(Formatting.WHITE).append(Text.literal(" | ").formatted(Formatting.DARK_GRAY).append(Text.literal(String.valueOf(visibleRows)).formatted(Formatting.WHITE).append(Text.literal(" | ").formatted(Formatting.DARK_GRAY).append(Text.literal(String.valueOf(failures)).formatted(Formatting.WHITE))))))))));
+        MutableText header = Text.literal("Executor").formatted(Formatting.GRAY)
+                .append(Text.literal(" | ").formatted(Formatting.DARK_GRAY))
+                .append(Text.literal("session ").formatted(Formatting.GRAY))
+                .append(Text.literal(sessionId).formatted(Formatting.WHITE));
+        appendHeaderMetric(header, executableNodes);
+        appendHeaderMetric(header, visibleRows);
+        appendHeaderMetric(header, failures);
+        return header;
+    }
+
+    private static void appendHeaderMetric(MutableText header, int value) {
+        header.append(Text.literal(" | ").formatted(Formatting.DARK_GRAY))
+                .append(Text.literal(String.valueOf(value)).formatted(Formatting.WHITE));
     }
 
     public static MutableText promptLine(String text) {
-        return Text.literal(">_: ").formatted(Formatting.DARK_GRAY)
+        return Text.literal(ModelActivityTreeGlyphs.BRANCH + " ").formatted(Formatting.DARK_GRAY)
                 .append(Text.literal(text == null || text.isBlank() ? "type an automation prompt" : text).formatted(Formatting.WHITE));
     }
 
@@ -569,6 +641,17 @@ public final class AutomationCliViewModel {
         }
         currentRuntimeState = normalized;
         String detailText = detailValue == null ? "" : detailValue;
+        switch (normalized) {
+            case "idle" -> AutomationRuntimeStatus.idle(detailText);
+            case "complete" -> AutomationRuntimeStatus.completed(detailText);
+            case "partial" -> AutomationRuntimeStatus.partial(detailText);
+            case "blocked" -> AutomationRuntimeStatus.blocked(detailText);
+            case "failed" -> AutomationRuntimeStatus.failed(detailText);
+            case "cancelled", "canceled" -> AutomationRuntimeStatus.canceled(detailText);
+            case "interrupted" -> AutomationRuntimeStatus.interrupted(detailText);
+            case "already_satisfied" -> AutomationRuntimeStatus.alreadySatisfied(detailText);
+            default -> AutomationRuntimeStatus.active(normalized, detailText);
+        }
         String value = "state = " + normalized;
         if (frameId != null && !frameId.isBlank()) {
             value += "  frame = " + frameId;
@@ -579,6 +662,8 @@ public final class AutomationCliViewModel {
         String marker = switch (normalized) {
             case "failed" -> "[fail]";
             case "blocked" -> "[block]";
+            case "partial" -> "[warn]";
+            case "cancelled", "canceled", "interrupted" -> "[stop]";
             case "complete" -> "[done]";
             case "idle" -> "[info]";
             case "waiting" -> "[wait]";
@@ -590,14 +675,25 @@ public final class AutomationCliViewModel {
     }
 
     private static boolean isTerminalRuntimeState(String state) {
-        return "complete".equals(state) || "blocked".equals(state) || "failed".equals(state);
+        return "complete".equals(state) || "partial".equals(state) || "blocked".equals(state)
+                || "failed".equals(state) || "cancelled".equals(state) || "canceled".equals(state)
+                || "interrupted".equals(state) || "already_satisfied".equals(state);
     }
 
     public static synchronized void completeFrame(String frameId, String state) {
         int depth = FRAME_DEPTHS.getOrDefault(frameId, 0);
         String marker = "success".equalsIgnoreCase(state) ? "[done]" : ("blocked".equalsIgnoreCase(state) ? "[block]" : "[fail]");
         upsert("frame-state:" + frameId, "summary", "frame_state", depth, marker, "frame.state", frameId + " = " + state, true);
-        activeState("success".equalsIgnoreCase(state) ? "complete" : ("blocked".equalsIgnoreCase(state) ? "blocked" : "failed"), frameId, state);
+        String finalState = switch (state == null ? "" : state.toLowerCase(java.util.Locale.ROOT)) {
+            case "success", "completed" -> "complete";
+            case "already_satisfied" -> "already_satisfied";
+            case "partial" -> "partial";
+            case "blocked", "no_target" -> "blocked";
+            case "cancelled", "canceled" -> "cancelled";
+            case "interrupted" -> "interrupted";
+            default -> "failed";
+        };
+        activeState(finalState, frameId, state);
         FRAME_DEPTHS.remove(frameId);
         FRAME_PARENTS.remove(frameId);
         persist();
@@ -648,11 +744,6 @@ public final class AutomationCliViewModel {
             return;
         }
         String normalizedState = state == null || state.isBlank() ? "idle" : state;
-        boolean terminal = normalizedState.equals("complete") || normalizedState.equals("blocked") || normalizedState.equals("failed");
-        boolean idle = normalizedState.equals("idle");
-        if (idle && lastCompactChatState.equals("idle")) {
-            return;
-        }
         String detailText = detailValue == null ? "" : detailValue.replace('\n', ' ').replace('\r', ' ').replaceAll("\\s+", " ").trim();
         if (detailText.length() > 36) {
             detailText = detailText.substring(0, 33) + "...";
@@ -661,25 +752,8 @@ public final class AutomationCliViewModel {
         if (client.currentScreen instanceof ConsoleScreen) {
             return;
         }
-        String line = "Koil: " + normalizedState + (detailText.isBlank() ? "" : " - " + detailText);
-        long now = System.nanoTime();
-        boolean changed = !line.equals(lastCompactChatLine);
-        boolean expired = now - lastCompactChatNanos >= 900_000_000L;
-        if (!terminal && !idle && !changed && !expired && AutomationChatHudState.visible()) {
-            return;
-        }
-        if (!terminal && changed && now - lastCompactChatNanos < 350_000_000L) {
-            return;
-        }
-        if (terminal && line.equals(lastCompactChatLine) && lastCompactChatState.equals(normalizedState)) {
-            return;
-        }
-
         String prompt = currentPrompt == null || currentPrompt.isBlank() ? "(none)" : currentPrompt;
-        AutomationChatHudState.showHeader(automationChatHeader(), promptLine(prompt), compactStatusText(normalizedState, detailText), normalizedState);
-        lastCompactChatLine = line;
-        lastCompactChatState = normalizedState;
-        lastCompactChatNanos = now;
+        AutomationChatHudState.showHeader(automationChatHeader(), promptLine(prompt), Text.empty(), normalizedState);
     }
 
     private static void publishCompactChatHeader() {
@@ -698,16 +772,6 @@ public final class AutomationCliViewModel {
         MutableText header = automationChatHeader();
         MutableText promptLine = promptLine(prompt.equals("/automate chat") ? "type an automation prompt" : prompt);
         AutomationChatHudState.showHeader(header, promptLine);
-    }
-
-    private static MutableText compactStatusText(String state, String detailText) {
-        MutableText text = Text.literal("|--- ").formatted(Formatting.DARK_GRAY)
-                .append(Text.literal(state).styled(style -> style.withColor(AutomationStateColors.color(state))));
-        if (detailText != null && !detailText.isBlank()) {
-            text.append(Text.literal(" : ").formatted(Formatting.DARK_GRAY))
-                    .append(Text.literal(detailText).formatted(Formatting.GRAY));
-        }
-        return text;
     }
 
     public static synchronized void plannerGraph(String stepId, String rowType, String marker, String label, Object value) {

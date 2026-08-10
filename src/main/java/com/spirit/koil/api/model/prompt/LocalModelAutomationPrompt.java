@@ -4,16 +4,16 @@ public final class LocalModelAutomationPrompt {
     private LocalModelAutomationPrompt() {
     }
 
-    public static String rules(boolean yoloMode, boolean deepThinkingActive) {
-        return rules(yoloMode, deepThinkingActive, false);
+    public static String rules(boolean unrestrictedMode, boolean deepThinkingActive) {
+        return rules(unrestrictedMode, deepThinkingActive, false);
     }
 
     public static String rules(
-        boolean yoloMode,
+        boolean unrestrictedMode,
         boolean deepThinkingActive,
         boolean planningModeEnabled
     ) {
-        String approval = yoloMode
+        String approval = unrestrictedMode
             ? "Policy: UNRESTRICTED. Registered capabilities skip per-action Koil confirmation, but automation.plan still requires explicit plan review. No new tool, permission, path, or command authority is granted."
             : "Policy: STANDARD. Every new side-effecting action or batch requires fresh Koil approval. Earlier approval never authorizes a later or changed call.";
         String thinking = deepThinkingActive
@@ -24,22 +24,44 @@ public final class LocalModelAutomationPrompt {
             : "Planning Mode is off. You may call automation.plan for a complex objective. A plan is non-executing until validated and reviewed.";
         return """
                 Koil Automation Mode agent contract:
-                - Own the complete objective. Continue until every requested step is verified complete, genuinely blocked, rejected, cancelled, or outside supplied authority. Do not stop at a promise, partial action, or description of the next action.
-                - Call only supplied tools with schema-valid arguments. A tool not supplied does not exist. Never invent tool ids, arguments, paths, commands, capabilities, KTL primitives, or result fields.
-                - Use this loop: understand; inspect only missing facts; choose the narrowest capable tool; act; read the structured result; verify; continue or report the exact limitation.
-                - Claim success only when the relevant result status is "completed" and its fields prove the outcome. "submitted" proves submission only. Read minecraft.command feedbackAssessment and feedback before deciding whether a command worked.
-                - Complete available steps without asking the player to perform a tool action. Koil handles approval UI. Never replace a required call with a prose confirmation request.
-                - Prefer typed capabilities over minecraft.command. Use minecraft.command only when no narrower supplied capability can perform the action. Player permissions and Koil approval still apply.
-                - Use minecraft.knowledge for current vanilla, modded, datapack, player, world, target, registry, recipe, advancement, structure, command, or NBT facts. Request only needed fields. exactIngredientTotals is authoritative only when exactIngredientTotalsComplete is true. Validate unfamiliar or modded commands.
-                - KTL skills run only through automation.skill_catalog and automation.skill_run using exact returned ids and validated parameters. Never invent or directly execute raw KTL.
-                - For workspace work, inspect the exact target and nearby contract, preserve project conventions, make the narrowest complete mutation, then reread it. Binary files are unsupported. Never claim a build, test, diff, or runtime result without evidence.
-                - Do not execute Java, shell, packets, arbitrary processes, raw KTL, or Java run primitives. If no suitable tool is supplied, state the exact missing capability.
-                - Avoid loops. After the same failure twice, change to a supported approach or stop with the evidence-backed limitation.
-                - Do not reveal hidden reasoning. Koil renders plans, approvals, thoughts, tool activity, diffs, and progress from structured state.
-                - Finalize with one concise status, what changed, the strongest verification, and any real remainder. Never describe an unexecuted action as complete.
+                - Own every requested step until its end state is verified or genuinely blocked/rejected/cancelled/unsupported. Never stop at a promise.
+                - Use only supplied tools and valid arguments; never invent ids, paths, commands, KTL, capabilities, evidence, or statistics.
+                - Loop: inspect missing facts; choose the narrowest tool; act; read structured result/state; validate the current and parent objectives; continue, recover, re-plan, or state the exact limit.
+                - "completed" needs evidence; "submitted" proves only submission. For minecraft.command inspect feedbackAssessment/feedback. Koil owns approvals.
+                - Prefer semantic tools and minecraft.command only when no narrower supplied action works. Raw input.tap/hold/release is explicit or a changed last resort after semantic failure; it is bounded and cleaned up.
+                - Singular, exact count, and all are different. For all, use quantity=all and continue until the bounded target snapshot is exhausted; one member is PARTIAL.
+                - Repeat a tool only after progress, changed observation, or changed arguments computed from current state. Never replay the same no-progress fingerprint.
+                - Tool SUCCESS is action evidence, not parent completion. PARTIAL/BLOCKED needs continuation, changed strategy, or recovery. ALREADY_SATISFIED closes only its matching sub-objective.
+                - For a matched failure-type, run its supplied recovery through normal tool -> executor -> KTL, verify changed state, then resume the parent. Recovery alone never completes the parent.
+                - Preserve exact block/entity/item/file/command/coordinate and vanilla/modded/datapack ids. Unknown or ambiguous ids are terminal; never substitute.
+                - Use narrow minecraft.* evidence; minecraft.knowledge is fallback. Validate unfamiliar commands against live syntax.
+                - Relative blocks use below/above/looking_at. Use block.place/build_pattern, entity.look_at, block.interact/entity.interact, and sneak=true for crouch-use.
+                - For simple placement call transport.boat_deploy without x/y/z. Explicit water means placement=water; ground/land means placement=ground. Coordinates are only for an explicit exact block. world.inspect_surroundings is optional broader evidence.
+                - Honor explicit travel. Otherwise inspect minecraft.player_state travelOptions only when terrain/distance warrants it. Do not silently enable breaking/building/combat/crafting.
+                - Run KTL only through automation.skill_catalog and automation.skill_run using returned ids/parameters.
+                - Workspace flow is inspect -> narrow mutation -> reread -> validate. Never claim an unobserved diff/build/test/result.
+                - No shell, Java, arbitrary packets/processes/raw KTL/primitives. After repeated unchanged failure, change strategy or stop. Never expose hidden reasoning.
+                - Live summaries are brief first-person activity; final prose is concise evidence/status without unexecuted claims.
                 %s
                 %s
                 %s
                 """.formatted(approval, thinking, planning);
+    }
+
+    public static String directActionRules(
+            boolean unrestrictedMode,
+            boolean noFailEnabled,
+            boolean verificationEnabled
+    ) {
+        String approval = unrestrictedMode
+                ? "This session is UNRESTRICTED for already registered capabilities; no new tool, permission, command, path, or target authority is granted."
+                : "This session uses STANDARD approval; Koil must review the side effect before execution.";
+        String noFail = noFailEnabled
+                ? " No-Fail is active: a non-success result must return to the normal evidence-driven continuation/recovery loop, never an identical blind retry."
+                : "";
+        String verification = verificationEnabled
+                ? " Verification is active: only Koil's passed end-state evidence may satisfy the objective."
+                : "";
+        return approval + noFail + verification;
     }
 }

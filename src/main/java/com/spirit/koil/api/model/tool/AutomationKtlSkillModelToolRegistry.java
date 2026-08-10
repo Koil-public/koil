@@ -42,7 +42,8 @@ public final class AutomationKtlSkillModelToolRegistry {
                     Duration.ofMinutes(10),
                     true,
                     true,
-                    Set.of("completed", "blocked", "cancelled", "failed", "timed_out")
+                    Set.of("completed", "partial", "blocked", "failed", "cancelled",
+                            "interrupted", "no_target", "already_satisfied")
             )
     );
 

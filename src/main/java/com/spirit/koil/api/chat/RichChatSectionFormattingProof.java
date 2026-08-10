@@ -26,7 +26,7 @@ public final class RichChatSectionFormattingProof {
         proveIncompleteDraftVisibility();
         proveSenderEchoReconstruction();
         proveSharedStatusVisual();
-        proveHiddenStructuralContinuation();
+        proveSafeStructuralContinuation();
         proveSyncRoundTrip();
         proveModelContract();
         System.out.println("Rich Chat section-formatting proof passed.");
@@ -239,7 +239,8 @@ public final class RichChatSectionFormattingProof {
                         && contract.contains("color at least the key result or status phrase"),
                 "model prompt did not require semantic color in substantive answers");
         require(contract.contains("compose with Rich Chat containers and inline formatting")
-                        && contract.contains("headings, quotes, -# subtext")
+                        && contract.contains("Do not author `#` title or heading lines")
+                        && contract.contains("quotes, -# subtext")
                         && contract.contains("spoilers"),
                 "model prompt omitted section/Rich Chat composition guidance");
     }
@@ -290,8 +291,17 @@ public final class RichChatSectionFormattingProof {
                 "bottom model status base glyph run was not stable");
         SlidingStatusText.HighlightWindow start = SlidingStatusText.highlightWindow(
                 "Thinking", "thinking", 0L);
+        SlidingStatusText.HighlightWindow entered = SlidingStatusText.highlightWindow(
+                "Thinking", "thinking", SlidingStatusText.STEP_MILLIS);
         SlidingStatusText.HighlightWindow moved = SlidingStatusText.highlightWindow(
                 "Thinking", "thinking", SlidingStatusText.STEP_MILLIS * 5L);
+        require(start.active()
+                        && start.startCharacter() == 0
+                        && start.endCharacter() == 1
+                        && entered.active()
+                        && entered.endCharacter() - entered.startCharacter() > 1
+                        && moved.endCharacter() - moved.startCharacter() > 1,
+                "status animation did not enter with one glyph before expanding to its moving band");
         require(start.visibleText().equals(moved.visibleText())
                         && (start.startCharacter() != moved.startCharacter()
                         || start.endCharacter() != moved.endCharacter()),
@@ -300,12 +310,21 @@ public final class RichChatSectionFormattingProof {
                 "bottom model status exposed section/hex source text");
     }
 
-    private static void proveHiddenStructuralContinuation() {
-        String continuation = "  " + RichChatStructuralContinuation.SUBTEXT + "wrapped secondary text";
+    private static void proveSafeStructuralContinuation() {
+        String continuation = RichChatStructuralContinuation.subtextPrefix("  ") + "wrapped secondary text";
         require(RichChatAttachmentRenderer.containsLiveFormatting(continuation),
-                "wrapped subtext continuation lost its structural style marker");
-        require(!continuation.contains("-#"),
-                "wrapped subtext continuation repeated visible -# source syntax");
+                "wrapped subtext continuation lost its standard semantic prefix");
+        require(continuation.indexOf(RichChatStructuralContinuation.SUBTEXT) < 0,
+                "wrapped subtext continuation exposed a private-use marker glyph");
+        RichChatStructuralContinuation.Subtext inherited =
+                RichChatStructuralContinuation.parseSubtext("§7-# again");
+        require(RichChatAttachmentRenderer.containsLiveFormatting("§7-# again"),
+                "renderer did not recognize inherited formatting before subtext syntax");
+        require(inherited != null
+                        && inherited.leadingWhitespace().isEmpty()
+                        && "§7again".equals(inherited.content())
+                        && !inherited.content().contains("-#"),
+                "inherited wrap styling made the subtext marker visible");
     }
 
     private static void proveSyncRoundTrip() {

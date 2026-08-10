@@ -9,10 +9,9 @@ import com.spirit.koil.api.chat.SlidingStatusText;
 import com.spirit.koil.api.automation.cli.AutomationPresenceState;
 import com.spirit.koil.api.automation.cli.AutomationStateColors;
 import com.spirit.koil.api.design.uiColorVal;
-import com.spirit.koil.api.model.LocalModelService;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
 import com.spirit.koil.api.model.chat.ModelRequestMetricsPresentation;
-import com.spirit.koil.api.model.chat.ModelRequestStatusPresentation;
+import com.spirit.koil.api.model.presence.CombinedModelExecutorStatus;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ChatScreen;
@@ -20,6 +19,10 @@ import net.minecraft.text.Text;
 import net.minecraft.text.MutableText;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 
 public final class AutomationModeStatusChatPanel implements ChatHudPanel {
     private static final Identifier AUTOMATION_LOGO = new Identifier("koil", "textures/gui/icons/automation.png");
@@ -111,7 +114,7 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
         );
         int unrestrictedSeparatorX = stateX + client.textRenderer.getWidth(stateLabel);
         int unrestrictedX = unrestrictedSeparatorX + client.textRenderer.getWidth(unrestrictedSeparator);
-        if (snapshot.approvalPolicy() == AutomationModeController.ApprovalPolicy.YOLO
+        if (snapshot.approvalPolicy() == AutomationModeController.ApprovalPolicy.UNRESTRICTED
                 && unrestrictedX + client.textRenderer.getWidth(unrestricted) <= logicalWidth) {
             drawContext.drawTextWithShadow(
                     client.textRenderer,
@@ -144,27 +147,20 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
                     bounds.y() + 19,
                     uiColorVal.uiColorAutomationModePopupText
             );
+            renderExperimentalTooltip(drawContext, context, snapshot, textX, bounds.y() + 19, client);
         }
     }
 
     private static Text metricLine(int availableWidth, MinecraftClient client) {
-        ModelGenerationHudState.Snapshot generation = ModelGenerationHudState.visibleSnapshot();
-        AutomationModeController.Snapshot mode = AutomationModeController.snapshot();
-        Text modeIndicators = modeIndicators(mode);
-        return ModelRequestMetricsPresentation.automationTopLineFitted(
-                generation,
-                LocalModelService.configuredModelId(),
-                LocalModelService.queueDepth(),
-                LocalModelService.configuredContextWindowTokens(),
-                modeIndicators,
-                availableWidth,
-                client.textRenderer::getWidth
+        return ModelRequestMetricsPresentation.automationSessionLine(
+                ModelGenerationHudState.visibleSnapshot(),
+                modeIndicators(AutomationModeController.snapshot())
         );
     }
 
     public static Text modeIndicators(AutomationModeController.Snapshot mode) {
         MutableText modeIndicators = Text.empty();
-        if (mode.experimentalCompactAgentEnabled()) {
+        if (mode.experimentalFeaturesEnabled()) {
             int experimentalColor = experimentalIndicatorColor(
                     uiColorVal.uiColorAutomationModeExperimentalText
             );
@@ -191,10 +187,41 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
 
     public static String modeIndicatorLabels(AutomationModeController.Snapshot mode) {
         java.util.ArrayList<String> labels = new java.util.ArrayList<>();
-        if (mode.experimentalCompactAgentEnabled()) labels.add("TEST");
+        if (mode.experimentalFeaturesEnabled()) labels.add("TEST");
         if (mode.deepThinkingEnabled()) labels.add("D-T");
         if (mode.planningModeEnabled() || mode.planningActive()) labels.add("Plan");
         return String.join(" | ", labels);
+    }
+
+    private static void renderExperimentalTooltip(
+            DrawContext drawContext,
+            ChatHudPanelContext context,
+            AutomationModeController.Snapshot snapshot,
+            int textX,
+            int textY,
+            MinecraftClient client
+    ) {
+        if (!context.chatOpen() || !snapshot.experimentalFeaturesEnabled() || client.getWindow() == null) {
+            return;
+        }
+        int mouseX = (int) Math.round(client.mouse.getX()
+                * client.getWindow().getScaledWidth() / (double) client.getWindow().getWidth());
+        int mouseY = (int) Math.round(client.mouse.getY()
+                * client.getWindow().getScaledHeight() / (double) client.getWindow().getHeight());
+        int testWidth = client.textRenderer.getWidth("TEST");
+        if (mouseX < textX || mouseX > textX + testWidth
+                || mouseY < textY - 1 || mouseY > textY + client.textRenderer.fontHeight + 1) {
+            return;
+        }
+        List<Text> tooltip = new ArrayList<>();
+        tooltip.add(Text.literal("Experimental features").formatted(Formatting.WHITE));
+        for (String feature : snapshot.enabledExperimentalFeatures()) {
+            tooltip.add(Text.literal("• " + feature).formatted(Formatting.GREEN));
+        }
+        drawContext.getMatrices().push();
+        drawContext.getMatrices().translate(0.0F, 0.0F, 1_000.0F);
+        drawContext.drawTooltip(client.textRenderer, tooltip, Optional.empty(), mouseX, mouseY);
+        drawContext.getMatrices().pop();
     }
 
     public static int experimentalIndicatorColor(int configured) {
@@ -208,29 +235,19 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
     }
 
     private static StatusView statusView(AutomationModeController.Snapshot snapshot) {
-        ModelGenerationHudState.Snapshot generation = ModelGenerationHudState.visibleSnapshot();
-        if (generation != null) {
-            ModelRequestStatusPresentation.View modelStatus =
-                    ModelRequestStatusPresentation.forActivity(
-                            generation.state(),
-                            generation.detail(),
-                            generation.activeToolId()
-                    );
-            return new StatusView(modelStatus.semanticState(), modelStatus.label());
-        }
-        String presenceState = AutomationPresenceState.localState();
-        String state = presenceState == null || presenceState.isBlank()
+        String combinedState = CombinedModelExecutorStatus.snapshot().state();
+        String state = combinedState == null || combinedState.isBlank() || "idle".equals(combinedState)
                 ? fallbackState(snapshot)
-                : presenceState;
+                : combinedState;
         String label = titleCase(state);
         return new StatusView(state, label);
     }
 
     private static String fallbackState(AutomationModeController.Snapshot snapshot) {
         return switch (snapshot.state()) {
-            case CONNECTING -> "waiting";
+            case CONNECTING -> "starting";
             case EXECUTING -> "running";
-            case PAUSED -> "waiting";
+            case PAUSED -> "idle";
             case UNAVAILABLE -> "failed";
             default -> "idle";
         };

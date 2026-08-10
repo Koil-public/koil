@@ -15,22 +15,17 @@ public final class ModelRequestMetricsPresentation {
     private ModelRequestMetricsPresentation() {
     }
 
-    /** One-row bottom-popup identity plus optional /ask diagnostics. */
+    /** One-row bottom-popup identity plus request-local diagnostics. */
     public static Text bottomHeader(
             ModelGenerationHudState.Snapshot snapshot,
             String modelId,
             int queueDepth,
             int maximumContextTokens
     ) {
-        MutableText header = Text.literal("Model").formatted(Formatting.GRAY);
-        if (snapshot != null && !snapshot.automationRequest()) {
+        MutableText header = Text.literal(bottomTitle(snapshot)).formatted(Formatting.GRAY);
+        if (snapshot != null) {
             header.append(Text.literal(" | ").formatted(Formatting.DARK_GRAY))
-                    .append(automationTopLine(
-                            snapshot,
-                            modelId,
-                            queueDepth,
-                            maximumContextTokens
-                    ));
+                    .append(bottomMetricsLine(snapshot, modelId, queueDepth, maximumContextTokens));
         }
         return header;
     }
@@ -49,7 +44,7 @@ public final class ModelRequestMetricsPresentation {
             ToIntFunction<Text> width
     ) {
         Text full = bottomHeader(snapshot, modelId, queueDepth, maximumContextTokens);
-        if (fits(full, maximumWidth, width) || snapshot == null || snapshot.automationRequest()) {
+        if (fits(full, maximumWidth, width) || snapshot == null) {
             return full;
         }
         Text abbreviated = bottomHeaderWithModelDisplay(
@@ -85,6 +80,20 @@ public final class ModelRequestMetricsPresentation {
         return automationTopLine(snapshot, modelId, queueDepth, maximumContextTokens, Text.empty());
     }
 
+    /** Automation's minimal second row: stable session identity plus active mode tags. */
+    public static Text automationSessionLine(ModelGenerationHudState.Snapshot snapshot, Text activeTags) {
+        // The persistent Automation bar owns the startup-lifetime total. It is
+        // deliberately live and is not tied to whichever model request happens
+        // to be selected in the under-chat popup.
+        com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot counters =
+                com.spirit.koil.api.model.KoilLifetimeCounters.snapshot();
+        MutableText line = totalCounterLine(counters);
+        if (activeTags != null && !activeTags.getString().isBlank()) {
+            line.append(Text.literal(" | ").formatted(Formatting.DARK_GRAY)).append(activeTags);
+        }
+        return line;
+    }
+
     public static Text automationTopLine(
             ModelGenerationHudState.Snapshot snapshot,
             String modelId,
@@ -93,13 +102,14 @@ public final class ModelRequestMetricsPresentation {
             Text afterSession
     ) {
         String safeModel = modelId == null || modelId.isBlank() ? "unconfigured" : modelId.strip();
-        return automationTopLineWithModelDisplay(
+        return metricsLineWithModelDisplay(
                 snapshot,
                 safeModel,
                 true,
                 queueDepth,
                 maximumContextTokens,
-                afterSession
+                afterSession,
+                CounterKind.TOTAL
         );
     }
 
@@ -117,24 +127,26 @@ public final class ModelRequestMetricsPresentation {
         if (fits(full, maximumWidth, width)) {
             return full;
         }
-        Text abbreviated = automationTopLineWithModelDisplay(
+        Text abbreviated = metricsLineWithModelDisplay(
                 snapshot,
                 "…",
                 true,
                 queueDepth,
                 maximumContextTokens,
-                afterSession
+                afterSession,
+                CounterKind.TOTAL
         );
         if (fits(abbreviated, maximumWidth, width)) {
             return abbreviated;
         }
-        return automationTopLineWithModelDisplay(
+        return metricsLineWithModelDisplay(
                 snapshot,
                 "",
                 false,
                 queueDepth,
                 maximumContextTokens,
-                afterSession
+                afterSession,
+                CounterKind.TOTAL
         );
     }
 
@@ -145,39 +157,66 @@ public final class ModelRequestMetricsPresentation {
             int queueDepth,
             int maximumContextTokens
     ) {
-        MutableText header = Text.literal("Model").formatted(Formatting.GRAY);
-        if (snapshot != null && !snapshot.automationRequest()) {
+        MutableText header = Text.literal(bottomTitle(snapshot)).formatted(Formatting.GRAY);
+        if (snapshot != null) {
             header.append(Text.literal(" | ").formatted(Formatting.DARK_GRAY))
-                    .append(automationTopLineWithModelDisplay(
+                    .append(metricsLineWithModelDisplay(
                             snapshot,
                             modelDisplay,
                             includeModel,
                             queueDepth,
                             maximumContextTokens,
-                            Text.empty()
+                            Text.empty(),
+                            bottomCounterKind(snapshot)
                     ));
         }
         return header;
     }
 
-    private static Text automationTopLineWithModelDisplay(
+    private static Text bottomMetricsLine(
+            ModelGenerationHudState.Snapshot snapshot,
+            String modelId,
+            int queueDepth,
+            int maximumContextTokens
+    ) {
+        String safeModel = modelId == null || modelId.isBlank() ? "unconfigured" : modelId.strip();
+        return metricsLineWithModelDisplay(
+                snapshot,
+                safeModel,
+                true,
+                queueDepth,
+                maximumContextTokens,
+                Text.empty(),
+                bottomCounterKind(snapshot)
+        );
+    }
+
+    private static Text metricsLineWithModelDisplay(
             ModelGenerationHudState.Snapshot snapshot,
             String modelDisplay,
             boolean includeModel,
             int queueDepth,
             int maximumContextTokens,
-            Text afterSession
+            Text afterSession,
+            CounterKind counterKind
     ) {
         ModelUsage usage = snapshot == null || snapshot.usage() == null
                 ? ModelUsage.empty()
                 : snapshot.usage();
-        long session = snapshot == null ? 0L : Math.max(0L, snapshot.sessionNumber());
+        com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot counters = counterKind == CounterKind.TOTAL
+                ? com.spirit.koil.api.model.KoilLifetimeCounters.snapshot()
+                : snapshot == null
+                ? com.spirit.koil.api.model.KoilLifetimeCounters.snapshot()
+                : snapshot.counters();
         long tokens = Math.max(0, usage.promptTokens()) + Math.max(0, usage.completionTokens());
         int tools = snapshot == null ? 0 : Math.max(0, snapshot.toolCallCount());
         long ttft = Math.max(0L, usage.timeToFirstTokenMillis());
 
-        MutableText line = Text.literal("session ").formatted(Formatting.GRAY)
-                .append(Text.literal(String.format("kts-%05d", session)).formatted(Formatting.WHITE));
+        MutableText line = switch (counterKind) {
+            case MODEL -> modelCounterLine(counters);
+            case AUTOMATION -> automationCounterLine(counters);
+            case TOTAL -> totalCounterLine(counters);
+        };
         if (afterSession != null && !afterSession.getString().isBlank()) {
             line.append(Text.literal(" | ").formatted(Formatting.DARK_GRAY))
                     .append(afterSession);
@@ -191,7 +230,7 @@ public final class ModelRequestMetricsPresentation {
         appendValue(line, Long.toString(ttft));
         appendValue(line, ModelContextWindowState.from(usage, maximumContextTokens)
                 .map(state -> " " + state.remainingPercent() + "%")
-                .orElse(" --"));
+                .orElse("100%"));
         return line;
     }
 
@@ -203,6 +242,42 @@ public final class ModelRequestMetricsPresentation {
         line.append(Text.literal(" | ").formatted(Formatting.DARK_GRAY))
                 .append(Text.literal(value).formatted(Formatting.WHITE));
     }
+
+    private static MutableText modelCounterLine(com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot counters) {
+        com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot safe = counters == null
+                ? com.spirit.koil.api.model.KoilLifetimeCounters.snapshot()
+                : counters;
+        return sessionCounterLine(String.format("kms-%05d", safe.kms()));
+    }
+
+    private static MutableText automationCounterLine(com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot counters) {
+        com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot safe = counters == null
+                ? com.spirit.koil.api.model.KoilLifetimeCounters.snapshot()
+                : counters;
+        return sessionCounterLine(String.format("kes-%05d", safe.kes()));
+    }
+
+    private static MutableText totalCounterLine(com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot counters) {
+        com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot safe = counters == null
+                ? com.spirit.koil.api.model.KoilLifetimeCounters.snapshot()
+                : counters;
+        return sessionCounterLine(String.format("kts-%05d", safe.kts()));
+    }
+
+    private static MutableText sessionCounterLine(String identifier) {
+        return Text.literal("session ").formatted(Formatting.GRAY)
+                .append(Text.literal(identifier).formatted(Formatting.WHITE));
+    }
+
+    private static String bottomTitle(ModelGenerationHudState.Snapshot snapshot) {
+        return "Model";
+    }
+
+    private static CounterKind bottomCounterKind(ModelGenerationHudState.Snapshot snapshot) {
+        return CounterKind.MODEL;
+    }
+
+    private enum CounterKind { MODEL, AUTOMATION, TOTAL }
 
     /** Live request age for the compact bottom-right popup timer. */
     public static String elapsedLabel(ModelGenerationHudState.Snapshot snapshot, long nowMillis) {

@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 public final class PerformanceConfigApplier {
     private PerformanceConfigApplier() {
@@ -61,14 +62,21 @@ public final class PerformanceConfigApplier {
             if (!Files.exists(PerformancePaths.BACKUPS)) {
                 return false;
             }
-            Path latest = Files.list(PerformancePaths.BACKUPS)
-                    .filter(path -> path.getFileName().toString().startsWith("options-"))
-                    .max(java.util.Comparator.comparingLong(path -> path.toFile().lastModified()))
-                    .orElse(null);
+            Path latest;
+            try (Stream<Path> backups = Files.list(PerformancePaths.BACKUPS)) {
+                latest = backups
+                        .filter(path -> path.getFileName().toString().startsWith("options-"))
+                        .max(java.util.Comparator.comparingLong(path -> path.toFile().lastModified()))
+                        .orElse(null);
+            }
             if (latest == null) {
                 return false;
             }
             Files.copy(latest, options, StandardCopyOption.REPLACE_EXISTING);
+            if (client != null && client.options != null) {
+                client.options.load();
+                requestTerrainUpdate(client);
+            }
             PerformanceJsonStore.append(PerformancePaths.OPTIMIZATION_HISTORY, Map.of(
                     "revertedAtMillis", System.currentTimeMillis(),
                     "restoredBackup", latest.toString()
@@ -107,7 +115,7 @@ public final class PerformanceConfigApplier {
             case "smooth_lighting" -> setSmoothLighting(client, Boolean.parseBoolean(recommendation.afterValue()));
             case "biome_blend" -> setBiomeBlend(client, parseInt(recommendation.afterValue(), 0));
             case "entity_shadows" -> setEntityShadows(client, Boolean.parseBoolean(recommendation.afterValue()));
-            case "vsync" -> setVsync(client, false);
+            case "vsync" -> setVsync(client, Boolean.parseBoolean(recommendation.afterValue()));
             default -> false;
         };
     }

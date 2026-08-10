@@ -61,6 +61,7 @@ public final class KtlCompilerService {
 
     public synchronized void reload() {
         ensureDirectories();
+        KtlDevelopmentLibrarySynchronizer.syncIfDevelopmentInstance(ROOT);
         KtlBuiltinLibraryInstaller.installMissing(ROOT);
         Map<String, NormalizedDocument> normalized = new LinkedHashMap<>();
         int hits = 0;

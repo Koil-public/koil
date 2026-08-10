@@ -5,6 +5,7 @@ public final class AutomationRuntimeStatus {
     private static volatile boolean running;
     private static volatile String state = "idle";
     private static volatile String detail = "";
+    private static volatile long updatedAtMillis = System.currentTimeMillis();
 
     private AutomationRuntimeStatus() {
     }
@@ -14,13 +15,19 @@ public final class AutomationRuntimeStatus {
         running = false;
         state = "planning";
         detail = detailValue == null ? "" : detailValue;
+        touch();
     }
 
     public static void running(String detailValue) {
-        planning = false;
+        active("executing", detailValue);
+    }
+
+    public static void active(String stateValue, String detailValue) {
+        planning = "planning".equals(stateValue) || "replanning".equals(stateValue);
         running = true;
-        state = "running";
+        state = stateValue == null || stateValue.isBlank() ? "executing" : stateValue;
         detail = detailValue == null ? "" : detailValue;
+        touch();
     }
 
     public static void idle(String detailValue) {
@@ -28,13 +35,27 @@ public final class AutomationRuntimeStatus {
         running = false;
         state = "idle";
         detail = detailValue == null ? "" : detailValue;
+        touch();
     }
 
     public static void canceled(String detailValue) {
         planning = false;
         running = false;
-        state = "canceled";
+        state = "cancelled";
         detail = detailValue == null ? "" : detailValue;
+        touch();
+    }
+
+    public static void partial(String detailValue) {
+        terminal("partial", detailValue);
+    }
+
+    public static void interrupted(String detailValue) {
+        terminal("interrupted", detailValue);
+    }
+
+    public static void alreadySatisfied(String detailValue) {
+        terminal("already_satisfied", detailValue);
     }
 
     public static void failed(String detailValue) {
@@ -42,6 +63,27 @@ public final class AutomationRuntimeStatus {
         running = false;
         state = "failed";
         detail = detailValue == null ? "" : detailValue;
+        touch();
+    }
+
+    public static void completed(String detailValue) {
+        planning = false;
+        running = false;
+        state = "complete";
+        detail = detailValue == null ? "" : detailValue;
+        touch();
+    }
+
+    public static void blocked(String detailValue) {
+        terminal("blocked", detailValue);
+    }
+
+    private static void terminal(String stateValue, String detailValue) {
+        planning = false;
+        running = false;
+        state = stateValue;
+        detail = detailValue == null ? "" : detailValue;
+        touch();
     }
 
     public static boolean isTaskRunning() {
@@ -58,5 +100,24 @@ public final class AutomationRuntimeStatus {
 
     public static String detail() {
         return detail;
+    }
+
+    public static Snapshot snapshot() {
+        return new Snapshot(state, detail, planning || running, updatedAtMillis);
+    }
+
+    private static void touch() {
+        updatedAtMillis = System.currentTimeMillis();
+    }
+
+    public record Snapshot(String state, String detail, boolean active, long updatedAtMillis) {
+        public Snapshot {
+            state = state == null || state.isBlank() ? "idle" : state;
+            detail = detail == null ? "" : detail;
+        }
+
+        public boolean visibleAt(long nowMillis) {
+            return active || nowMillis - updatedAtMillis <= 8_000L;
+        }
     }
 }

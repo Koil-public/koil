@@ -4,8 +4,6 @@
   "package": "com.spirit.mixin",
   "compatibilityLevel": "JAVA_17",
   "mixins": [
-    "KoilButton",
-    "client.nbt.Tooltip",
     "server.content.MixinAbstractBlockStateContentLuminance",
     "server.content.MixinBlockStateArgument",
     "server.content.MixinBlockStateArgumentType",
@@ -26,6 +24,8 @@
     "defaultRequire": 1
   },
   "client": [
+    "KoilButton",
+    "client.nbt.Tooltip",
     "client.KoilSkinPlayerMixin",
     "client.MinecraftClientMixin",
     "client.MixinClientPlayNetworkHandler",

@@ -98,6 +98,22 @@ processResources {
 	}
 }
 
+tasks.register('syncKtlDevelopmentLibraries', Exec) {
+	def syncSource = file('src/main/java/com/spirit/koil/api/automation/ktl/KtlDevelopmentLibrarySynchronizer.java')
+	inputs.files(fileTree('src/main/resources/koil/automation'), fileTree('run/koil/automation'), syncSource)
+	outputs.upToDateWhen { false }
+	doFirst {
+		def launcher = javaToolchains.launcherFor {
+			languageVersion = JavaLanguageVersion.of(17)
+		}.get()
+		commandLine launcher.executablePath.asFile.absolutePath, syncSource.absolutePath, projectDir.absolutePath
+	}
+}
+
+tasks.named('processResources').configure {
+	dependsOn tasks.named('syncKtlDevelopmentLibraries')
+}
+
 tasks.withType(JavaCompile).configureEach {
 	it.options.release = 17
 }
@@ -137,6 +153,46 @@ tasks.register("verifyRunClientClasses") {
 							". Stop any running client and rerun ./gradlew compileJava."
 			)
 		}
+	}
+}
+
+def dedicatedServerSafeClassFiles = [
+		file("$buildDir/classes/java/main/com/spirit/Main.class"),
+		file("$buildDir/classes/java/main/com/spirit/Prelaunch.class"),
+		file("$buildDir/classes/java/main/com/spirit/koil/api/bootstrap/DedicatedServerBootstrapService.class"),
+		file("$buildDir/classes/java/main/com/spirit/koil/api/bootstrap/DedicatedServerBootstrapCommand.class"),
+		file("$buildDir/classes/java/main/com/spirit/koil/api/console/ConsoleLevel.class"),
+		file("$buildDir/classes/java/main/com/spirit/koil/api/util/console/log/SubFileLogger.class")
+]
+
+tasks.register("verifyDedicatedServerClasses") {
+	dependsOn tasks.named("compileJava")
+	doLast {
+		def missing = dedicatedServerSafeClassFiles.findAll { !it.isFile() }
+		if (!missing.isEmpty()) {
+			throw new GradleException("Dedicated-server verification is missing: " + missing.join(", "))
+		}
+		def forbidden = ["net/minecraft/client", "org/lwjgl", "com/spirit/client", "ModelGenerationHudState", "ModelVoice", "ExternalWindow"]
+		dedicatedServerSafeClassFiles.each { classFile ->
+			def bytes = classFile.bytes
+			def text = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+			def matches = forbidden.findAll { text.contains(it) }
+			if (!matches.isEmpty()) {
+				throw new GradleException("Dedicated-server class ${classFile.name} links forbidden client symbols: ${matches}")
+			}
+		}
+	}
+}
+
+tasks.register('runDedicatedServerSmokeProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.bootstrap.DedicatedServerBootstrapProof'
+	def smokeDirectory = layout.buildDirectory.dir('dedicated-server-smoke').get().asFile
+	workingDir = smokeDirectory
+	doFirst {
+		delete smokeDirectory
+		smokeDirectory.mkdirs()
 	}
 }
 
@@ -196,6 +252,12 @@ tasks.register('runAutomationCapabilityProof', JavaExec) {
 	mainClass = 'com.spirit.koil.api.automation.capability.AutomationCapabilityProof'
 }
 
+tasks.register('runBoundedNavigationPlannerProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.automation.navigation.BoundedNavigationPlannerProof'
+}
+
 tasks.register('runModelPresencePlanningProof', JavaExec) {
 	dependsOn classes
 	classpath = sourceSets.main.runtimeClasspath
@@ -208,6 +270,12 @@ tasks.register('runModelAgentPlatformProof', JavaExec) {
 	mainClass = 'com.spirit.koil.api.model.testing.ModelAgentPlatformProof'
 }
 
+tasks.register('runModelPresentationProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.model.testing.ModelPresentationProof'
+}
+
 tasks.register('runRichChatSectionFormattingProof', JavaExec) {
 	dependsOn classes
 	classpath = sourceSets.main.runtimeClasspath
@@ -215,6 +283,18 @@ tasks.register('runRichChatSectionFormattingProof', JavaExec) {
 }
 
 tasks.register('runKtlLibraryProof', JavaExec) {
+	dependsOn classes
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.spirit.koil.api.automation.AutomationProofSuite'
+	def proofDirectory = layout.buildDirectory.dir('ktl-library-proof').get().asFile
+	workingDir = proofDirectory
+	doFirst {
+		delete proofDirectory
+		proofDirectory.mkdirs()
+	}
+}
+
+tasks.register('runKtlCurrentInstanceProof', JavaExec) {
 	dependsOn classes
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'com.spirit.koil.api.automation.AutomationProofSuite'
@@ -250,6 +330,12 @@ loom {
 			if (!devUuid.isEmpty()) {
 				programArgs "--uuid", devUuid
 			}
+		}
+		server {
+			server()
+			name "Minecraft Server"
+			runDir "run-server"
+			ideConfigGenerated false
 		}
 	}
 }

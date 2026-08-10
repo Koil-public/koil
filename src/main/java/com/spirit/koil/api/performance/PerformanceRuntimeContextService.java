@@ -4,13 +4,19 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.resource.ResourcePackProfile;
 
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
+import java.util.stream.Stream;
 
 public final class PerformanceRuntimeContextService {
+    private static long shaderDetectionAtMillis;
+    private static ShaderDetection cachedShaderDetection = new ShaderDetection(false, false, "none detected");
+
     private PerformanceRuntimeContextService() {
     }
 
@@ -21,20 +27,22 @@ public final class PerformanceRuntimeContextService {
         String worldName = worldName(client);
         String server = serverAddress(client);
         String dimension = dimension(client);
-        String shaderState = shaderState();
-        String suggested = suggestedProfile(worldType, packs, shaderState, FabricLoader.getInstance().getAllMods().size());
+        ShaderDetection shader = shaderDetection();
+        String suggested = suggestedProfile(worldType, packs, shader.active(), FabricLoader.getInstance().getAllMods().size());
         List<String> notes = new ArrayList<>();
         if (FabricLoader.getInstance().getAllMods().size() > 180) {
-            notes.add("Heavy modpack: high startup/load and memory pressure risk.");
+            notes.add("Large modpack detected. Mod count is a workload-size signal, not proof that mods are the active bottleneck.");
         }
         if (packs.size() > 6) {
-            notes.add("Many enabled resourcepacks: texture reload and VRAM pressure may be higher.");
+            notes.add("Many enabled resource packs can increase texture reload and graphics-memory pressure.");
         }
         if (!optimizationConfigs.isEmpty()) {
-            notes.add("Optimization mod config files detected; Koil can recommend around them without requiring those mods.");
+            notes.add("Optimization config files detected. Provider recommendations can target verified values without disabling the mods.");
         }
-        if (!"none detected".equals(shaderState)) {
-            notes.add("Shader pipeline detected; render and VRAM recommendations should be reviewed before applying.");
+        if (shader.active()) {
+            notes.add("An active shader pack was detected. Shader pressure is reported as an estimate based on frame performance, not GPU utilization.");
+        } else if (shader.installed()) {
+            notes.add("A shader loader is installed, but an active shader pack was not verified.");
         }
         return new PerformanceRuntimeContext(
                 System.currentTimeMillis(),
@@ -46,10 +54,14 @@ public final class PerformanceRuntimeContextService {
                 suggested,
                 packs.size(),
                 packs,
-                shaderState,
+                shader.label(),
                 optimizationConfigs,
                 notes
         );
+    }
+
+    public static boolean shaderPipelineActive() {
+        return shaderDetection().active();
     }
 
     private static String worldType(MinecraftClient client) {
@@ -104,21 +116,68 @@ public final class PerformanceRuntimeContextService {
         }
     }
 
-    private static String shaderState() {
-        if (FabricLoader.getInstance().isModLoaded("iris")) {
-            return "Iris installed";
+    private static ShaderDetection shaderDetection() {
+        long now = System.currentTimeMillis();
+        if (now - shaderDetectionAtMillis < 1000L) {
+            return cachedShaderDetection;
         }
-        if (FabricLoader.getInstance().isModLoaded("oculus")) {
-            return "Oculus installed";
+        shaderDetectionAtMillis = now;
+        boolean iris = FabricLoader.getInstance().isModLoaded("iris");
+        boolean oculus = FabricLoader.getInstance().isModLoaded("oculus");
+        if (iris || oculus) {
+            ShaderDetection detected = detectIrisApi("net.irisshaders.iris.api.v0.IrisApi", iris ? "Iris" : "Oculus");
+            if (detected != null) {
+                cachedShaderDetection = detected;
+                return detected;
+            }
+            detected = detectIrisApi("net.coderbot.iris.api.v0.IrisApi", iris ? "Iris" : "Oculus");
+            if (detected != null) {
+                cachedShaderDetection = detected;
+                return detected;
+            }
+            cachedShaderDetection = new ShaderDetection(true, false, (iris ? "Iris" : "Oculus") + " installed; active pack state unavailable");
+            return cachedShaderDetection;
         }
         Path shaderpacks = FabricLoader.getInstance().getGameDir().resolve("shaderpacks");
-        try {
-            if (Files.exists(shaderpacks) && Files.list(shaderpacks).findAny().isPresent()) {
-                return "shaderpacks folder populated";
+        try (Stream<Path> files = Files.exists(shaderpacks) ? Files.list(shaderpacks) : Stream.empty()) {
+            if (files.findAny().isPresent()) {
+                cachedShaderDetection = new ShaderDetection(false, false, "Shader packs available; no active shader loader detected");
+                return cachedShaderDetection;
             }
         } catch (Exception ignored) {
         }
-        return "none detected";
+        cachedShaderDetection = new ShaderDetection(false, false, "none detected");
+        return cachedShaderDetection;
+    }
+
+    private static ShaderDetection detectIrisApi(String className, String loaderName) {
+        try {
+            Class<?> apiClass = Class.forName(className);
+            Method getInstance = apiClass.getMethod("getInstance");
+            Object api = getInstance.invoke(null);
+            Method inUse = apiClass.getMethod("isShaderPackInUse");
+            boolean active = Boolean.TRUE.equals(inUse.invoke(api));
+            String packName = shaderPackName(apiClass, api);
+            if (active) {
+                return new ShaderDetection(true, true, packName.isBlank() ? loaderName + " shader pack active" : loaderName + " active: " + packName);
+            }
+            return new ShaderDetection(true, false, loaderName + " installed, shaders off");
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String shaderPackName(Class<?> apiClass, Object api) {
+        try {
+            Method method = apiClass.getMethod("getCurrentShaderPackName");
+            Object value = method.invoke(api);
+            if (value instanceof Optional<?> optional) {
+                return optional.map(Object::toString).orElse("");
+            }
+            return value == null ? "" : value.toString();
+        } catch (Throwable ignored) {
+            return "";
+        }
     }
 
     private static List<String> optimizationConfigNotes() {
@@ -140,8 +199,8 @@ public final class PerformanceRuntimeContextService {
         }
     }
 
-    private static String suggestedProfile(String worldType, List<String> packs, String shaderState, int modCount) {
-        if (!"none detected".equals(shaderState)) {
+    private static String suggestedProfile(String worldType, List<String> packs, boolean shaderActive, int modCount) {
+        if (shaderActive) {
             return PerformanceProfileMode.SHADER_FRIENDLY.name().toLowerCase(Locale.ROOT);
         }
         if ("server".equals(worldType)) {
@@ -159,5 +218,8 @@ public final class PerformanceRuntimeContextService {
             target = "default";
         }
         return (worldType + "/" + target + "/" + dimension).replaceAll("[^a-zA-Z0-9._/-]", "_");
+    }
+
+    private record ShaderDetection(boolean installed, boolean active, String label) {
     }
 }

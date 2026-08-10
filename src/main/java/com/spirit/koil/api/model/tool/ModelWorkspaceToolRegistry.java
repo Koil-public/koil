@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.PathMatcher;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.security.MessageDigest;
@@ -27,6 +28,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * Provider-neutral local coding tools. Every operation resolves through a
@@ -40,16 +44,19 @@ public final class ModelWorkspaceToolRegistry {
     private static final int MAXIMUM_SEARCH_FILES = 500;
     private static final int MAXIMUM_SEARCH_RESULTS = 50;
     private static final Path TRASH_ROOT = Path.of("koil/sys/model/file-trash");
-    private static final Map<String, ModelToolDefinition> DEFINITIONS = definitionsInternal();
     private static final Set<String> MUTATING_TOOLS = Set.of(
+            "workspace.mkdir",
             "workspace.create",
             "workspace.write",
             "workspace.replace",
+            "workspace.copy",
+            "workspace.move",
             "workspace.delete",
             "workspace.restore",
             "automation.ktl_apply"
     );
-    private static final String VERSION = "model-workspace-tools-v3:"
+    private static final Map<String, ModelToolDefinition> DEFINITIONS = definitionsInternal();
+    private static final String VERSION = "model-workspace-tools-v4:"
             + Integer.toHexString(DEFINITIONS.keySet().hashCode());
 
     private ModelWorkspaceToolRegistry() {
@@ -75,7 +82,7 @@ public final class ModelWorkspaceToolRegistry {
     }
 
     public static CompletableFuture<ModelToolResult> executeReadOnly(ModelToolCall call) {
-        if (call == null || !Set.of("workspace.roots", "workspace.list", "workspace.read", "workspace.search").contains(call.toolId())) {
+        if (call == null || !Set.of("workspace.roots", "workspace.list", "workspace.stat", "workspace.read", "workspace.search").contains(call.toolId())) {
             return CompletableFuture.completedFuture(new ModelToolResult(
                     call == null ? "" : call.id(), call == null ? "" : call.toolId(),
                     "unsupported", new JsonObject(), "read_only_boundary",
@@ -104,7 +111,7 @@ public final class ModelWorkspaceToolRegistry {
             ));
         }
         CompletableFuture<Boolean> approval;
-        if (preapproved || !MUTATING_TOOLS.contains(call.toolId()) || AutomationModeController.isYoloMode()) {
+        if (preapproved || !MUTATING_TOOLS.contains(call.toolId()) || AutomationModeController.isUnrestrictedMode()) {
             approval = CompletableFuture.completedFuture(true);
         } else if (displayRequestId == null) {
             return CompletableFuture.completedFuture(failure(
@@ -152,11 +159,15 @@ public final class ModelWorkspaceToolRegistry {
         return switch (call.toolId()) {
             case "workspace.roots" -> listRoots(call);
             case "workspace.list" -> list(call);
+            case "workspace.stat" -> stat(call);
             case "workspace.read" -> read(call);
             case "workspace.search" -> search(call);
+            case "workspace.mkdir" -> mkdir(call);
             case "workspace.create" -> create(call);
             case "workspace.write" -> write(call);
             case "workspace.replace" -> replace(call);
+            case "workspace.copy" -> copy(call);
+            case "workspace.move" -> move(call);
             case "workspace.delete" -> delete(call);
             case "workspace.restore" -> restore(call);
             case "automation.ktl_apply" -> applyKtl(call);
@@ -182,7 +193,7 @@ public final class ModelWorkspaceToolRegistry {
 
     private static ModelToolResult list(ModelToolCall call) throws IOException {
         JsonObject arguments = call.arguments();
-        String workspaceId = requiredString(arguments, "workspace");
+        String workspaceId = workspaceString(arguments, "workspace");
         String relative = optionalString(arguments, "path", "");
         int depth = boundedInt(arguments, "depth", 1, 1, 4);
         ModelWorkspaceRegistry.ResolvedPath resolved =
@@ -220,7 +231,7 @@ public final class ModelWorkspaceToolRegistry {
     private static ModelToolResult read(ModelToolCall call) throws IOException {
         JsonObject arguments = call.arguments();
         ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
-                requiredString(arguments, "workspace"),
+                workspaceString(arguments, "workspace"),
                 requiredString(arguments, "path"),
                 false
         );
@@ -246,36 +257,100 @@ public final class ModelWorkspaceToolRegistry {
         output.addProperty("startLine", from + 1);
         output.addProperty("endLine", end);
         output.addProperty("totalLines", lines.size());
+        output.addProperty("linesReturned", Math.max(0, end - from));
+        output.addProperty("totalBytes", Files.size(resolved.path()));
         output.addProperty("contentHash", sha256(Files.readAllBytes(resolved.path())));
         output.addProperty("text", text.toString());
-        output.addProperty("truncated", end < lines.size());
+        boolean hasMore = end < lines.size();
+        output.addProperty("complete", !hasMore);
+        output.addProperty("hasMore", hasMore);
+        output.addProperty("truncated", hasMore);
+        if (hasMore) {
+            output.addProperty("nextStartLine", end + 1);
+        }
         return completed(call, output, "Requested file section was read.");
+    }
+
+    private static ModelToolResult stat(ModelToolCall call) throws IOException {
+        JsonObject arguments = call.arguments();
+        ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
+                workspaceString(arguments, "workspace"),
+                optionalString(arguments, "path", ""),
+                false
+        );
+        if (!Files.exists(resolved.path())) {
+            throw new IOException("Workspace target does not exist.");
+        }
+        JsonObject output = new JsonObject();
+        output.addProperty("workspace", resolved.workspace().id());
+        output.addProperty("path", resolved.relativePath());
+        output.addProperty("type", Files.isDirectory(resolved.path()) ? "directory" : "file");
+        output.addProperty("readable", Files.isReadable(resolved.path()));
+        output.addProperty("writable", resolved.workspace().writable() && Files.isWritable(resolved.path()));
+        output.addProperty("modifiedAtMillis", Files.getLastModifiedTime(resolved.path()).toMillis());
+        if (Files.isRegularFile(resolved.path())) {
+            long bytes = Files.size(resolved.path());
+            output.addProperty("bytes", bytes);
+            if (bytes <= MAXIMUM_FILE_BYTES) {
+                byte[] content = Files.readAllBytes(resolved.path());
+                output.addProperty("contentHash", sha256(content));
+                output.addProperty("text", isText(content));
+                if (isText(content)) {
+                    output.addProperty("lines", lineCount(new String(content, StandardCharsets.UTF_8)));
+                }
+            } else {
+                output.addProperty("hashOmitted", true);
+            }
+        }
+        return completed(call, output, "Workspace metadata was inspected.");
     }
 
     private static ModelToolResult search(ModelToolCall call) throws IOException {
         JsonObject arguments = call.arguments();
         String query = requiredString(arguments, "query");
         boolean caseSensitive = optionalBoolean(arguments, "caseSensitive", false);
+        String matchMode = enumValue(arguments, "matchMode", "literal", Set.of("literal", "word", "regex"));
+        String outputMode = enumValue(arguments, "outputMode", "lines", Set.of("lines", "matches", "files", "count"));
+        String fileGlob = optionalString(arguments, "fileGlob", "").strip();
+        int contextBefore = boundedInt(arguments, "contextBefore", 0, 0, 3);
+        int contextAfter = boundedInt(arguments, "contextAfter", 0, 0, 3);
+        int maximumFiles = boundedInt(arguments, "maxFiles", 200, 1, MAXIMUM_SEARCH_FILES);
+        int requestedResults = boundedInt(arguments, "maxResults", 20, 1, MAXIMUM_SEARCH_RESULTS);
+        int effectiveResults = "lines".equals(outputMode)
+                ? Math.max(1, Math.min(requestedResults,
+                MAXIMUM_SEARCH_RESULTS / Math.max(1, 1 + contextBefore + contextAfter)))
+                : requestedResults;
         ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
-                requiredString(arguments, "workspace"),
+                workspaceString(arguments, "workspace"),
                 optionalString(arguments, "path", ""),
                 false
         );
         if (!Files.isDirectory(resolved.path())) {
             throw new IOException("Search target is not a directory.");
         }
-        String needle = caseSensitive ? query : query.toLowerCase(Locale.ROOT);
+        Pattern pattern = searchPattern(query, matchMode, caseSensitive);
+        PathMatcher pathMatcher = fileGlob.isBlank()
+                ? null
+                : resolved.path().getFileSystem().getPathMatcher("glob:" + fileGlob);
         JsonArray matches = new JsonArray();
         int scanned = 0;
+        int matchedFiles = 0;
+        int totalMatches = 0;
+        boolean resultLimitReached = false;
+        boolean fileLimitReached;
         try (var paths = Files.walk(resolved.path())) {
-            for (Path path : paths
+            List<Path> candidates = paths
                     .filter(path -> !Files.isSymbolicLink(path))
                     .filter(Files::isRegularFile)
-                    .limit(MAXIMUM_SEARCH_FILES)
-                    .toList()) {
-                if (scanned++ >= MAXIMUM_SEARCH_FILES || matches.size() >= MAXIMUM_SEARCH_RESULTS) {
-                    break;
-                }
+                    .filter(path -> pathMatcher == null || pathMatcher.matches(resolved.path().relativize(path)))
+                    .sorted()
+                    .limit((long) maximumFiles + 1L)
+                    .toList();
+            fileLimitReached = candidates.size() > maximumFiles;
+            int candidateCount = Math.min(maximumFiles, candidates.size());
+            for (int candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++) {
+                Path path = candidates.get(candidateIndex);
+                scanned++;
                 if (Files.size(path) > MAXIMUM_FILE_BYTES) {
                     continue;
                 }
@@ -285,28 +360,151 @@ public final class ModelWorkspaceToolRegistry {
                 } catch (IOException | RuntimeException ignored) {
                     continue;
                 }
-                for (int index = 0; index < lines.size() && matches.size() < MAXIMUM_SEARCH_RESULTS; index++) {
-                    String haystack = caseSensitive ? lines.get(index) : lines.get(index).toLowerCase(Locale.ROOT);
-                    if (!haystack.contains(needle)) {
+                String relativePath = resolved.workspace().root().relativize(path)
+                        .toString().replace('\\', '/');
+                int fileMatches = 0;
+                for (int index = 0; index < lines.size(); index++) {
+                    Matcher matcher = pattern.matcher(lines.get(index));
+                    if (!matcher.find()) {
                         continue;
                     }
-                    JsonObject match = new JsonObject();
-                    match.addProperty("path", resolved.workspace().root().relativize(path)
-                            .toString().replace('\\', '/'));
-                    match.addProperty("line", index + 1);
-                    match.addProperty("text", abbreviate(lines.get(index), 300));
-                    matches.add(match);
+                    int lineMatches = 0;
+                    do {
+                        if (matcher.start() == matcher.end()) {
+                            throw new IOException("Search regular expression must not produce empty matches.");
+                        }
+                        lineMatches++;
+                        fileMatches++;
+                        totalMatches++;
+                        if ("matches".equals(outputMode) && matches.size() < effectiveResults) {
+                            JsonObject match = baseSearchMatch(relativePath, index + 1);
+                            match.addProperty("columnStart", matcher.start() + 1);
+                            match.addProperty("columnEnd", matcher.end());
+                            match.addProperty("match", abbreviate(matcher.group(), 300));
+                            matches.add(match);
+                        }
+                    } while (matcher.find());
+
+                    if ("lines".equals(outputMode) && matches.size() < effectiveResults) {
+                        JsonObject match = baseSearchMatch(relativePath, index + 1);
+                        match.addProperty("matchCount", lineMatches);
+                        match.addProperty("text", abbreviate(lines.get(index), 300));
+                        appendContext(match, "before", lines,
+                                Math.max(0, index - contextBefore), index);
+                        appendContext(match, "after", lines,
+                                index + 1, Math.min(lines.size(), index + 1 + contextAfter));
+                        matches.add(match);
+                    }
+                    if (("lines".equals(outputMode) || "matches".equals(outputMode))
+                            && matches.size() >= effectiveResults) {
+                        resultLimitReached = true;
+                        break;
+                    }
+                }
+                if (fileMatches > 0) {
+                    matchedFiles++;
+                    if ("files".equals(outputMode)) {
+                        if (matches.size() < effectiveResults) {
+                            JsonObject match = new JsonObject();
+                            match.addProperty("path", relativePath);
+                            match.addProperty("matchCount", fileMatches);
+                            matches.add(match);
+                        } else {
+                            resultLimitReached = true;
+                        }
+                    }
+                }
+                if (resultLimitReached && !"count".equals(outputMode)) {
+                    break;
                 }
             }
         }
         JsonObject output = new JsonObject();
         output.addProperty("workspace", resolved.workspace().id());
+        output.addProperty("path", resolved.relativePath());
         output.addProperty("query", query);
-        output.addProperty("scannedFiles", Math.min(scanned, MAXIMUM_SEARCH_FILES));
-        output.add("matches", matches);
-        output.addProperty("truncated", scanned >= MAXIMUM_SEARCH_FILES
-                || matches.size() >= MAXIMUM_SEARCH_RESULTS);
-        return completed(call, output, "Workspace text search completed.");
+        output.addProperty("matchMode", matchMode);
+        output.addProperty("outputMode", outputMode);
+        if (!fileGlob.isBlank()) output.addProperty("fileGlob", fileGlob);
+        output.addProperty("scannedFiles", scanned);
+        output.addProperty("matchedFiles", matchedFiles);
+        output.addProperty("totalMatches", totalMatches);
+        output.addProperty("resultsReturned", matches.size());
+        boolean truncated = fileLimitReached || resultLimitReached;
+        output.addProperty("complete", !truncated);
+        output.addProperty("truncated", truncated);
+        if (!"count".equals(outputMode)) output.add("matches", matches);
+        return completed(call, output, "Selective workspace text search completed.");
+    }
+
+    private static Pattern searchPattern(String query, String matchMode, boolean caseSensitive) throws IOException {
+        String expression = switch (matchMode) {
+            case "word" -> "(?<![\\p{L}\\p{N}_])" + Pattern.quote(query) + "(?![\\p{L}\\p{N}_])";
+            case "regex" -> query;
+            default -> Pattern.quote(query);
+        };
+        int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+        try {
+            Pattern pattern = Pattern.compile(expression, flags);
+            if (pattern.matcher("").find()) {
+                throw new IOException("Search expression must not match empty text.");
+            }
+            return pattern;
+        } catch (PatternSyntaxException invalid) {
+            throw new IOException("Invalid search regular expression: " + invalid.getDescription());
+        }
+    }
+
+    private static JsonObject baseSearchMatch(String path, int line) {
+        JsonObject match = new JsonObject();
+        match.addProperty("path", path);
+        match.addProperty("line", line);
+        return match;
+    }
+
+    private static void appendContext(JsonObject match, String key, List<String> lines, int from, int to) {
+        if (from >= to) return;
+        JsonArray context = new JsonArray();
+        for (int index = from; index < to; index++) {
+            JsonObject line = new JsonObject();
+            line.addProperty("line", index + 1);
+            line.addProperty("text", abbreviate(lines.get(index), 300));
+            context.add(line);
+        }
+        match.add(key, context);
+    }
+
+    private static ModelToolResult mkdir(ModelToolCall call) throws IOException {
+        JsonObject arguments = call.arguments();
+        ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
+                workspaceString(arguments, "workspace"),
+                requiredString(arguments, "path"),
+                true
+        );
+        if (resolved.relativePath().isBlank()) {
+            throw new IOException("A directory path is required.");
+        }
+        if (Files.exists(resolved.path())) {
+            throw new IOException("Directory or file already exists.");
+        }
+        Files.createDirectories(resolved.path());
+        if (!Files.isDirectory(resolved.path())) {
+            throw new IOException("Directory creation could not be verified.");
+        }
+        JsonObject output = new JsonObject();
+        output.addProperty("workspace", resolved.workspace().id());
+        output.addProperty("path", resolved.relativePath());
+        output.addProperty("operation", "directory_created");
+        output.addProperty("filesystemState", "directory");
+        output.addProperty("reread", true);
+        output.addProperty("validationStatus", "passed");
+        return new ModelToolResult(
+                call.id(), call.toolId(), "completed", output, "",
+                "Workspace directory was created and verified.",
+                System.currentTimeMillis(), System.currentTimeMillis(), "passed",
+                List.of(resolved.workspace().id() + ":" + resolved.relativePath()),
+                false, false, "approved"
+        );
     }
 
     private static ModelToolResult create(ModelToolCall call) throws IOException {
@@ -357,6 +555,82 @@ public final class ModelWorkspaceToolRegistry {
         }
         atomicWrite(resolved.path(), updated, true);
         return mutationResult(call, resolved, "modified", previousBytes, updated.getBytes(StandardCharsets.UTF_8), true, "replaced");
+    }
+
+    private static ModelToolResult copy(ModelToolCall call) throws IOException {
+        JsonObject arguments = call.arguments();
+        ModelWorkspaceRegistry.ResolvedPath source = sourceFile(arguments);
+        ModelWorkspaceRegistry.ResolvedPath destination = destinationFile(arguments);
+        rejectSameTarget(source, destination);
+        if (Files.exists(destination.path())) {
+            throw new IOException("Copy destination already exists; no file was changed.");
+        }
+        byte[] content = Files.readAllBytes(source.path());
+        requireExpectedHash(arguments, content);
+        atomicWrite(destination.path(), new String(content, StandardCharsets.UTF_8), false);
+        byte[] sourceAfter = Files.readAllBytes(source.path());
+        if (!MessageDigest.isEqual(content, sourceAfter)) {
+            Files.deleteIfExists(destination.path());
+            throw new StaleFileException(sha256(content), sha256(sourceAfter));
+        }
+        ModelToolResult result = mutationResult(
+                call, destination, "copied", new byte[0], content, true, "created"
+        );
+        result.output().addProperty("sourceWorkspace", source.workspace().id());
+        result.output().addProperty("sourcePath", source.relativePath());
+        result.output().addProperty("sourceContentHash", sha256(content));
+        result.output().addProperty("sourceUnchanged", true);
+        return result;
+    }
+
+    private static ModelToolResult move(ModelToolCall call) throws IOException {
+        JsonObject arguments = call.arguments();
+        ModelWorkspaceRegistry.ResolvedPath source = sourceFile(arguments);
+        ModelWorkspaceRegistry.ResolvedPath destination = destinationFile(arguments);
+        rejectSameTarget(source, destination);
+        if (Files.exists(destination.path())) {
+            throw new IOException("Move destination already exists; no file was changed.");
+        }
+        byte[] content = Files.readAllBytes(source.path());
+        requireExpectedHash(arguments, content);
+        Files.createDirectories(destination.path().getParent());
+        try {
+            Files.move(source.path(), destination.path(), StandardCopyOption.ATOMIC_MOVE);
+        } catch (UnsupportedOperationException | IOException unsupported) {
+            Files.move(source.path(), destination.path());
+        }
+        try {
+            if (Files.exists(source.path()) || !Files.isRegularFile(destination.path())
+                    || !MessageDigest.isEqual(content, Files.readAllBytes(destination.path()))) {
+                throw new IOException("Post-move filesystem validation failed.");
+            }
+        } catch (IOException validationFailure) {
+            if (!Files.exists(source.path()) && Files.exists(destination.path())) {
+                try {
+                    Files.move(destination.path(), source.path());
+                } catch (IOException rollbackFailure) {
+                    validationFailure.addSuppressed(rollbackFailure);
+                }
+            }
+            throw validationFailure;
+        }
+        ModelToolResult mutation = mutationResult(
+                call, destination, "moved", new byte[0], content, true, "created"
+        );
+        JsonObject output = mutation.output();
+        output.addProperty("sourceWorkspace", source.workspace().id());
+        output.addProperty("sourcePath", source.relativePath());
+        output.addProperty("sourceRemoved", true);
+        output.addProperty("sourceContentHash", sha256(content));
+        return new ModelToolResult(
+                call.id(), call.toolId(), "completed", output, "",
+                "Workspace file was moved and both source and destination were verified.",
+                mutation.startedAtMillis(), System.currentTimeMillis(), "passed",
+                List.of(
+                        source.workspace().id() + ":" + source.relativePath(),
+                        destination.workspace().id() + ":" + destination.relativePath()
+                ), false, false, "approved"
+        );
     }
 
     private static ModelToolResult delete(ModelToolCall call) throws IOException {
@@ -464,7 +738,7 @@ public final class ModelWorkspaceToolRegistry {
 
     private static ModelWorkspaceRegistry.ResolvedPath writableFile(JsonObject arguments) throws IOException {
         ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
-                requiredString(arguments, "workspace"),
+                workspaceString(arguments, "workspace"),
                 requiredString(arguments, "path"),
                 true
         );
@@ -472,6 +746,37 @@ public final class ModelWorkspaceToolRegistry {
             throw new IOException("A file path is required.");
         }
         return resolved;
+    }
+
+    private static ModelWorkspaceRegistry.ResolvedPath sourceFile(JsonObject arguments) throws IOException {
+        ModelWorkspaceRegistry.ResolvedPath source = ModelWorkspaceRegistry.resolve(
+                workspaceString(arguments, "workspace"),
+                requiredString(arguments, "path"),
+                true
+        );
+        requireTextFile(source.path());
+        return source;
+    }
+
+    private static ModelWorkspaceRegistry.ResolvedPath destinationFile(JsonObject arguments) throws IOException {
+        ModelWorkspaceRegistry.ResolvedPath destination = ModelWorkspaceRegistry.resolve(
+                workspaceString(arguments, "destinationWorkspace"),
+                requiredString(arguments, "destinationPath"),
+                true
+        );
+        if (destination.relativePath().isBlank()) {
+            throw new IOException("A destination file path is required.");
+        }
+        return destination;
+    }
+
+    private static void rejectSameTarget(
+            ModelWorkspaceRegistry.ResolvedPath source,
+            ModelWorkspaceRegistry.ResolvedPath destination
+    ) throws IOException {
+        if (source.path().toAbsolutePath().normalize().equals(destination.path().toAbsolutePath().normalize())) {
+            throw new IOException("Source and destination must be different files.");
+        }
     }
 
     private static void requireTextFile(Path path) throws IOException {
@@ -483,11 +788,21 @@ public final class ModelWorkspaceToolRegistry {
             throw new IOException("File exceeds the 262144 b model-tool limit.");
         }
         byte[] probe = Files.readAllBytes(path);
-        for (byte value : probe) {
-            if (value == 0) {
-                throw new IOException("Binary files are not exposed as text.");
-            }
+        if (!isText(probe)) {
+            throw new IOException("Binary files are not exposed as text.");
         }
+    }
+
+    private static boolean isText(byte[] content) {
+        for (byte value : content) {
+            if (value == 0) return false;
+        }
+        return true;
+    }
+
+    private static int lineCount(String content) {
+        if (content == null || content.isEmpty()) return 0;
+        return content.split("\\n", -1).length;
     }
 
     private static String boundedContent(JsonObject arguments) throws IOException {
@@ -666,7 +981,12 @@ public final class ModelWorkspaceToolRegistry {
         JsonObject arguments = call.arguments();
         String workspace = optionalString(arguments, "workspace", "unknown");
         String path = optionalString(arguments, "path", "unknown");
-        return call.toolId() + " requested for " + workspace + ":" + path
+        String destinationWorkspace = optionalString(arguments, "destinationWorkspace", "");
+        String destinationPath = optionalString(arguments, "destinationPath", "");
+        String destination = destinationWorkspace.isBlank() || destinationPath.isBlank()
+                ? ""
+                : "\nDestination: " + destinationWorkspace + ":" + destinationPath;
+        return call.toolId() + " requested for " + workspace + ":" + path + destination
                 + "\n\nThe operation is restricted to that named workspace. Deletes move files to Koil's recoverable model trash.";
     }
 
@@ -681,12 +1001,22 @@ public final class ModelWorkspaceToolRegistry {
         ));
         definitions.put("workspace.list", definition(
                 "workspace.list",
-                "List files and directories under a bounded named workspace path.",
+                "List files and directories under a bounded named workspace path. Omit workspace to use instance; valid roots are instance, automation, and project when available.",
                 objectSchema(Map.of(
                         "workspace", stringSchema(),
                         "path", stringSchema(),
                         "depth", integerSchema(1, 4)
-                ), List.of("workspace")),
+                ), List.of()),
+                false,
+                Set.of("reads_file_metadata")
+        ));
+        definitions.put("workspace.stat", definition(
+                "workspace.stat",
+                "Inspect one permitted file or directory: type, size, revision hash when bounded, modification time, and access state.",
+                objectSchema(Map.of(
+                        "workspace", stringSchema(),
+                        "path", stringSchema()
+                ), List.of()),
                 false,
                 Set.of("reads_file_metadata")
         ));
@@ -698,21 +1028,26 @@ public final class ModelWorkspaceToolRegistry {
                         "path", stringSchema(),
                         "startLine", integerSchema(1, Integer.MAX_VALUE),
                         "maxLines", integerSchema(1, MAXIMUM_READ_LINES)
-                ), List.of("workspace", "path")),
+                ), List.of("path")),
                 false,
                 Set.of("reads_file")
         ));
         definitions.put("workspace.search", definition(
                 "workspace.search",
-                "Search bounded permitted UTF-8 workspace files of any text format for literal text.",
-                objectSchema(Map.of(
-                        "workspace", stringSchema(),
-                        "path", stringSchema(),
-                        "query", stringSchema(),
-                        "caseSensitive", booleanSchema()
-                ), List.of("workspace", "query")),
+                "Selectively search bounded UTF-8 workspace files. Narrow by path/fileGlob and request only exact matches, matching lines, file names, or counts; add context only when it is needed.",
+                searchSchema(),
                 false,
                 Set.of("reads_files")
+        ));
+        definitions.put("workspace.mkdir", definition(
+                "workspace.mkdir",
+                "Create and verify one bounded directory path inside a named writable workspace.",
+                objectSchema(Map.of(
+                        "workspace", stringSchema(),
+                        "path", stringSchema()
+                ), List.of("path")),
+                true,
+                Set.of("creates_directory")
         ));
         definitions.put("workspace.create", definition(
                 "workspace.create",
@@ -738,9 +1073,23 @@ public final class ModelWorkspaceToolRegistry {
                         "replacement", stringSchema(),
                         "expectedOccurrences", integerSchema(1, 1000),
                         "expectedHash", hashSchema()
-                ), List.of("workspace", "path", "find", "expectedHash")),
+                ), List.of("path", "find", "expectedHash")),
                 true,
                 Set.of("changes_file")
+        ));
+        definitions.put("workspace.copy", definition(
+                "workspace.copy",
+                "Copy one permitted UTF-8 file to a new bounded destination after verifying the source expectedHash; returns a real destination diff and reread evidence.",
+                transferSchema(),
+                true,
+                Set.of("creates_file")
+        ));
+        definitions.put("workspace.move", definition(
+                "workspace.move",
+                "Move or rename one permitted UTF-8 file to a new bounded destination after verifying the source expectedHash and both filesystem states.",
+                transferSchema(),
+                true,
+                Set.of("moves_file")
         ));
         definitions.put("workspace.delete", definition(
                 "workspace.delete",
@@ -749,7 +1098,7 @@ public final class ModelWorkspaceToolRegistry {
                         "workspace", stringSchema(),
                         "path", stringSchema(),
                         "expectedHash", hashSchema()
-                ), List.of("workspace", "path", "expectedHash")),
+                ), List.of("path", "expectedHash")),
                 true,
                 Set.of("moves_file_to_trash")
         ));
@@ -760,7 +1109,7 @@ public final class ModelWorkspaceToolRegistry {
                         "workspace", stringSchema(),
                         "path", stringSchema(),
                         "recoveryToken", stringSchema()
-                ), List.of("workspace", "path", "recoveryToken")),
+                ), List.of("path", "recoveryToken")),
                 true,
                 Set.of("restores_file")
         ));
@@ -784,17 +1133,25 @@ public final class ModelWorkspaceToolRegistry {
             boolean confirmation,
             Set<String> sideEffects
     ) {
+        boolean mutating = MUTATING_TOOLS.contains(id);
+        List<String> preconditions = "workspace.roots".equals(id)
+                ? List.of()
+                : mutating
+                ? List.of("automation_mode_enabled", "path_inside_named_workspace")
+                : List.of("path_inside_named_workspace");
         return new ModelToolDefinition(
                 id,
                 description,
                 schema,
-                List.of("automation_mode_enabled", "path_inside_named_workspace"),
+                preconditions,
                 sideEffects,
                 "workspace.delete".equals(id),
                 Duration.ofSeconds(30),
                 false,
                 confirmation,
-                Set.of("completed", "rejected", "failed")
+                mutating
+                        ? Set.of("completed", "rejected", "stale", "failed")
+                        : Set.of("completed", "failed")
         );
     }
 
@@ -806,11 +1163,38 @@ public final class ModelWorkspaceToolRegistry {
         if (existingFile) {
             properties.put("expectedHash", hashSchema());
         }
-        List<String> required = new ArrayList<>(List.of("workspace", "path", "content"));
+        List<String> required = new ArrayList<>(List.of("path", "content"));
         if (existingFile) {
             required.add("expectedHash");
         }
         return objectSchema(properties, required);
+    }
+
+    private static JsonObject transferSchema() {
+        return objectSchema(Map.of(
+                "workspace", stringSchema(),
+                "path", stringSchema(),
+                "destinationWorkspace", stringSchema(),
+                "destinationPath", stringSchema(),
+                "expectedHash", hashSchema()
+        ), List.of("path", "destinationPath", "expectedHash"));
+    }
+
+    private static JsonObject searchSchema() {
+        Map<String, JsonObject> properties = new LinkedHashMap<>();
+        properties.put("workspace", described(stringSchema(), "Named workspace; omit for the Minecraft instance root."));
+        properties.put("path", described(stringSchema(), "Directory to search, relative to the named workspace. Narrow this whenever known."));
+        properties.put("query", described(stringSchema(), "Only the text or regular expression actually needed."));
+        properties.put("caseSensitive", booleanSchema());
+        properties.put("matchMode", enumSchema("literal", "word", "regex"));
+        properties.put("outputMode", described(enumSchema("lines", "matches", "files", "count"),
+                "lines returns matching lines; matches returns only exact matched text and columns; files returns paths/counts; count returns totals only."));
+        properties.put("fileGlob", described(stringSchema(), "Optional relative glob such as **/*.java or config/*.json."));
+        properties.put("contextBefore", integerSchema(0, 3));
+        properties.put("contextAfter", integerSchema(0, 3));
+        properties.put("maxResults", integerSchema(1, MAXIMUM_SEARCH_RESULTS));
+        properties.put("maxFiles", integerSchema(1, MAXIMUM_SEARCH_FILES));
+        return objectSchema(properties, List.of("query"));
     }
 
     private static JsonObject hashSchema() {
@@ -854,12 +1238,30 @@ public final class ModelWorkspaceToolRegistry {
         return schema;
     }
 
+    private static JsonObject enumSchema(String... values) {
+        JsonObject schema = new JsonObject();
+        schema.addProperty("type", "string");
+        JsonArray allowed = new JsonArray();
+        for (String value : values) allowed.add(value);
+        schema.add("enum", allowed);
+        return schema;
+    }
+
+    private static JsonObject described(JsonObject schema, String description) {
+        schema.addProperty("description", description);
+        return schema;
+    }
+
     private static String requiredString(JsonObject root, String key) throws IOException {
         String value = optionalString(root, key, "");
         if (value.isBlank()) {
             throw new IOException("Missing required argument '" + key + "'.");
         }
         return value;
+    }
+
+    private static String workspaceString(JsonObject root, String key) {
+        return optionalString(root, key, "instance");
     }
 
     private static String optionalString(JsonObject root, String key, String fallback) {
@@ -878,6 +1280,14 @@ public final class ModelWorkspaceToolRegistry {
         } catch (RuntimeException ignored) {
             return fallback;
         }
+    }
+
+    private static String enumValue(JsonObject root, String key, String fallback, Set<String> allowed) throws IOException {
+        String value = optionalString(root, key, fallback).toLowerCase(Locale.ROOT).strip();
+        if (!allowed.contains(value)) {
+            throw new IOException("Argument '" + key + "' must be one of " + allowed + ".");
+        }
+        return value;
     }
 
     private static int boundedInt(JsonObject root, String key, int fallback, int minimum, int maximum) {

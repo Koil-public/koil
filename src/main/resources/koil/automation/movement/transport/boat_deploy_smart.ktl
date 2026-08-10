@@ -1,0 +1,50 @@
+version: 2
+kind: task_template
+id: template.movement_transport_boat_deploy_smart
+template_id: movement/transport/boat_deploy_smart
+semantic_operation: sem.movement.boat_travel
+params: [boat.item, target.x, target.y, target.z, placement.preference, search.radius, craft.if_missing, recipe.id]
+metadata:
+  semantic_operations: [sem.movement.boat_travel]
+  target_kinds: [location, item]
+  required_params: [boat.item]
+  optional_params: [target.x, target.y, target.z, placement.preference, search.radius, craft.if_missing, recipe.id]
+  tags: [movement, transport, boat, crafting, water, ground, local_resolution]
+  description: Resolve a reachable nearby surface, verify or craft an exact boat, deploy it, and mount it
+  visibility: public
+  model_callable: true
+  resource_locks: [inventory, crafting, look, input, world]
+  side_effects: [may_craft_item, changes_inventory, deploys_transport, mounts_entity, changes_orientation]
+  timeout_ticks: 3600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.transport.resolve_boat_target
+    params:
+      target.x: ${target.x}
+      target.y: ${target.y}
+      target.z: ${target.z}
+      placement.preference: ${placement.preference}
+      search.radius: ${search.radius}
+  - type: run_primitive
+    action: cap.transport.prepare_boat
+    params:
+      boat.item: ${boat.item}
+      craft.if_missing: ${craft.if_missing}
+      recipe.id: ${recipe.id}
+  - type: run_primitive
+    action: cap.look.face_position
+    params:
+      target.x: ${current.target.x}
+      target.y: ${current.target.y}
+      target.z: ${current.target.z}
+  - type: run_primitive
+    action: cap.transport.deploy_boat
+    params:
+      boat.item: ${boat.item}
+  - type: run_primitive
+    action: cap.transport.verify_boat_mounted
+    params:
+      boat.item: ${boat.item}
+  - type: return
+    label: done

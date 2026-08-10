@@ -78,6 +78,46 @@ public final class RichChatBodyWrapFormatter {
         return formatted;
     }
 
+    /**
+     * Wraps confirmation/detail rows without requiring a chat identity prefix.
+     * Every continuation repeats the standard `-#` semantic prefix. The live
+     * Rich Chat renderer consumes that prefix and applies the same scale and
+     * color on every visual row, without leaking private-use marker glyphs.
+     */
+    public static Text formatConfirmationDetails(Text message, int wrapWidth) {
+        if (message == null || message.getString().isBlank()) return message;
+        TextRenderer renderer = textRenderer();
+        if (renderer == null) return message;
+        String[] lines = message.getString().replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+        StringBuilder output = new StringBuilder();
+        boolean changed = false;
+        for (int index = 0; index < lines.length; index++) {
+            if (index > 0) output.append('\n');
+            String line = lines[index];
+            int whitespace = leadingWhitespaceWidth(line);
+            String leading = line.substring(0, whitespace);
+            String content = line.substring(whitespace);
+            if (!content.startsWith("-# ") || measuredWidth(renderer, line) <= wrapWidth) {
+                output.append(line);
+                continue;
+            }
+            String body = content.substring(3);
+            int bodyWidth = Math.max(8, (int) Math.floor((wrapWidth - renderer.getWidth(leading)) / 0.82F)
+                    - renderer.getWidth("-# ") - WRAP_EDGE_GUARD);
+            List<String> parts = carryInlineFormatting(wrapBody(body, renderer, bodyWidth, bodyWidth));
+            if (parts.size() <= 1) {
+                output.append(line);
+                continue;
+            }
+            output.append(leading).append("-# ").append(parts.get(0));
+            for (int part = 1; part < parts.size(); part++) {
+                output.append('\n').append(RichChatStructuralContinuation.subtextPrefix(leading)).append(parts.get(part));
+            }
+            changed = true;
+        }
+        return changed ? Text.literal(output.toString()) : message;
+    }
+
     public static int currentWrapWidth() {
         // This must remain the real native ChatHud boundary. Artificially
         // enlarging it makes Minecraft wrap Koil's already-wrapped rows a
@@ -175,7 +215,7 @@ public final class RichChatBodyWrapFormatter {
             return line;
         }
 
-        // An already-indented model row is a continuation of >_:, not a new
+        // An already-indented model row is a continuation of the model identity, not a new
         // nested prefix. Reusing the exact indent prevents cumulative
         // rightward drift when that logical row wraps again.
         String indent = modelContinuation
@@ -293,17 +333,17 @@ public final class RichChatBodyWrapFormatter {
                     leading,
                     0.82F,
                     true,
-                    leading + RichChatStructuralContinuation.SUBTEXT
+                    RichChatStructuralContinuation.subtextPrefix(leading)
             );
         }
         if (RichChatStructuralContinuation.isSubtext(content, 0)) {
             return new StructuralPrefix(
-                    leading + RichChatStructuralContinuation.SUBTEXT,
+                    RichChatStructuralContinuation.subtextPrefix(leading),
                     content.substring(1),
                     leading,
                     0.82F,
                     true,
-                    leading + RichChatStructuralContinuation.SUBTEXT
+                    RichChatStructuralContinuation.subtextPrefix(leading)
             );
         }
         if (content.startsWith("> ")) {

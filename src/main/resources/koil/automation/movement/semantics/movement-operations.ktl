@@ -62,6 +62,16 @@ operations:
     target_kinds: [location]
     preferred_templates: [movement/tactics/swim_to]
 
+  - id: sem.movement.mount_entity
+    intent: mount
+    target_kinds: [entity]
+    preferred_templates: [movement/transport/mount_entity]
+
+  - id: sem.movement.dismount
+    intent: dismount
+    target_kinds: [player]
+    preferred_templates: [movement/transport/dismount]
+
   - id: sem.task.interact_target
     intent: interact
     target_kinds: [block, entity, player]

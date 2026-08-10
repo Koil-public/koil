@@ -1,0 +1,13 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.flow.input
+operations:
+  - id: sem.task.hold_input
+    intent: hold_input
+    target_kinds: []
+    preferred_templates: [flow/core/hold_input]
+
+  - id: sem.task.mouse_input
+    intent: mouse_input
+    target_kinds: []
+    preferred_templates: [flow/core/mouse_delta]

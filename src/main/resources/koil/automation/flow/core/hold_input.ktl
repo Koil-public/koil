@@ -1,0 +1,35 @@
+version: 2
+kind: task_template
+id: template.flow_core_hold_input
+template_id: flow/core/hold_input
+semantic_operation: sem.task.hold_input
+params: [input.key, count.value]
+metadata:
+  semantic_operations: [sem.task.hold_input]
+  target_kinds: []
+  required_params: [input.key, count.value]
+  optional_params: []
+  tags: [flow, input, hold, cleanup]
+  description: Hold Input For Bounded Ticks And Release
+  visibility: internal
+  model_callable: false
+  resource_locks: [input, screen]
+  side_effects: [changes_input_or_screen]
+  timeout_ticks: 1400
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.input.press_key
+    params:
+      input.key: ${input.key}
+  - type: run_primitive
+    action: cap.wait.ticks
+    params:
+      count.value: ${count.value}
+  - type: run_primitive
+    action: cap.input.release_key
+    params:
+      input.key: ${input.key}
+  - type: return
+    label: done
+

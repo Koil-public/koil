@@ -3,12 +3,12 @@ kind: task_template
 id: template.interaction_core_interact_entity
 template_id: interaction/core/interact_entity
 semantic_operation: sem.interaction.interact_entity
-params: [target.id, target.kind, target.selector, hand.id, radius, stop.distance]
+params: [target.id, target.kind, target.selector, hand.id, interaction.sneak, radius, stop.distance]
 metadata:
   semantic_operations: [sem.interaction.interact_entity]
   target_kinds: [entity, player]
   required_params: [target.id, target.kind]
-  optional_params: [target.selector, hand.id, radius, stop.distance]
+  optional_params: [target.selector, hand.id, interaction.sneak, radius, stop.distance]
   tags: [interaction, entity]
   description: Resolve, approach, face, and interact with a live entity
   visibility: public
@@ -30,5 +30,6 @@ steps:
     action: cap.interaction.interact_entity_target
     params:
       hand.id: ${hand.id}
+      interaction.sneak: ${interaction.sneak}
   - type: return
     label: done

@@ -1,14 +1,10 @@
 package com.spirit.koil.api.util.console.log;
 
-import com.spirit.client.gui.main.ConsoleToast;
 import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.console.ConsoleLogBridge;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
 import net.minecraft.MinecraftVersion;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.toast.ToastManager;
-import net.minecraft.text.Text;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -34,6 +30,7 @@ public class SubFileLogger {
     private static final Lock lock = new ReentrantLock();
     private static final int QUEUE_CAPACITY = 1000;
     private static final long FLUSH_INTERVAL_MS = 120;
+    private static volatile ToastSink toastSink = (type, title, description) -> { };
     private static final String LATEST_LOG_FILE_NAME = "latest.log"; // Default log file name
 
     private BufferedWriter writer;
@@ -64,6 +61,8 @@ public class SubFileLogger {
         }
 
         logWriterThread = new Thread(this::processLogQueue);
+        logWriterThread.setName("Koil-Log-" + baseFileName);
+        logWriterThread.setDaemon(true);
         logWriterThread.start();
 
         Runtime.getRuntime().addShutdownHook(new Thread(this::handleShutdown));
@@ -107,7 +106,7 @@ public class SubFileLogger {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[ ] | [" + timestamp + "] " + "[" + thread + "]: " + message;
         if (toast) {
-            showToast(ConsoleToast.Type.CONSOLE, "Console - " + thread, toastMessage);
+            showToast(ToastType.CONSOLE, "Console - " + thread, toastMessage);
         }
         publishConsoleRecord(ConsoleLevel.PLAIN, timestamp, thread, "", message, logMessage);
         enqueueLogMessage(logMessage);
@@ -124,7 +123,7 @@ public class SubFileLogger {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[-] | [" + timestamp + "] " + "[" + thread + "/Info]: " + message;
         if (toast) {
-            showToast(ConsoleToast.Type.CONSOLE_INFO, "Info - " + thread, toastMessage);
+            showToast(ToastType.CONSOLE_INFO, "Info - " + thread, toastMessage);
         }
         publishConsoleRecord(ConsoleLevel.INFO, timestamp, thread, "Info", message, logMessage);
         enqueueLogMessage(logMessage);
@@ -141,7 +140,7 @@ public class SubFileLogger {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[=] | [" + timestamp + "] " + "[" + thread + "/Warn]: " + message;
         if (toast) {
-            showToast(ConsoleToast.Type.CONSOLE_WARNING, "Warn - " + thread, toastMessage);
+            showToast(ToastType.CONSOLE_WARNING, "Warn - " + thread, toastMessage);
         }
         publishConsoleRecord(ConsoleLevel.WARN, timestamp, thread, "Warn", message, logMessage);
         enqueueLogMessage(logMessage);
@@ -158,7 +157,7 @@ public class SubFileLogger {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[*] | [" + timestamp + "] " + "[" + thread + "/Error]: " + message;
         if (toast) {
-            showToast(ConsoleToast.Type.CONSOLE_ERROR, "Error - " + thread, toastMessage);
+            showToast(ToastType.CONSOLE_ERROR, "Error - " + thread, toastMessage);
         }
         publishConsoleRecord(ConsoleLevel.ERROR, timestamp, thread, "Error", message, logMessage);
         enqueueLogMessage(logMessage);
@@ -167,7 +166,7 @@ public class SubFileLogger {
     public void logF(String thread, String message) {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[~] | [" + timestamp + "] " + "[" + thread + "/Fatal]: " + message;
-        showToast(ConsoleToast.Type.CONSOLE_FATAL, "Fatal - " + thread, "Please refer to the KL");
+        showToast(ToastType.CONSOLE_FATAL, "Fatal - " + thread, "Please refer to the KL");
         publishConsoleRecord(ConsoleLevel.FATAL, timestamp, thread, "Fatal", message, logMessage);
         enqueueLogMessage(logMessage);
     }
@@ -176,7 +175,7 @@ public class SubFileLogger {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[~] | [" + timestamp + "] " + "[" + thread + "/Fatal]: " + message;
         if (toast) {
-            showToast(ConsoleToast.Type.CONSOLE_FATAL, "Fatal - " + thread, toastMessage);
+            showToast(ToastType.CONSOLE_FATAL, "Fatal - " + thread, toastMessage);
         }
         publishConsoleRecord(ConsoleLevel.FATAL, timestamp, thread, "Fatal", message, logMessage);
         enqueueLogMessage(logMessage);
@@ -193,7 +192,7 @@ public class SubFileLogger {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[>] | [" + timestamp + "] " + "[" + thread + "/Debug]: " + message;
         if (toast) {
-            showToast(ConsoleToast.Type.CONSOLE_DEBUG, "Debug - " + thread, toastMessage);
+            showToast(ToastType.CONSOLE_DEBUG, "Debug - " + thread, toastMessage);
         }
         publishConsoleRecord(ConsoleLevel.DEBUG, timestamp, thread, "Debug", message, logMessage);
         enqueueLogMessage(logMessage);
@@ -210,7 +209,7 @@ public class SubFileLogger {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[&] | [" + timestamp + "] " + "[" + thread + "/Update]: " + message;
         if (toast && !isFirstLaunchPending()) {
-            showToast(ConsoleToast.Type.CONSOLE_UPDATE, "Update - " + thread, toastMessage);
+            showToast(ToastType.CONSOLE_UPDATE, "Update - " + thread, toastMessage);
         }
         publishConsoleRecord(ConsoleLevel.UPDATE, timestamp, thread, "Update", message, logMessage);
         enqueueLogMessage(logMessage);
@@ -227,7 +226,7 @@ public class SubFileLogger {
         String timestamp = LocalDateTime.now().format(timestampFormatter);
         String logMessage = "[?] | [" + timestamp + "] " + "[" + thread + "/Unknown]: " + message;
         if (toast) {
-            showToast(ConsoleToast.Type.CONSOLE_OTHER, "Unknown - " + thread, toastMessage);
+            showToast(ToastType.CONSOLE_OTHER, "Unknown - " + thread, toastMessage);
         }
         publishConsoleRecord(ConsoleLevel.OTHER, timestamp, thread, "Unknown", message, logMessage);
         enqueueLogMessage(logMessage);
@@ -237,21 +236,32 @@ public class SubFileLogger {
         ConsoleLogBridge.publish(this.consoleChannel, level, timestamp, thread, category, message, rawLine);
     }
 
-    private void showToast(ConsoleToast.Type type, String title, String description) {
-        ToastManager toastManager = getToastManager();
-        if (toastManager == null) {
-            return;
-        }
-
-        ConsoleToast.add(toastManager, type, Text.of(title), Text.of(description));
+    public static void installToastSink(ToastSink sink) {
+        toastSink = sink == null ? (type, title, description) -> { } : sink;
     }
 
-    private ToastManager getToastManager() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null) {
-            return null;
+    private void showToast(ToastType type, String title, String description) {
+        try {
+            toastSink.show(type, title, description);
+        } catch (RuntimeException ignored) {
+            // Presentation failures must never break common logging.
         }
-        return client.getToastManager();
+    }
+
+    public enum ToastType {
+        CONSOLE,
+        CONSOLE_INFO,
+        CONSOLE_WARNING,
+        CONSOLE_ERROR,
+        CONSOLE_FATAL,
+        CONSOLE_DEBUG,
+        CONSOLE_UPDATE,
+        CONSOLE_OTHER
+    }
+
+    @FunctionalInterface
+    public interface ToastSink {
+        void show(ToastType type, String title, String description);
     }
 
     private void enqueueLogMessage(String logMessage) {

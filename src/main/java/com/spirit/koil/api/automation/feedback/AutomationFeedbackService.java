@@ -29,10 +29,10 @@ public final class AutomationFeedbackService {
         if (trimmed.isBlank()) {
             return false;
         }
-        if (!lower.startsWith("/feedback") && !lower.startsWith("feedback ") && !lower.equals("feedback")) {
+        if (!lower.startsWith("/automate feedback") && !lower.startsWith("automate feedback ") && !lower.equals("automate feedback")) {
             return false;
         }
-        String body = lower.startsWith("/feedback") ? trimmed.substring("/feedback".length()).trim() : trimmed.substring("feedback".length()).trim();
+        String body = lower.startsWith("/automate feedback") ? trimmed.substring("/automate feedback".length()).trim() : trimmed.substring("automate feedback".length()).trim();
         if (body.isBlank()) {
             AutomationCliViewModel.feedbackHelp();
             return true;

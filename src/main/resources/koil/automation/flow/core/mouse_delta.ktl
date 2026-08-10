@@ -1,0 +1,28 @@
+version: 2
+kind: task_template
+id: template.flow_core_mouse_delta
+template_id: flow/core/mouse_delta
+semantic_operation: sem.task.mouse_input
+params: [yaw.delta, pitch.delta]
+metadata:
+  semantic_operations: [sem.task.mouse_input]
+  target_kinds: []
+  required_params: [yaw.delta, pitch.delta]
+  optional_params: []
+  tags: [flow, input, mouse]
+  description: Apply Bounded Mouse Delta
+  visibility: internal
+  model_callable: false
+  resource_locks: [input, look]
+  side_effects: [changes_orientation]
+  timeout_ticks: 100
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.input.mouse_delta
+    params:
+      yaw.delta: ${yaw.delta}
+      pitch.delta: ${pitch.delta}
+  - type: return
+    label: done
+

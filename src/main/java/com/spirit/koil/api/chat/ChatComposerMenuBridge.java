@@ -22,15 +22,16 @@ public final class ChatComposerMenuBridge {
     public static final String AUTOMATION_SECTION = "composer:automation";
     public static final String MODEL_SECTION = "composer:model";
     public static final String VOICE_SELECTOR = "composer:voice_selector";
+    public static final String EXPERIMENTAL_SELECTOR = "composer:automation_experimental";
 
     private ChatComposerMenuBridge() {
     }
 
     public static List<PopupMenu.MenuEntry> rootEntries() {
         return List.of(
-                new PopupMenu.MenuEntry(PRIVATE_SECTION, "/msg", 0, "", 0xFFAAB4C3, ">"),
-                new PopupMenu.MenuEntry(AUTOMATION_SECTION, "/automate", 0, "", 0xFFAAB4C3, ">"),
-                new PopupMenu.MenuEntry(MODEL_SECTION, "/model", 0, "", 0xFFAAB4C3, ">")
+                new PopupMenu.MenuEntry(PRIVATE_SECTION, "/msg", 0, "", 0xFFAAB4C3, ""),
+                new PopupMenu.MenuEntry(AUTOMATION_SECTION, "/automate", 0, "", 0xFFAAB4C3, ""),
+                new PopupMenu.MenuEntry(MODEL_SECTION, "/model", 0, "", 0xFFAAB4C3, "")
         );
     }
 
@@ -45,10 +46,10 @@ public final class ChatComposerMenuBridge {
                     "Automation: " + (AutomationModeController.isAutomationMode() ? "On" : "Off")
             ));
             entries.add(new PopupMenu.MenuEntry(
-                    "composer:automation_yolo",
+                    "composer:automation_unrestricted",
                     "unrestricted",
-                    AutomationModeController.isYoloMode() ? 0x00FF00FF : 0,
-                    AutomationModeController.isYoloMode() ? "•" : ""
+                    AutomationModeController.isUnrestrictedMode() ? 0x00FF00FF : 0,
+                    AutomationModeController.isUnrestrictedMode() ? "•" : ""
             ));
             entries.add(new PopupMenu.MenuEntry(
                     "composer:automation_deep",
@@ -58,15 +59,19 @@ public final class ChatComposerMenuBridge {
             ));
             entries.add(new PopupMenu.MenuEntry(
                     "composer:automation_planning",
-                    "planning",
-                    AutomationModeController.isPlanningModeEnabled() ? 0xFFB067FF : 0,
-                    AutomationModeController.isPlanningModeEnabled() ? "•" : ""
+                    AutomationModeController.isPlanningActive() && !AutomationModeController.isPlanningModeEnabled()
+                            ? "planning: automatic"
+                            : "planning",
+                    AutomationModeController.isPlanningModeEnabled() || AutomationModeController.isPlanningActive() ? 0xFFB067FF : 0,
+                    AutomationModeController.isPlanningModeEnabled() || AutomationModeController.isPlanningActive() ? "•" : ""
             ));
             entries.add(new PopupMenu.MenuEntry(
-                    "composer:automation_experimental",
+                    EXPERIMENTAL_SELECTOR,
                     "experimental",
-                    AutomationModeController.isExperimentalCompactAgentEnabled() ? 0xFF55FF55 : 0,
-                    AutomationModeController.isExperimentalCompactAgentEnabled() ? "•" : ""
+                    AutomationModeController.hasExperimentalFeaturesEnabled() ? 0xFF55FF55 : 0,
+                    AutomationModeController.hasExperimentalFeaturesEnabled() ? "•" : "",
+                    0xFFAAB4C3,
+                    ">"
             ));
             return entries;
         }
@@ -126,6 +131,28 @@ public final class ChatComposerMenuBridge {
                     ? List.of(new PopupMenu.MenuEntry("composer:no_voices", "No voices available"))
                     : List.copyOf(voices);
         }
+        if (EXPERIMENTAL_SELECTOR.equals(selector)) {
+            return List.of(
+                    new PopupMenu.MenuEntry(
+                            "composer:experimental_verification",
+                            "verification",
+                            AutomationModeController.isVerificationEnabled() ? 0xFF55AA55 : 0,
+                            AutomationModeController.isVerificationEnabled() ? "•" : ""
+                    ),
+                    new PopupMenu.MenuEntry(
+                            "composer:experimental_compact_context",
+                            "compact context agent",
+                            AutomationModeController.isExperimentalCompactAgentEnabled() ? 0xFF55FF55 : 0,
+                            AutomationModeController.isExperimentalCompactAgentEnabled() ? "•" : ""
+                    ),
+                    experimentalEntry("persistent_history", "persistent conversation history", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_CONVERSATION_HISTORY),
+                    experimentalEntry("associative_memory", "persistent associative memory", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY),
+                    experimentalEntry("gigatoken", "gigaToken", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.GIGATOKEN),
+                    experimentalEntry("expert_prefetch", "expert prefetch", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH),
+                    experimentalEntry("completion_mode", "completion mode", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.COMPLETION_MODE),
+                    experimentalEntry("no_fail", "no-fail", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.NO_FAIL)
+            );
+        }
         return List.of();
     }
 
@@ -140,8 +167,8 @@ public final class ChatComposerMenuBridge {
             AutomationRouter.toggleAutomationModeFromUi();
             return ActionResult.HANDLED;
         }
-        if ("composer:automation_yolo".equals(actionId)) {
-            AutomationRouter.toggleAutomationYoloFromUi();
+        if ("composer:automation_unrestricted".equals(actionId)) {
+            AutomationRouter.toggleAutomationUnrestrictedFromUi();
             return ActionResult.HANDLED;
         }
         if ("composer:automation_deep".equals(actionId)) {
@@ -152,9 +179,30 @@ public final class ChatComposerMenuBridge {
             AutomationRouter.togglePlanningModeFromUi();
             return ActionResult.HANDLED;
         }
-        if ("composer:automation_experimental".equals(actionId)) {
+        if ("composer:experimental_compact_context".equals(actionId)) {
             AutomationRouter.toggleExperimentalModeFromUi();
             return ActionResult.HANDLED;
+        }
+        if ("composer:experimental_verification".equals(actionId)) {
+            AutomationRouter.toggleVerificationFromUi();
+            return ActionResult.HANDLED;
+        }
+        if (actionId.startsWith("composer:experimental_feature:")) {
+            String id = actionId.substring("composer:experimental_feature:".length());
+            com.spirit.koil.api.model.ModelExperimentalFeatures.Feature feature = switch (id) {
+                case "persistent_history" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_CONVERSATION_HISTORY;
+                case "associative_memory" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY;
+                case "gigatoken" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.GIGATOKEN;
+                case "expert_prefetch" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH;
+                case "completion_mode" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.COMPLETION_MODE;
+                case "no_fail" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.NO_FAIL;
+                default -> null;
+            };
+            if (feature != null) {
+                com.spirit.koil.api.model.ModelExperimentalFeatures.toggle(feature);
+                LocalModelService.refreshExperimentalFeatures();
+                return ActionResult.HANDLED;
+            }
         }
         if (actionId.startsWith("composer:model:")) {
             String modelId = actionId.substring("composer:model:".length());
@@ -196,6 +244,16 @@ public final class ChatComposerMenuBridge {
         return ActionResult.NOT_HANDLED;
     }
 
+    private static PopupMenu.MenuEntry experimentalEntry(
+            String id,
+            String label,
+            com.spirit.koil.api.model.ModelExperimentalFeatures.Feature feature
+    ) {
+        boolean enabled = com.spirit.koil.api.model.ModelExperimentalFeatures.snapshot().enabled(feature);
+        return new PopupMenu.MenuEntry("composer:experimental_feature:" + id, label,
+                enabled ? 0xFF55AA55 : 0, enabled ? "•" : "");
+    }
+
     public static boolean isSection(String actionId) {
         return PRIVATE_SECTION.equals(actionId)
                 || AUTOMATION_SECTION.equals(actionId)
@@ -203,7 +261,9 @@ public final class ChatComposerMenuBridge {
     }
 
     public static boolean isNestedSelector(String actionId) {
-        return "pm_target_header".equals(actionId) || VOICE_SELECTOR.equals(actionId);
+        return "pm_target_header".equals(actionId)
+                || VOICE_SELECTOR.equals(actionId)
+                || EXPERIMENTAL_SELECTOR.equals(actionId);
     }
 
     public enum ActionResult {

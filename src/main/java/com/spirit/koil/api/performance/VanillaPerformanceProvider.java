@@ -38,7 +38,9 @@ final class VanillaPerformanceProvider implements PerformanceOptimizationProvide
         }
         List<PerformanceSettingDescriptor> settings = new ArrayList<>();
         settings.add(setting("render_distance", "Render distance", "chunk/render", String.valueOf(snapshot.renderDistance()), String.valueOf(Math.max(5, snapshot.renderDistance() - 2)), "safe", "Reduces chunk rendering and chunk mesh pressure."));
-        settings.add(setting("simulation_distance", "Simulation distance", "cpu/tick", String.valueOf(snapshot.simulationDistance()), String.valueOf(Math.max(4, snapshot.simulationDistance() - 2)), "safe", "Reduces active simulation and tick work."));
+        if (!"server".equals(snapshot.worldType())) {
+            settings.add(setting("simulation_distance", "Simulation distance", "cpu/tick", String.valueOf(snapshot.simulationDistance()), String.valueOf(Math.max(4, snapshot.simulationDistance() - 2)), "safe", "Reduces active simulation and tick work in local/integrated worlds."));
+        }
         settings.add(setting("entity_distance", "Entity distance", "entity/render", format(snapshot.entityDistanceScale()), "0.75", "safe", "Reduces distant entity rendering pressure."));
         settings.add(setting("max_fps", "Max FPS", "frame pacing", maxFps(snapshot.maxFps()), snapshot.worldType().equals("server") ? "120" : "144", "optional", "Caps frame output for steadier frame pacing."));
         settings.add(setting("clouds", "Clouds", "render", snapshot.cloudsMode(), "off", "optional", "Removes optional cloud rendering cost."));

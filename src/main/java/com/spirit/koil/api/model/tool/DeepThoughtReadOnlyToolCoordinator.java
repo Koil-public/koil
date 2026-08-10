@@ -10,6 +10,12 @@ import java.util.concurrent.CompletableFuture;
 public final class DeepThoughtReadOnlyToolCoordinator {
     private DeepThoughtReadOnlyToolCoordinator() {}
 
+    public static boolean supports(String toolId) {
+        return MinecraftKnowledgeModelToolRegistry.supports(toolId)
+                || ModelWorkspaceToolRegistry.supports(toolId)
+                || InternetResearchModelToolRegistry.supports(toolId);
+    }
+
     public static CompletableFuture<ModelToolResult> execute(ModelToolCall call) {
         if (call == null) return unsupported(null);
         if (MinecraftKnowledgeModelToolRegistry.supports(call.toolId())) {
@@ -17,6 +23,9 @@ public final class DeepThoughtReadOnlyToolCoordinator {
         }
         if (ModelWorkspaceToolRegistry.supports(call.toolId())) {
             return ModelWorkspaceToolRegistry.executeReadOnly(call);
+        }
+        if (InternetResearchModelToolRegistry.supports(call.toolId())) {
+            return InternetResearchModelToolRegistry.execute(call);
         }
         return unsupported(call);
     }

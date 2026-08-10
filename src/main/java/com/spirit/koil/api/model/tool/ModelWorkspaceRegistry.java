@@ -22,15 +22,21 @@ public final class ModelWorkspaceRegistry {
         Map<String, Workspace> roots = new LinkedHashMap<>();
         roots.put("instance", new Workspace(
                 "instance",
-                runRoot.resolve("koil").toAbsolutePath().normalize(),
+                runRoot.toAbsolutePath().normalize(),
                 true,
-                "Koil files for the active Minecraft instance"
+                "Minecraft instance root (the separate koil/ child contains Koil-owned data)"
         ));
         roots.put("automation", new Workspace(
                 "automation",
                 runRoot.resolve("koil/automation").toAbsolutePath().normalize(),
                 true,
                 "Active KTL automation files for this instance"
+        ));
+        roots.put("koil", new Workspace(
+                "koil",
+                runRoot.resolve("koil").toAbsolutePath().normalize(),
+                true,
+                "Koil-owned data directory inside the Minecraft instance (not the default workspace root)"
         ));
         Path project = developmentProjectRoot(runRoot);
         if (project != null) {
@@ -45,9 +51,11 @@ public final class ModelWorkspaceRegistry {
     }
 
     public static ResolvedPath resolve(String workspaceId, String relativePath, boolean forWrite) throws IOException {
-        Workspace workspace = workspaces().get(cleanId(workspaceId));
+        Map<String, Workspace> available = workspaces();
+        Workspace workspace = available.get(canonicalWorkspaceId(workspaceId, available));
         if (workspace == null) {
-            throw new IOException("Unknown workspace. Use workspace.roots to list available roots.");
+            throw new IOException("Unknown workspace '" + cleanId(workspaceId)
+                    + "'. Available named roots: " + String.join(", ", available.keySet()) + ".");
         }
         if (forWrite && !workspace.writable()) {
             throw new IOException("Workspace '" + workspace.id() + "' is read-only.");
@@ -118,6 +126,21 @@ public final class ModelWorkspaceRegistry {
 
     private static String cleanId(String value) {
         return value == null ? "" : value.strip().toLowerCase(Locale.ROOT);
+    }
+
+    static String canonicalWorkspaceId(String value, Map<String, Workspace> available) {
+        String id = cleanId(value);
+        if (id.isBlank() || id.equals("default") || id.equals("current") || id.equals("workspace")
+                || id.equals("root") || id.equals("instance_root")) {
+            return "instance";
+        }
+        if (id.equals("repo") || id.equals("repository") || id.equals("source") || id.equals("code")) {
+            return available.containsKey("project") ? "project" : id;
+        }
+        if (id.equals("ktl") || id.equals("automation_files")) {
+            return "automation";
+        }
+        return id;
     }
 
     private static Path runDirectory() {

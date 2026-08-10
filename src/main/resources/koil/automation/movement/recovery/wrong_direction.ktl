@@ -1,0 +1,32 @@
+version: 2
+kind: task_template
+id: template.movement_recovery_wrong_direction_knowledge
+template_id: movement/recovery/wrong_direction
+semantic_operation: sem.task.recover_stuck
+params: []
+metadata:
+  semantic_operations: [sem.task.recover_stuck]
+  target_kinds: [location]
+  required_params: []
+  optional_params: []
+  tags: [movement, recovery, failure-knowledge, orientation]
+  description: Reset movement context after a classified wrong-direction result
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input, world]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 300
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.movement.stop
+    params: {}
+  - type: run_primitive
+    action: cap.movement.run_recovery
+    params:
+      recovery.tactic: step_backward
+  - type: run_primitive
+    action: cap.movement.snapshot
+    params: {}
+  - type: return
+    label: recovered

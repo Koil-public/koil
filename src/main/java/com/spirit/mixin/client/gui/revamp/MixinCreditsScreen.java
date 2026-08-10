@@ -43,7 +43,7 @@ public class MixinCreditsScreen {
         ci.cancel();
     }
 
-    @Inject(
+     @Inject(
             method = "render",
             at = @At(
                     value = "INVOKE",
@@ -64,17 +64,7 @@ public class MixinCreditsScreen {
 
         context.getMatrices().push();
         context.getMatrices().translate(0.0F, -this.time, 0.0F);
-        context.drawTexture(
-                Main.LOGO_TEXTURE,
-                columnCenter - KOIL_LOGO_SIZE / 2,
-                contentY,
-                0,
-                0,
-                KOIL_LOGO_SIZE,
-                KOIL_LOGO_SIZE,
-                KOIL_LOGO_SIZE,
-                KOIL_LOGO_SIZE
-        );
+        context.drawTexture(Main.LOGO_TEXTURE,  columnCenter - KOIL_LOGO_SIZE / 2, contentY,  0,  0, KOIL_LOGO_SIZE, KOIL_LOGO_SIZE, KOIL_LOGO_SIZE, KOIL_LOGO_SIZE);
 
         int textY = contentY + 101;
         textY = koil$drawCenteredCredit(context, client.textRenderer, KOIL_SEPARATOR, columnCenter, textY);

@@ -46,7 +46,6 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
     private static final String TOP_BAR_KOIL_LABEL = "Koil Logs";
     private static final String TOP_BAR_PACKAGE_LABEL = "Package Logs";
     private static final String TOP_BAR_MINECRAFT_LABEL = "Minecraft Logs";
-    private static final String TOP_BAR_CLI_LABEL = "Automation";
 
     private final Screen parent;
     private final List<ConsoleStyledLine> cachedLines = new ArrayList<>();
@@ -79,8 +78,8 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
     public ConsoleScreen(Screen parent, ConsoleChannel initialChannel, boolean automationMode) {
         super(Text.literal("Koil Console"));
         this.parent = parent;
-        this.activeChannel = initialChannel;
-        this.automationMode = automationMode;
+        this.activeChannel = initialChannel == ConsoleChannel.CLI ? ConsoleChannel.KOIL : initialChannel;
+        this.automationMode = false;
     }
 
     @Override
@@ -99,7 +98,7 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
 
         this.inputField = new TextFieldWidget(this.textRenderer, 0, 0, 0, inputFieldHeight(), Text.literal("console-input"));
         this.inputField.setMaxLength(512);
-        this.inputField.setPlaceholder(Text.literal("Enter console input, command, or automation prompt"));
+        this.inputField.setPlaceholder(Text.literal("Enter console input or command"));
         this.inputField.setDrawsBackground(false);
         this.inputField.setEditableColor(new Color(uiColorContentBaseTitleText, true).getRGB());
         this.inputField.setUneditableColor(new Color(uiColorContentBaseTitleText, true).getRGB());
@@ -522,11 +521,6 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
             switchChannel(ConsoleChannel.MINECRAFT);
             return true;
         }
-        if (isTopBarButtonClicked(mouseX, mouseY, getTopBarChannelButtonX(TOP_BAR_CLI_LABEL), getTopBarButtonWidth(TOP_BAR_CLI_LABEL))) {
-            UiSoundHelper.playButtonClick();
-            switchChannel(ConsoleChannel.CLI);
-            return true;
-        }
         if (isTopBarButtonClicked(mouseX, mouseY, getTopBarPopButtonX(), getTopBarButtonWidth(TOP_BAR_POP_LABEL))) {
             UiSoundHelper.playButtonClick();
             WindowManager.openConsoleWindow(this.activeChannel);
@@ -548,7 +542,6 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
             this.cliAutoFocusLatest = true;
             AutomationRouter.handleConsoleInput(trimmed);
         } else {
-            ConsoleLogBridge.publish(ConsoleChannel.CLI, ConsoleLevel.PLAIN, nowTimestamp(), "ConsoleScreen", "Input", trimmed, trimmed);
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player != null && client.getNetworkHandler() != null) {
                 if (trimmed.startsWith("/")) {
@@ -920,7 +913,6 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
         renderTopBarButton(context, getTopBarChannelButtonX(TOP_BAR_KOIL_LABEL), TOP_BAR_KOIL_LABEL);
         renderTopBarButton(context, getTopBarChannelButtonX(TOP_BAR_PACKAGE_LABEL), TOP_BAR_PACKAGE_LABEL);
         renderTopBarButton(context, getTopBarChannelButtonX(TOP_BAR_MINECRAFT_LABEL), TOP_BAR_MINECRAFT_LABEL);
-        renderTopBarButton(context, getTopBarChannelButtonX(TOP_BAR_CLI_LABEL), TOP_BAR_CLI_LABEL);
         renderTopBarButton(context, getTopBarPopButtonX(), TOP_BAR_POP_LABEL);
     }
 
@@ -954,7 +946,7 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
     }
 
     private List<String> getTopBarActionLabels() {
-        return List.of(TOP_BAR_KOIL_LABEL, TOP_BAR_PACKAGE_LABEL, TOP_BAR_MINECRAFT_LABEL, TOP_BAR_CLI_LABEL, TOP_BAR_POP_LABEL);
+        return List.of(TOP_BAR_KOIL_LABEL, TOP_BAR_PACKAGE_LABEL, TOP_BAR_MINECRAFT_LABEL, TOP_BAR_POP_LABEL);
     }
 
     private int getTopBarChannelButtonX(String label) {

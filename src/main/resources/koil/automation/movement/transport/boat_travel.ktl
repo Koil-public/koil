@@ -1,0 +1,45 @@
+version: 2
+kind: task_template
+id: template.movement_transport_boat_travel
+template_id: movement/transport/boat_travel
+semantic_operation: sem.movement.boat_travel
+params: [boat.item, target.x, target.y, target.z, craft.if_missing, recipe.id]
+metadata:
+  semantic_operations: [sem.movement.boat_travel]
+  target_kinds: [location, item]
+  required_params: [boat.item, target.x, target.y, target.z]
+  optional_params: [craft.if_missing, recipe.id]
+  tags: [movement, transport, boat, crafting, water]
+  description: Verify or craft an exact boat, deploy it at exact water, and mount it
+  visibility: public
+  model_callable: true
+  resource_locks: [inventory, crafting, look, input, world]
+  side_effects: [may_craft_item, changes_inventory, deploys_transport, mounts_entity, changes_orientation]
+  timeout_ticks: 3600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.transport.prepare_boat
+    params:
+      boat.item: ${boat.item}
+      craft.if_missing: ${craft.if_missing}
+      recipe.id: ${recipe.id}
+  - type: run_primitive
+    action: cap.look.face_position
+    params:
+      target.x: ${target.x}
+      target.y: ${target.y}
+      target.z: ${target.z}
+  - type: run_primitive
+    action: cap.transport.deploy_boat
+    params:
+      boat.item: ${boat.item}
+      target.x: ${target.x}
+      target.y: ${target.y}
+      target.z: ${target.z}
+  - type: run_primitive
+    action: cap.transport.verify_boat_mounted
+    params:
+      boat.item: ${boat.item}
+  - type: return
+    label: done

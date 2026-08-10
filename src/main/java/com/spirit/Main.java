@@ -6,22 +6,22 @@ import com.spirit.koil.api.automation.AutomationPresenceServerBridge;
 import com.spirit.koil.api.automation.KoilCommandPauseBridge;
 import com.spirit.koil.api.chat.AttentionCommandBridge;
 import com.spirit.koil.api.chat.sync.RichChatSyncServerBridge;
-import com.spirit.koil.api.console.ConsoleChannel;
+import com.spirit.koil.api.bootstrap.DedicatedServerBootstrapCommand;
+import com.spirit.koil.api.bootstrap.DedicatedServerBootstrapService;
 import com.spirit.koil.api.registry.ContentCommandBridge;
 import com.spirit.koil.api.registry.DynamicContentHolderRegistry;
 import com.spirit.koil.api.registry.DynamicRegistryManager;
 import com.spirit.koil.api.screen.KoilRemoteScreenServerBridge;
 import com.spirit.koil.api.stats.global.KoilGlobalActivityServer;
-import com.spirit.koil.api.util.application.WindowManager;
 import com.spirit.koil.api.util.console.log.SubFileLogger;
 import com.spirit.koil.api.util.file.FileSanitizer;
 import com.spirit.koil.api.util.file.KoilPackageManager;
+import com.spirit.koil.api.kpak.security.KPakPrivateKeyStore;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.util.web.WebFileDownloader;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.util.Identifier;
 
 import java.io.*;
@@ -46,6 +46,8 @@ public class Main implements ModInitializer {
     private static final String DEFAULT_CONFIG_JSON = """
 {
   "firstLaunch": true,
+  "termsVersion": "",
+  "termsAcceptedAt": "",
   "debug": true,
   "openKoilLogOnStartUp": false,
   "developmentCommandBridgeEnabled": true,
@@ -82,10 +84,10 @@ public class Main implements ModInitializer {
         SUBLOGGER.logI("Start-up thread", "Starting...");
         ensureDefaultConfigFile();
         preciseStat = getConfigBoolean("preciseStat", false);
-        initializeWebFilesAndDesign();
-
-        KoilGlobalActivityServer.register();
-        RichChatSyncServerBridge.register();
+        ensureBootstrapDirectories(isClientEnvironment());
+        if (isClientEnvironment()) {
+            applyResolvedDesignPaths();
+        }
     }
 
     private static void ensureDefaultConfigFile() {
@@ -103,8 +105,17 @@ public class Main implements ModInitializer {
         }
     }
 
-    private static void initializeWebFilesAndDesign() {
-        ensureBootstrapDirectories();
+    private static boolean isClientEnvironment() {
+        try {
+            return FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT;
+        } catch (RuntimeException | LinkageError unavailableLauncher) {
+            // Standalone proof JVMs do not install Fabric's launcher.
+            return true;
+        }
+    }
+
+    private static void initializeClientWebFilesAndDesign() {
+        ensureBootstrapDirectories(true);
         if (isFirstLaunchPending()) {
             SUBLOGGER.logI("Start-up thread", "First launch terms are pending. External bootstrap downloads are deferred.");
             applyResolvedDesignPaths();
@@ -133,21 +144,32 @@ public class Main implements ModInitializer {
         WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json", "validSerial.json", "./koil/auth", 16);
         WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json", "verifiedAuthors.json", "./koil/auth", 16);
         WebFileDownloader.updateFileWithTemp("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json", "verifiedAuthors.json", "./koil/auth", 16);
-
-
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client != null && client.getSession() != null) {
-            WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data/player_data/" + client.getSession().getUsername() + "/uuid.json", "player_data.json", "./koil/sys/cache/player_data", 16
-            );
-        } else {
-            SUBLOGGER.logW("Start-up thread", "Skipping player-data bootstrap because the Minecraft client session is not available yet.");
-        }
-
         applyResolvedDesignPaths();
     }
 
     public static void refreshBootstrapFiles() {
-        initializeWebFilesAndDesign();
+        initializeClientWebFilesAndDesign();
+        runPackageProcessing("client bootstrap");
+    }
+
+    public static void initializeClientBootstrap(String username) {
+        if (isFirstLaunchPending()) {
+            SUBLOGGER.logI("Start-up thread", "First launch terms are pending. Client downloads and package processing are deferred.");
+            return;
+        }
+        initializeClientWebFilesAndDesign();
+        refreshPlayerBootstrap(username);
+        runPackageProcessing("client bootstrap");
+    }
+
+    public static void refreshPlayerBootstrap(String username) {
+        if (username == null || username.isBlank() || isFirstLaunchPending()) return;
+        WebFileDownloader.downloadFile(
+                "https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data/player_data/" + username + "/uuid.json",
+                "player_data.json",
+                "./koil/sys/cache/player_data",
+                16
+        );
     }
 
     public static boolean isFirstLaunchPending() {
@@ -157,6 +179,8 @@ public class Main implements ModInitializer {
     public static void completeFirstLaunch(boolean uiRedesign) {
         try {
             JSONFileEditor.updateValueInJson("./koil/sys/config.json", "uiRedesign", new JsonPrimitive(uiRedesign));
+            JSONFileEditor.updateValueInJson("./koil/sys/config.json", "termsVersion", new JsonPrimitive(DedicatedServerBootstrapService.TERMS_VERSION));
+            JSONFileEditor.updateValueInJson("./koil/sys/config.json", "termsAcceptedAt", new JsonPrimitive(java.time.Instant.now().toString()));
             JSONFileEditor.updateValueInJson("./koil/sys/config.json", "firstLaunch", new JsonPrimitive(false));
             SUBLOGGER.logI("Start-up thread", "Saved first launch terms state. uiRedesign=" + uiRedesign + ", firstLaunch=false");
         } catch (IOException e) {
@@ -224,13 +248,10 @@ public class Main implements ModInitializer {
         applyResolvedDesignPaths();
     }
 
-    private static void ensureBootstrapDirectories() {
-        String[] directories = {
-                "./koil",
-                "./koil/sys",
-                "./koil/sys/design/default/files",
-                "./config"
-        };
+    private static void ensureBootstrapDirectories(boolean client) {
+        String[] directories = client
+                ? new String[]{"./koil", "./koil/sys", "./koil/sys/design/default/files", "./config"}
+                : new String[]{"./koil", "./koil/sys", "./config"};
         for (String directory : directories) {
             try {
                 Files.createDirectories(Paths.get(directory));
@@ -238,7 +259,7 @@ public class Main implements ModInitializer {
                 SUBLOGGER.logE("Start-up thread", "Failed to create bootstrap directory " + directory + ": " + e.getMessage());
             }
         }
-        ensureBundledDefaultDesign();
+        if (client) ensureBundledDefaultDesign();
     }
 
     private static void deleteIfExists(Path path) {
@@ -347,17 +368,8 @@ public class Main implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        if (!isFirstLaunchPending()) {
-            try {
-                //KPakPrivateKeyStore.generate();
-                KoilPackageManager.packageMain();
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        } else {
-            SUBLOGGER.logI("Start-up thread", "Skipping Koil package processing until first launch terms are accepted.");
-        }
-
+        KoilGlobalActivityServer.register();
+        RichChatSyncServerBridge.register();
         KoilRemoteScreenServerBridge.registerCommands();
         KoilCommandPauseBridge.register();
         AttentionCommandBridge.register();
@@ -375,10 +387,45 @@ public class Main implements ModInitializer {
         DynamicRegistryManager.initialize();
         DynamicContentHolderRegistry.initialize(DynamicRegistryManager.instance().worldIndex());
         ContentCommandBridge.register();
-        if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT
-                && !Boolean.getBoolean(com.spirit.koil.api.util.application.ExternalWindowConsole.PROCESS_MARKER_PROPERTY)
-                && getConfigBoolean("openKoilLogOnStartUp", false)) {
-            WindowManager.openConsoleWindow(ConsoleChannel.KOIL);
+        if (FabricLoader.getInstance().getEnvironmentType() == EnvType.SERVER) {
+            DedicatedServerBootstrapCommand.register();
+            DedicatedServerBootstrapService.initialize(
+                    Main::runDedicatedServerBootstrap,
+                    (message, failure) -> {
+                        if (failure == null) SUBLOGGER.logI("Dedicated server bootstrap", message);
+                        else SUBLOGGER.logE("Dedicated server bootstrap", message + " " + failure.getMessage());
+                    }
+            );
+        }
+    }
+
+    public static boolean openKoilLogOnStartup() {
+        return getConfigBoolean("openKoilLogOnStartUp", false);
+    }
+
+    private static void runDedicatedServerBootstrap() {
+        ensureBootstrapDirectories(false);
+        try {
+            KPakPrivateKeyStore.generate();
+        } catch (Exception exception) {
+            throw new IllegalStateException("Koil could not initialize the dedicated-server package key", exception);
+        }
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json", "sys.json", "./koil/sys", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/koil.json", "koil.json", "./config", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/key.json", "key.json", "./koil/sys", 16);
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/catcher.json", "catcher.json", "./koil/sys", 16);
+        WebFileDownloader.downloadFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data.json", "data.json", "./koil/sys", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json", "validDigits.json", "./koil/auth", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json", "validSerial.json", "./koil/auth", 16);
+        WebFileDownloader.downloadCheckedFile("https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json", "verifiedAuthors.json", "./koil/auth", 16);
+        runPackageProcessing("dedicated-server bootstrap");
+    }
+
+    private static void runPackageProcessing(String source) {
+        try {
+            KoilPackageManager.packageMain();
+        } catch (Exception exception) {
+            throw new IllegalStateException("Koil package processing failed during " + source, exception);
         }
     }
 

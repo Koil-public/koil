@@ -163,8 +163,8 @@ public final class AutomationCliRenderer {
             case "return", "frame_summary", "frame_state" -> "╰─ ";
             case "branch" -> "├┬ ";
             case "blocked" -> "├! ";
-            case "flow_phase" -> "│◇ ";
-            case "flow_metric" -> "│● ";
+            case "flow_phase" -> "│= ";
+            case "flow_metric" -> "│- ";
             case "flow_decision" -> "│◆ ";
             case "candidate", "branch_candidate" -> "│• ";
             case "primitive", "node", "frame_meta", "frame_link", "frame_param", "frame_diag", "primitive_param", "frame_state_snapshot", "world_snapshot", "summary_snapshot" -> "├─ ";

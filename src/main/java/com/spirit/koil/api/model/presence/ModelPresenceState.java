@@ -1,6 +1,7 @@
 package com.spirit.koil.api.model.presence;
 
 import com.spirit.koil.api.automation.cli.AutomationStateColors;
+import com.spirit.koil.api.model.ModelSemanticPalette;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.player.PlayerEntity;
 
@@ -42,11 +43,28 @@ public final class ModelPresenceState {
     public static Snapshot localSnapshot() {
         long now = System.currentTimeMillis();
         Snapshot request = localRequest;
+        Snapshot fallback = automationFallback;
+        if (fallback.kind() == ActivityKind.AUTOMATION) {
+            CombinedModelExecutorStatus.Snapshot combined = CombinedModelExecutorStatus.snapshot();
+            return new Snapshot(
+                    ActivityKind.AUTOMATION,
+                    combined.state(),
+                    combined.updatedAtMillis(),
+                    combined.active()
+            );
+        }
         if (request.visibleAt(now)) {
             return request;
         }
-        Snapshot fallback = automationFallback;
-        return fallback.kind() == ActivityKind.AUTOMATION ? fallback : Snapshot.noneAt(now);
+        return Snapshot.noneAt(now);
+    }
+
+    static Snapshot localRequestSnapshot() {
+        return localRequest;
+    }
+
+    static boolean localAutomationEnabled() {
+        return automationFallback.kind() == ActivityKind.AUTOMATION;
     }
 
     public static void receiveRemote(UUID playerId, Snapshot snapshot) {
@@ -134,21 +152,7 @@ public final class ModelPresenceState {
         if (snapshot == null || snapshot.kind() == ActivityKind.NONE) {
             return 0xFF9AA0A6;
         }
-        String state = snapshot.semanticState();
-        if ("completed".equals(state) || "complete".equals(state)) {
-            return 0xFF55FF55;
-        }
-        if ("failed".equals(state) || "blocked".equals(state) || "cancelled".equals(state)) {
-            return 0xFFFF5555;
-        }
-        if ("idle".equals(state) || "header".equals(state)) {
-            return 0xFF9AA0A6;
-        }
-        if ("inspecting".equals(state) || "observing".equals(state) || "writing".equals(state)) return 0xFF55FFFF;
-        if ("planning".equals(state) || "replanning".equals(state) || "thinking".equals(state)) return 0xFFAA55FF;
-        if ("executing".equals(state) || "retrying".equals(state) || "acting".equals(state)) return 0xFFFFAA00;
-        if ("validating".equals(state) || "approval".equals(state)) return 0xFFFFFF55;
-        return AutomationStateColors.color(state);
+        return ModelSemanticPalette.color(snapshot.semanticState());
     }
 
     public static ActivityKind parseKind(String value) {
@@ -164,8 +168,10 @@ public final class ModelPresenceState {
 
     private static String normalize(String state) {
         String exact = state == null ? "" : state.strip().toLowerCase(java.util.Locale.ROOT);
-        if (java.util.Set.of("idle", "waiting", "thinking", "inspecting", "planning", "executing",
-                "observing", "validating", "retrying", "replanning", "finalizing", "writing",
+        if (java.util.Set.of("idle", "starting", "queued", "preparing", "waiting", "thinking", "inspecting",
+                "searching", "reading", "planning", "executing", "orienting", "swimming",
+                "riding", "gliding", "interacting", "building", "mining", "attacking", "observing",
+                "validating", "testing", "retrying", "replanning", "finalizing", "writing", "editing",
                 "completed", "failed", "blocked", "cancelled").contains(exact)) return exact;
         String normalized = AutomationStateColors.normalizeState(state);
         return normalized == null || normalized.isBlank() ? "idle" : normalized;

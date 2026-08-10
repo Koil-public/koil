@@ -177,6 +177,35 @@ public final class ChatHudPanelRegistry {
         return false;
     }
 
+    public static boolean mouseDragged(MinecraftClient client, double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        if (client == null || client.getWindow() == null || button != 0) return false;
+        ChatHudPanelContext context = context(client);
+        List<PlacedPanel> placed = layout(context);
+        for (int i = placed.size() - 1; i >= 0; i--) {
+            PlacedPanel entry = placed.get(i);
+            try {
+                if (entry.panel().mouseDragged(context, entry.bounds(), mouseX, mouseY, button, deltaX, deltaY)) return true;
+            } catch (RuntimeException ignored) {
+                // Keep other registered panels interactive.
+            }
+        }
+        return false;
+    }
+
+    public static boolean mouseReleased(MinecraftClient client, double mouseX, double mouseY, int button) {
+        if (client == null || client.getWindow() == null || button != 0) return false;
+        ChatHudPanelContext context = context(client);
+        boolean consumed = false;
+        for (PlacedPanel entry : layout(context)) {
+            try {
+                consumed |= entry.panel().mouseReleased(context, entry.bounds(), mouseX, mouseY, button);
+            } catch (RuntimeException ignored) {
+                // Release every panel even if one extension fails.
+            }
+        }
+        return consumed;
+    }
+
     private static void renderBottom(DrawContext drawContext, ChatHudPanelContext context) {
         for (PlacedPanel entry : layout(context, ChatHudPanelPlacement.BOTTOM)) {
             renderPanel(drawContext, context, entry);

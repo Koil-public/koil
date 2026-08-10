@@ -1,0 +1,49 @@
+version: 2
+kind: task_template
+id: template.blocks_core_place_block_at
+template_id: blocks/core/place_block_at
+semantic_operation: sem.task.place_item_on_target
+params: [block.id, item.id, target.x, target.y, target.z, hand.id]
+metadata:
+  semantic_operations: [sem.task.place_item_on_target]
+  target_kinds: [block, location]
+  required_params: [block.id, item.id, target.x, target.y, target.z]
+  optional_params: [hand.id]
+  tags: [block, place, coordinate]
+  description: Place and verify one block at exact coordinates
+  visibility: public
+  model_callable: true
+  resource_locks: [movement, look, input, world]
+  side_effects: [moves_player, changes_world_blocks, changes_inventory]
+  timeout_ticks: 6000
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.build.resolve_exact_target
+    params:
+      block.id: ${block.id}
+      target.x: ${target.x}
+      target.y: ${target.y}
+      target.z: ${target.z}
+  - type: delegate
+    delegate: movement/navigation/move_to_position.ktl target.x=${build.stand.x} target.y=${build.stand.y} target.z=${build.stand.z} stop.distance=0.42 movement.precise=true movement.allow_sprint=false movement.allow_parkour=false movement.allow_place_blocks=false movement.allow_break_blocks=false
+  - type: run_primitive
+    action: cap.inventory.select_hotbar_item
+    params:
+      item.id: ${item.id}
+  - type: run_primitive
+    action: cap.interaction.place_block_target
+    params:
+      block.id: ${block.id}
+      hand.id: ${hand.id}
+      interaction.sneak: true
+  - type: run_primitive
+    action: cap.wait.ticks
+    params:
+      count.value: 3
+  - type: run_primitive
+    action: cap.world.verify_block_target
+    params:
+      block.id: ${block.id}
+  - type: return
+    label: done

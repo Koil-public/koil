@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import com.spirit.koil.api.automation.AutomationModeController;
 import com.spirit.koil.api.automation.runtime.AutomationExecutionResult;
 import com.spirit.koil.api.automation.runtime.AutomationExecutionResults;
+import com.spirit.koil.api.automation.runtime.AutomationResultStatus;
 import com.spirit.koil.api.model.ModelMessage;
 import com.spirit.koil.api.model.ModelRole;
 import com.spirit.koil.api.model.ModelToolCall;
@@ -50,13 +51,15 @@ public final class AutomationCapabilityProof {
                 AutomationPrimitiveRegistry.definitions().values().stream().noneMatch(AutomationPrimitiveDefinition::modelExposed),
                 "a low-level KTL primitive was exposed directly to the model"
         );
-        require(
-                AutomationCapabilityRegistry.modelTools().stream().noneMatch(tool ->
-                        tool.id().contains("key")
-                                || tool.id().contains("mouse")
-                                || tool.id().contains("ktl")),
-                "an unrestricted execution mechanism was exposed"
-        );
+        require(AutomationCapabilityRegistry.modelTools().stream().noneMatch(tool -> tool.id().contains("ktl")),
+                "raw KTL execution was exposed to the model");
+        for (String rawInput : java.util.List.of(
+                "input.tap", "input.hold", "input.release", "input.release_all", "input.mouse_delta")) {
+            AutomationCapabilityDefinition definition = AutomationCapabilityRegistry.definitions().get(rawInput);
+            require(definition != null && definition.sideEffects().stream().anyMatch(value ->
+                            value.contains("input") || value.contains("orientation")),
+                    "bounded raw-input capability is missing side-effect metadata: " + rawInput);
+        }
         AutomationCapabilityDefinition command = AutomationCapabilityRegistry.definitions().get("minecraft.command");
         require(command != null, "Minecraft command capability was not registered");
         require(command.confirmationRequired(), "Minecraft command capability bypassed confirmation");
@@ -68,6 +71,23 @@ public final class AutomationCapabilityProof {
                 AutomationCapabilityRegistry.definitions().get("player.grant_advancements");
         require(advancements != null, "typed all-advancements capability was not registered");
         require(advancements.confirmationRequired(), "advancement grant bypassed confirmation");
+        require(AutomationCapabilityRegistry.definitions().containsKey("block.place")
+                        && AutomationCapabilityRegistry.definitions().containsKey("block.build_pattern")
+                        && AutomationCapabilityRegistry.definitions().containsKey("entity.look_at")
+                        && AutomationCapabilityRegistry.definitions().containsKey("entity.interact"),
+                "block placement/building or entity orientation/interaction capability was not registered");
+        AutomationCapabilityDefinition boat = AutomationCapabilityRegistry.definitions().get("transport.boat_deploy");
+        AutomationCapabilityDefinition elytra = AutomationCapabilityRegistry.definitions().get("transport.elytra_flight");
+        AutomationCapabilityDefinition surroundings = AutomationCapabilityRegistry.definitions().get("world.inspect_surroundings");
+        require(boat != null && elytra != null && boat.confirmationRequired() && elytra.confirmationRequired(),
+                "boat or elytra transport was not explicit approval-gated");
+        require(surroundings != null && !surroundings.confirmationRequired() && surroundings.sideEffects().isEmpty(),
+                "bounded surroundings inspection was not registered as read-only");
+        require(AutomationPrimitiveRegistry.contains("cap.build.resolve_pattern_target")
+                        && AutomationPrimitiveRegistry.contains("cap.interaction.place_block_target")
+                        && AutomationPrimitiveRegistry.contains("cap.world.verify_block_target")
+                        && AutomationPrimitiveRegistry.contains("cap.look.verify_target"),
+                "verified building primitives were not registered behind the model capability boundary");
     }
 
     private static void proveValidationAndCompilation() {
@@ -86,6 +106,40 @@ public final class AutomationCapabilityProof {
         require(plan.request().rawInput().contains("count.value=50"), "walk distance was not bound");
         require(plan.request().rawInput().contains("direction.id=forward"), "walk direction was not bound");
 
+        JsonObject heldInput = new JsonObject();
+        heldInput.addProperty("key", "w");
+        heldInput.addProperty("ticks", 80);
+        AutomationCapabilityPlan heldInputPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "input.hold", heldInput, UUID.randomUUID());
+        require(heldInputPlan.request().rawInput().contains("flow/core/hold_input.ktl")
+                        && heldInputPlan.request().rawInput().contains("input.key=w")
+                        && heldInputPlan.request().rawInput().contains("count.value=80"),
+                "raw hold input did not compile through bounded KTL");
+        JsonObject releaseInput = new JsonObject();
+        releaseInput.addProperty("key", "w");
+        require(AutomationCapabilityRegistry.validateAndCompile("input.release", releaseInput, UUID.randomUUID())
+                        .request().rawInput().contains("flow/core/release_input.ktl"),
+                "raw release input did not compile through KTL cleanup");
+
+        JsonObject allBlocks = new JsonObject();
+        allBlocks.addProperty("block", "minecraft:grass_block");
+        allBlocks.addProperty("radius", 8);
+        allBlocks.addProperty("quantity", "all");
+        AutomationCapabilityPlan allBlocksPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "block.mine", allBlocks, UUID.randomUUID());
+        require(allBlocksPlan.request().rawInput().contains("blocks/core/mine_all_matching.ktl")
+                        && allBlocksPlan.request().rawInput().contains("quantity.mode=all"),
+                "all-block collection semantics did not compile to the bounded snapshot KTL");
+        JsonObject allEntities = new JsonObject();
+        allEntities.addProperty("entity", "minecraft:chicken");
+        allEntities.addProperty("radius", 16);
+        allEntities.addProperty("quantity", "all");
+        AutomationCapabilityPlan allEntitiesPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "entity.kill", allEntities, UUID.randomUUID());
+        require(allEntitiesPlan.request().rawInput().contains("combat/core/kill_all_matching.ktl")
+                        && allEntitiesPlan.request().rawInput().contains("quantity.mode=all"),
+                "all-entity collection semantics did not compile to the bounded snapshot KTL");
+
         JsonObject injection = arguments.deepCopy();
         injection.addProperty("raw_command", "/op @s");
         expectFailure("invalid_arguments", () ->
@@ -99,6 +153,140 @@ public final class AutomationCapabilityProof {
 
         expectFailure("unknown_tool", () ->
                 AutomationCapabilityRegistry.validateAndCompile("command.execute", new JsonObject(), UUID.randomUUID()));
+
+        JsonObject look = new JsonObject();
+        look.addProperty("entity", "dummmmmmy:target_dummy");
+        look.addProperty("turn_speed", "slow");
+        look.addProperty("maximum_degrees_per_tick", 2.0D);
+        AutomationCapabilityPlan lookPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "entity.look_at", look, UUID.randomUUID());
+        require(lookPlan.request().rawInput().contains("target.id=dummmmmmy:target_dummy")
+                        && lookPlan.request().rawInput().contains("target.kind=entity")
+                        && lookPlan.request().rawInput().contains("look.turn_speed=slow")
+                        && lookPlan.request().rawInput().contains("look.maximum_degrees_per_tick=2"),
+                "modded entity look-at did not compile to exact target resolution");
+
+        JsonObject mount = new JsonObject();
+        mount.addProperty("entity", "minecraft:horse");
+        AutomationCapabilityPlan mountPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "entity.mount", mount, UUID.randomUUID());
+        require(mountPlan.request().rawInput().contains("movement/transport/mount_entity.ktl")
+                        && mountPlan.request().rawInput().contains("target.id=minecraft:horse")
+                        && AutomationPrimitiveRegistry.contains("cap.transport.verify_mounted"),
+                "verified rideable-entity mounting was not registered end to end");
+
+        JsonObject boat = new JsonObject();
+        boat.addProperty("boat", "minecraft:oak_boat");
+        boat.addProperty("craft_if_missing", true);
+        boat.addProperty("placement", "water");
+        boat.addProperty("search_radius", 6);
+        AutomationCapabilityPlan boatPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "transport.boat_deploy", boat, UUID.randomUUID());
+        require(boatPlan.request().rawInput().contains("movement/transport/boat_deploy_smart.ktl")
+                        && boatPlan.request().rawInput().contains("boat.item=minecraft:oak_boat")
+                        && boatPlan.request().rawInput().contains("craft.if_missing=true")
+                        && boatPlan.request().rawInput().contains("placement.preference=water")
+                        && boatPlan.request().rawInput().contains("search.radius=6")
+                        && !boatPlan.request().rawInput().contains("target.x=")
+                        && AutomationPrimitiveRegistry.contains("cap.transport.resolve_boat_target")
+                        && AutomationPrimitiveRegistry.contains("cap.transport.deploy_boat"),
+                "coordinate-free boat crafting/deployment did not compile through verified smart transport primitives");
+
+        JsonObject exactBoat = new JsonObject();
+        exactBoat.addProperty("boat", "minecraft:oak_boat");
+        exactBoat.addProperty("x", 10);
+        exactBoat.addProperty("y", 63);
+        exactBoat.addProperty("z", 12);
+        AutomationCapabilityPlan exactBoatPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "transport.boat_deploy", exactBoat, UUID.randomUUID());
+        require(exactBoatPlan.request().rawInput().contains("target.x=10")
+                        && exactBoatPlan.request().rawInput().contains("target.y=63")
+                        && exactBoatPlan.request().rawInput().contains("target.z=12"),
+                "optional exact boat coordinates were not preserved");
+        JsonObject partialBoat = new JsonObject();
+        partialBoat.addProperty("boat", "minecraft:oak_boat");
+        partialBoat.addProperty("x", 10);
+        expectFailure("missing_coordinate", () -> AutomationCapabilityRegistry.validateAndCompile(
+                "transport.boat_deploy", partialBoat, UUID.randomUUID()));
+
+        JsonObject surroundings = new JsonObject();
+        surroundings.addProperty("radius", 5);
+        surroundings.addProperty("focus", "boat");
+        AutomationCapabilityPlan surroundingsPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "world.inspect_surroundings", surroundings, UUID.randomUUID());
+        require(surroundingsPlan.request().rawInput().contains("world/core/inspect_surroundings.ktl")
+                        && surroundingsPlan.request().rawInput().contains("search.radius=5")
+                        && surroundingsPlan.request().rawInput().contains("inspect.focus=boat")
+                        && AutomationPrimitiveRegistry.contains("cap.world.inspect_surroundings"),
+                "bounded surroundings inspection did not compile through its read-only primitive");
+
+        JsonObject elytra = new JsonObject();
+        elytra.addProperty("x", 120);
+        elytra.addProperty("y", 80);
+        elytra.addProperty("z", -40);
+        AutomationCapabilityPlan elytraPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "transport.elytra_flight", elytra, UUID.randomUUID());
+        require(elytraPlan.request().rawInput().contains("movement/transport/elytra_flight.ktl")
+                        && elytraPlan.request().rawInput().contains("elytra.item=minecraft:elytra")
+                        && elytraPlan.request().rawInput().contains("rocket.item=minecraft:firework_rocket")
+                        && AutomationPrimitiveRegistry.contains("cap.transport.fly_elytra"),
+                "bounded elytra execution did not compile through verified transport primitives");
+
+        JsonObject smartMovement = new JsonObject();
+        smartMovement.addProperty("x", 30);
+        smartMovement.addProperty("z", 40);
+        smartMovement.addProperty("allow_swim", true);
+        smartMovement.addProperty("allow_parkour", true);
+        AutomationCapabilityPlan smartMovementPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "movement.move_to", smartMovement, UUID.randomUUID());
+        require(smartMovementPlan.request().rawInput().contains("movement.policy=human_smart")
+                        && smartMovementPlan.request().rawInput().contains("movement.allow_swim=true")
+                        && smartMovementPlan.request().rawInput().contains("movement.allow_parkour=true")
+                        && smartMovementPlan.request().rawInput().contains("movement.allow_break_blocks=false"),
+                "smart movement options were not compiled with safe mutation defaults");
+
+        JsonObject below = new JsonObject();
+        below.addProperty("block", "minecraft:stone");
+        below.addProperty("selector", "below");
+        AutomationCapabilityPlan belowPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "block.mine", below, UUID.randomUUID());
+        require(belowPlan.request().rawInput().contains("blocks/core/mine_relative_block.ktl")
+                        && belowPlan.request().rawInput().contains("target.selector=below"),
+                "relative block mining did not compile to the exact no-navigation template");
+
+        JsonObject shortBlockName = new JsonObject();
+        shortBlockName.addProperty("block", "stone");
+        shortBlockName.addProperty("selector", "below");
+        AutomationCapabilityPlan shortBlockPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "block.mine", shortBlockName, UUID.randomUUID());
+        require(shortBlockPlan.request().rawInput().contains("target.id=minecraft:stone"),
+                "an unnamespaced vanilla block was not resolved before execution");
+
+        JsonObject build = new JsonObject();
+        build.addProperty("block", "minecraft:oak_planks");
+        build.addProperty("shape", "perimeter");
+        build.addProperty("length", 4);
+        build.addProperty("width", 4);
+        AutomationCapabilityPlan buildPlan = AutomationCapabilityRegistry.validateAndCompile(
+                "block.build_pattern", build, UUID.randomUUID());
+        require(buildPlan.request().rawInput().contains("pattern.id=perimeter")
+                        && buildPlan.request().rawInput().contains("count.value=12")
+                        && buildPlan.request().rawInput().contains("block.id=minecraft:oak_planks"),
+                "square/perimeter build did not compile to twelve verified placements");
+
+        JsonObject exactPlace = new JsonObject();
+        exactPlace.addProperty("block", "minecraft:stone");
+        exactPlace.addProperty("x", 12);
+        exactPlace.addProperty("y", 64);
+        exactPlace.addProperty("z", -8);
+        AutomationCapabilityPlan exactPlacePlan = AutomationCapabilityRegistry.validateAndCompile(
+                "block.place", exactPlace, UUID.randomUUID());
+        require(exactPlacePlan.request().rawInput().contains("blocks/core/place_block_at.ktl")
+                        && exactPlacePlan.request().rawInput().contains("target.x=12")
+                        && exactPlacePlan.request().rawInput().contains("target.y=64")
+                        && exactPlacePlan.request().rawInput().contains("target.z=-8")
+                        && exactPlacePlan.request().rawInput().contains("block.id=minecraft:stone"),
+                "coordinate-targeted block placement did not preserve the exact target and block ID");
 
         JsonObject commandArguments = new JsonObject();
         commandArguments.addProperty("command", "/give @s minecraft:Player_Head{display:{Name:'{\"text\":\"SpiritXIV\"}'}}");
@@ -166,16 +354,16 @@ public final class AutomationCapabilityProof {
 
     private static void proveSessionApprovalPolicy() {
         AutomationModeController.setAutomationMode(true);
-        require(!AutomationModeController.isYoloMode(), "Automation Mode did not start with standard approval");
+        require(!AutomationModeController.isUnrestrictedMode(), "Automation Mode did not start with standard approval");
         require(!AutomationModeController.isDeepThinkingEnabled(),
                 "Automation Mode did not start with Deep Thinking disabled");
         AutomationModeController.setDeepThinkingEnabled(true);
         require(AutomationModeController.isDeepThinkingEnabled(),
                 "Deep Thinking could not be enabled for the session");
-        AutomationModeController.enableYoloMode();
-        require(AutomationModeController.isYoloMode(), "session YOLO policy did not activate");
+        AutomationModeController.enableUnrestrictedMode();
+        require(AutomationModeController.isUnrestrictedMode(), "session Unrestricted policy did not activate");
         AutomationModeController.setAutomationMode(false);
-        require(!AutomationModeController.isYoloMode(), "session YOLO policy survived Automation Mode shutdown");
+        require(!AutomationModeController.isUnrestrictedMode(), "session Unrestricted policy survived Automation Mode shutdown");
         require(!AutomationModeController.isDeepThinkingEnabled(),
                 "session Deep Thinking setting survived Automation Mode shutdown");
     }
@@ -244,6 +432,48 @@ public final class AutomationCapabilityProof {
         require(waiter.join().executionId().equals(executionId), "execution result was not correlated");
         require(AutomationExecutionResults.pendingCount() == 0, "execution waiter leaked");
 
+        AutomationExecutionResult unknownTarget = new AutomationExecutionResult(
+                UUID.randomUUID(), "failed", "unknown_block_id", "unknown block",
+                "blocks/core/mine_relative_block",
+                Map.of("result.retryable", false, "result.requested_target_id", "minecraft:titanium"),
+                null, null, now, now
+        );
+        require(!AutomationToolCoordinator.isRetryableResult(unknownTarget, "failed", "unknown_block_id"),
+                "unknown exact block ids were still eligible for substitute-target retries");
+
+        AutomationExecutionResult partialMovement = new AutomationExecutionResult(
+                UUID.randomUUID(), "partial", "path_blocked", "route obstructed",
+                "movement/navigation/move_to_position",
+                Map.ofEntries(
+                        Map.entry("result.action_id", "movement.move_to"),
+                        Map.entry("result.requested.target_x", 100.0D),
+                        Map.entry("result.requested.target_y", 64.0D),
+                        Map.entry("result.requested.target_z", 0.0D),
+                        Map.entry("result.before.x", 0.0D),
+                        Map.entry("result.before.y", 64.0D),
+                        Map.entry("result.before.z", 0.0D),
+                        Map.entry("result.after.x", 42.5D),
+                        Map.entry("result.after.y", 64.0D),
+                        Map.entry("result.after.z", 0.0D),
+                        Map.entry("result.delta.x", 42.5D),
+                        Map.entry("result.distance_remaining", 57.5D),
+                        Map.entry("result.objective_reached", false),
+                        Map.entry("result.state_changed", true),
+                        Map.entry("result.continue_recommended", true),
+                        Map.entry("result.replan_recommended", true)),
+                null, null, now, now.plusMillis(250)
+        );
+        var structured = partialMovement.structured();
+        require(structured.status() == AutomationResultStatus.PARTIAL
+                        && !structured.objectiveReached()
+                        && structured.stateChanged()
+                        && structured.requested().containsKey("target_x")
+                        && structured.before().containsKey("x")
+                        && structured.after().containsKey("x")
+                        && structured.delta().containsKey("x")
+                        && structured.metrics().containsKey("distance_remaining"),
+                "structured partial movement result lost its requested/before/after/delta evidence");
+
         CompletableFuture<AutomationExecutionResult> timedOut = AutomationExecutionResults
                 .register(UUID.randomUUID())
                 .orTimeout(1L, TimeUnit.MILLISECONDS);
@@ -259,7 +489,7 @@ public final class AutomationCapabilityProof {
         RichChatModelOutputSanitizer.Result command = RichChatModelOutputSanitizer.sanitize(commandLink);
         require(commandLink.equals(command.text()), "Minecraft command link was removed");
         require(
-                RichChatModelFormattingContract.systemPrompt().contains("[label](/example command)"),
+                RichChatModelFormattingContract.systemPrompt().contains("[label](/command arguments)"),
                 "model formatting contract omitted Minecraft command links"
         );
         require(

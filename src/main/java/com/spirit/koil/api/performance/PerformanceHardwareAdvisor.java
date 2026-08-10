@@ -17,11 +17,21 @@ public final class PerformanceHardwareAdvisor {
         String gpu = lower(profile.gpuVendor() + " " + profile.gpuRenderer());
         boolean mac = os.contains("mac");
         boolean integrated = containsAny(gpu, "intel", "uhd", "iris", "apple", "m1", "m2", "m3", "m4", "vega 3", "vega 6", "vega 8", "radeon graphics");
-        boolean laptopLike = mac || lower(profile.batteryStatus()).contains("battery") || containsAny(gpu, "mobile", "laptop");
+        String battery = lower(profile.batteryStatus());
+        boolean laptopLike = containsAny(battery, "discharging", "on battery", "battery power") || containsAny(gpu, "mobile", "laptop");
         int gpuTier = gpuTier(gpu, integrated);
         int cpuTier = profile.cpuThreads() >= 16 ? 3 : profile.cpuThreads() >= 8 ? 2 : profile.cpuThreads() >= 4 ? 1 : 0;
         int memoryTier = profile.systemMemoryMb() >= 24000 ? 3 : profile.systemMemoryMb() >= 12000 ? 2 : profile.systemMemoryMb() >= 7000 ? 1 : 0;
-        int pixelCount = Math.max(1, profile.monitorWidth()) * Math.max(1, profile.monitorHeight());
+        int renderWidth = profile.monitorWidth();
+        int renderHeight = profile.monitorHeight();
+        try {
+            if (client != null && client.getWindow() != null && client.getWindow().getFramebufferWidth() > 0 && client.getWindow().getFramebufferHeight() > 0) {
+                renderWidth = client.getWindow().getFramebufferWidth();
+                renderHeight = client.getWindow().getFramebufferHeight();
+            }
+        } catch (Throwable ignored) {
+        }
+        int pixelCount = Math.max(1, renderWidth) * Math.max(1, renderHeight);
         boolean highResolution = pixelCount >= 3_600_000 || profile.refreshRate() >= 144;
         int overallTier = Math.min(Math.min(gpuTier, cpuTier), memoryTier);
         return new HardwareClass(profile, mac, integrated, laptopLike, highResolution, gpuTier, cpuTier, memoryTier, overallTier);

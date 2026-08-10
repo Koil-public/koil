@@ -97,9 +97,14 @@ public class FirstLaunchDownloadScreen extends Screen implements DownloadProgres
             return;
         }
         this.started = true;
+        MinecraftClient startupClient = MinecraftClient.getInstance();
+        String username = startupClient != null && startupClient.getSession() != null
+                ? startupClient.getSession().getUsername()
+                : "";
         Thread thread = new Thread(() -> {
             try {
                 Main.refreshBootstrapFiles();
+                Main.refreshPlayerBootstrap(username);
                 Main.reloadDesign();
                 DesignLoader.reloadLoadingTexture();
                 this.status = this.failed ? "Finished with errors. Review the list below." : "Koil files are ready.";

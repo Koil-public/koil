@@ -807,7 +807,7 @@ public class FirstLaunchTermsScreen extends Screen {
             ContentRow.bullet("Mixin configuration allows Koil to inject into or replace supported vanilla screens, widgets, input handling, stats hooks, rendering paths and player-skin behavior."),
             ContentRow.bullet("File, content, media, console, skin, model, performance and package screens may use clipboard, drag-and-drop, system dialogs, media decoders or external windows where implemented."),
             ContentRow.section("Representative code proof"),
-            ContentRow.code("approvalPolicy = enabled && automationMode ? ApprovalPolicy.YOLO : ApprovalPolicy.STANDARD;"),
+            ContentRow.code("approvalPolicy = enabled && automationMode ? ApprovalPolicy.UNRESTRICTED : ApprovalPolicy.STANDARD;"),
             ContentRow.code("case \"workspace.write\" -> write(call); case \"workspace.delete\" -> delete(call);"),
             ContentRow.code("new ProcessBuilder(command(this.selectedPort)).start();"),
             ContentRow.code("case \"cap.command.execute_raw\" -> AutomationRouter.sendRawCommand(rawCommand);")
@@ -848,7 +848,7 @@ public class FirstLaunchTermsScreen extends Screen {
         rows.add(ContentRow.code("KPakPrivateKeyStore.generate();  // registered preLaunch entry point"));
         rows.add(ContentRow.code("URI.create(\"https://huggingface.co/\" + repository + \"/resolve/main/\" + fileName)"));
         rows.add(ContentRow.code("ProcessBuilder builder = new ProcessBuilder(command(this.selectedPort));"));
-        rows.add(ContentRow.code("approvalPolicy = enabled && automationMode ? ApprovalPolicy.YOLO : ApprovalPolicy.STANDARD;"));
+        rows.add(ContentRow.code("approvalPolicy = enabled && automationMode ? ApprovalPolicy.UNRESTRICTED : ApprovalPolicy.STANDARD;"));
         rows.add(ContentRow.code("Files.move(resolved.path(), trashed, StandardCopyOption.ATOMIC_MOVE);"));
         rows.add(ContentRow.code("URI uri = URI.create(clean); return http || https ? clean : \"\";"));
         rows.add(ContentRow.section("Reviewed public source revision"));

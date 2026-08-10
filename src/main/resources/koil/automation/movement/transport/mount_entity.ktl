@@ -1,0 +1,36 @@
+version: 2
+kind: task_template
+id: template.movement_transport_mount_entity
+template_id: movement/transport/mount_entity
+semantic_operation: sem.movement.mount_entity
+params: [target.id, target.kind, target.selector, radius]
+metadata:
+  semantic_operations: [sem.movement.mount_entity]
+  target_kinds: [entity]
+  required_params: [target.id]
+  optional_params: [target.selector, radius]
+  tags: [movement, transport, mount, entity]
+  description: Approach, mount, and verify one exact rideable entity
+  visibility: public
+  model_callable: true
+  resource_locks: [movement, look, input, world]
+  side_effects: [moves_player, interacts_entity, mounts_entity]
+  timeout_ticks: 6000
+  failure_policy: fail
+steps:
+  - type: delegate
+    delegate: world/core/validate_target.ktl target.id=${target.id} target.kind=entity target.selector=${target.selector} radius=${radius} max.distance=${radius}
+  - type: delegate
+    delegate: movement/navigation/move_to_entity.ktl target.id=${target.id} target.kind=entity target.selector=${target.selector} radius=${radius} stop.distance=2.4
+  - type: run_primitive
+    action: cap.look.face_target
+    params:
+      turn.speed: natural
+  - type: run_primitive
+    action: cap.transport.mount_target
+    params: {}
+  - type: run_primitive
+    action: cap.transport.verify_mounted
+    params: {}
+  - type: return
+    label: done

@@ -1,0 +1,28 @@
+version: 2
+kind: task_template
+id: template.movement_transport_dismount
+template_id: movement/transport/dismount
+semantic_operation: sem.movement.dismount
+params: []
+metadata:
+  semantic_operations: [sem.movement.dismount]
+  target_kinds: [player]
+  required_params: []
+  optional_params: []
+  tags: [movement, transport, dismount]
+  description: Dismount and verify that the player is no longer riding
+  visibility: public
+  model_callable: true
+  resource_locks: [input, world]
+  side_effects: [dismounts_entity]
+  timeout_ticks: 300
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.player.dismount
+    params: {}
+  - type: run_primitive
+    action: cap.transport.verify_dismounted
+    params: {}
+  - type: return
+    label: done

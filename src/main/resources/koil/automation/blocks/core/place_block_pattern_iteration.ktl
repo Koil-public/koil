@@ -1,0 +1,58 @@
+version: 2
+kind: task_template
+id: template.blocks_core_place_block_pattern_iteration
+template_id: blocks/core/place_block_pattern_iteration
+semantic_operation: sem.task.place_item_on_target
+params: [block.id, item.id, pattern.id, pattern.length, pattern.width, count.value, state.counter, direction.id, hand.id]
+metadata:
+  semantic_operations: [sem.task.place_item_on_target]
+  target_kinds: [block, location]
+  required_params: [block.id, item.id, pattern.id, pattern.length, pattern.width, count.value]
+  optional_params: [state.counter, direction.id, hand.id]
+  tags: [block, place, build, pattern, iteration]
+  description: Place and verify one block in a computed build pattern
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input, world]
+  side_effects: [moves_player, changes_world_blocks, changes_inventory]
+  timeout_ticks: 24000
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.build.resolve_pattern_target
+    params:
+      pattern.id: ${pattern.id}
+      pattern.length: ${pattern.length}
+      pattern.width: ${pattern.width}
+      state.counter: ${state.counter}
+      direction.id: ${direction.id}
+      block.id: ${block.id}
+  - type: delegate
+    delegate: movement/navigation/move_to_position.ktl target.x=${build.stand.x} target.y=${build.stand.y} target.z=${build.stand.z} stop.distance=0.42 movement.precise=true movement.allow_sprint=false movement.allow_parkour=false movement.allow_place_blocks=false movement.allow_break_blocks=false
+  - type: run_primitive
+    action: cap.inventory.select_hotbar_item
+    params:
+      item.id: ${item.id}
+  - type: run_primitive
+    action: cap.interaction.place_block_target
+    params:
+      block.id: ${block.id}
+      hand.id: ${hand.id}
+      interaction.sneak: true
+  - type: run_primitive
+    action: cap.wait.ticks
+    params:
+      count.value: 3
+  - type: run_primitive
+    action: cap.world.verify_block_target
+    params:
+      block.id: ${block.id}
+  - type: run_primitive
+    action: cap.state.increment_counter
+    params:
+      state.key: state.counter
+      delta: 1
+  - type: delegate
+    delegate: blocks/core/place_block_pattern.ktl block.id=${block.id} item.id=${item.id} pattern.id=${pattern.id} pattern.length=${pattern.length} pattern.width=${pattern.width} count.value=${count.value} state.counter=${state.counter} direction.id=${direction.id} hand.id=${hand.id}
+  - type: return
+    label: done

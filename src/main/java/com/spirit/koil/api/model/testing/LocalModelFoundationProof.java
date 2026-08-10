@@ -6,6 +6,7 @@ import com.spirit.koil.api.chat.input.CommandSuggestionFuturePoller;
 import com.spirit.koil.api.chat.RichChatTableBridge;
 import com.spirit.koil.api.chat.RichChatHeadingLayout;
 import com.spirit.koil.api.chat.RichChatMaskedLinkBridge;
+import com.spirit.koil.api.chat.ModelChatMessageBridge;
 import com.spirit.koil.api.code.CodeLanguageDetector;
 import com.spirit.koil.api.minecraft.MinecraftRegistrySuggestions;
 import com.spirit.koil.api.minecraft.MinecraftNbtSuggestionService;
@@ -20,15 +21,20 @@ import com.spirit.koil.api.model.tool.AutomationPlanModelToolRegistry;
 import com.spirit.koil.api.model.tool.AutomationKtlSkillModelToolRegistry;
 import com.spirit.koil.api.automation.ktl.AutomationKtlSkillRegistry;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
+import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.model.planning.AutomationThinkingPolicy;
+import com.spirit.koil.api.model.planning.AutomationToolCallLatencyPolicy;
 import com.spirit.koil.api.model.prompt.LocalModelAutomationPrompt;
 import com.spirit.koil.api.model.tool.ModelWorkspaceRegistry;
 import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
 import com.spirit.koil.api.model.tool.MinecraftKnowledgeModelToolRegistry;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
+import com.spirit.koil.api.model.chat.ModelGenerationChatPanel;
 import com.spirit.koil.api.model.chat.ModelRequestMetricsPresentation;
 import com.google.gson.JsonObject;
 import com.spirit.koil.api.model.LocalModelRuntimeManager;
+import com.spirit.koil.api.model.LocalModelSystemPrompt;
+import com.spirit.koil.api.model.KoilLifetimeCounters;
 import com.spirit.koil.api.model.ManagedModelRequest;
 import com.spirit.koil.api.model.ModelConversation;
 import com.spirit.koil.api.model.ModelContextWindowState;
@@ -42,6 +48,7 @@ import com.spirit.koil.api.model.ModelFinalizationHandle;
 import com.spirit.koil.api.model.StreamingModelObserver;
 import com.spirit.koil.api.model.StreamingModelRequest;
 import com.spirit.koil.api.model.StreamingModelResponse;
+import com.spirit.koil.api.model.planning.ConversationalReasoningPolicy;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
@@ -85,6 +92,20 @@ public final class LocalModelFoundationProof {
                         && "01:05".equals(ModelRequestMetricsPresentation.formatElapsedMillis(1_000L, 66_000L))
                         && "1:01:01".equals(ModelRequestMetricsPresentation.formatElapsedMillis(1_000L, 3_662_000L)),
                 "bottom model elapsed timer formatting was not stable across minute/hour boundaries");
+        require(ModelGenerationChatPanel.statusHighlightPixelOffset("Thinking", true) == -1
+                        && ModelGenerationChatPanel.statusHighlightPixelOffset("Starting", true) == -1
+                        && ModelGenerationChatPanel.statusHighlightPixelOffset("Thinking", false) == 0
+                        && ModelGenerationChatPanel.statusHighlightPixelOffset("Writing", true) == 0,
+                "empty and hierarchy-present status geometry did not remain distinct");
+        var traceIndicator = ModelChatMessageBridge.indicator(
+                "-# §8├─§r §7Thought§r | I’m checking the request.\n-# §8└─§r §aResult§r | Complete."
+        );
+        var traceTooltip = ModelChatMessageBridge.traceTooltipLines(traceIndicator);
+        require(traceTooltip.size() == 2
+                        && traceTooltip.get(0).getString().contains("Thought | I’m checking")
+                        && traceTooltip.get(0).getSiblings().stream().anyMatch(part -> part.getStyle().getColor() != null)
+                        && traceTooltip.stream().noneMatch(line -> line.getString().contains("§") || line.getString().contains("-#")),
+                "final model message indicator did not retain a styled safe activity hierarchy");
         UUID elapsedRequest = UUID.randomUUID();
         ModelGenerationHudState.begin(elapsedRequest, "elapsed timer proof");
         ModelGenerationHudState.state(elapsedRequest, ModelRequestState.COMPLETED, "done");
@@ -107,6 +128,9 @@ public final class LocalModelFoundationProof {
                         && compactAutomationPrompt.contains("\"submitted\"")
                         && compactAutomationPrompt.contains("minecraft.knowledge")
                         && compactAutomationPrompt.contains("automation.skill_run")
+                        && compactAutomationPrompt.contains("transport.boat_deploy without x/y/z")
+                        && compactAutomationPrompt.contains("placement=water")
+                        && compactAutomationPrompt.contains("world.inspect_surroundings")
                         && compactAutomationPrompt.contains("Policy: STANDARD")
                         && compactAutomationPrompt.contains("hidden reasoning"),
                 "compact Automation prompt lost a safety or truthfulness boundary");
@@ -125,6 +149,20 @@ public final class LocalModelFoundationProof {
                         && formattedSpeech.get(0).text().indexOf('\u00a7') < 0
                         && !formattedSpeech.get(0).text().contains("04280D"),
                 "model voice retained a section/hex formatting control");
+        ModelVoicePhrasePlanner semanticSpeechPlanner = new ModelVoicePhrasePlanner();
+        String semanticSpeech = semanticSpeechPlanner.accept("id: minecraft:sheep is lvl: 3.9 & version 0.28.48 ")
+                .stream().map(com.spirit.koil.api.model.voice.ModelVoicePhrase::text)
+                .collect(java.util.stream.Collectors.joining(" "))
+                + " "
+                + semanticSpeechPlanner.finish().stream()
+                .map(com.spirit.koil.api.model.voice.ModelVoicePhrase::text)
+                .collect(java.util.stream.Collectors.joining(" "));
+        require(semanticSpeech.contains("I D:")
+                        && semanticSpeech.contains("level:")
+                        && semanticSpeech.contains("3 point 9")
+                        && semanticSpeech.contains("and version")
+                        && semanticSpeech.contains("0 point 28 point 48"),
+                "model voice did not preserve semantic decimal, ampersand, id, and level pronunciation");
         ModelVoicePhrasePlanner planner = new ModelVoicePhrasePlanner();
         require(planner.accept("This ").isEmpty(),
                 "model voice emitted an incomplete one-word stream fragment");
@@ -221,12 +259,17 @@ public final class LocalModelFoundationProof {
                 0,
                 32_768
         );
-        require(bottomHeader.getString().startsWith("Model | session kts-")
+        require(bottomHeader.getString().startsWith("Model | session kms-")
+                        && !bottomHeader.getString().contains("kes-")
+                        && !bottomHeader.getString().contains("kts-")
                         && !bottomHeader.getString().contains("Local model"),
                 "bottom model header did not combine its renamed title and metrics");
         require(bottomHeader.getStyle().getColor() != null
                         && bottomHeader.getStyle().getColor().getRgb() == 0xAAAAAA,
                 "bottom Model title is not light gray");
+        require(hasTextWithColor(bottomHeader, "session ", 0xAAAAAA)
+                        && hasTextWithColor(bottomHeader, "kms-", 0xFFFFFF),
+                "bottom Model session word/identifier colors are incorrect");
         String oversizedModelId = "provider/this-model-id-is-deliberately-too-long-for-the-metrics-row";
         Text fittedBottomHeader = ModelRequestMetricsPresentation.bottomHeaderFitted(
                 ModelGenerationHudState.visibleSnapshot(),
@@ -237,8 +280,8 @@ public final class LocalModelFoundationProof {
                 text -> text.getString().length()
         );
         require(!fittedBottomHeader.getString().contains(oversizedModelId)
-                        && fittedBottomHeader.getString().startsWith("Model | session kts-")
-                        && fittedBottomHeader.getString().endsWith("| 0 | 0 | 0 | 0 |  --"),
+                        && fittedBottomHeader.getString().startsWith("Model | session kms-")
+                        && fittedBottomHeader.getString().endsWith("| 0 | 0 | 0 | 0 | 100%"),
                 "narrow bottom metrics culled session/numeric values before the model id");
         Text fittedTopLine = ModelRequestMetricsPresentation.automationTopLineFitted(
                 ModelGenerationHudState.visibleSnapshot(),
@@ -250,11 +293,50 @@ public final class LocalModelFoundationProof {
                 text -> text.getString().length()
         );
         require(!fittedTopLine.getString().contains(oversizedModelId)
-                        && fittedTopLine.getString().startsWith("session ")
+                        && fittedTopLine.getString().startsWith("session kts-")
+                        && !fittedTopLine.getString().contains("kms-")
+                        && !fittedTopLine.getString().contains("kes-")
                         && fittedTopLine.getString().contains("D-T | Plan")
-                        && fittedTopLine.getString().endsWith("| 0 | 0 | 0 | 0 |  --"),
+                        && fittedTopLine.getString().endsWith("| 0 | 0 | 0 | 0 | 100%"),
                 "narrow Automation metrics culled mode/numeric values before the model id");
+        Text sessionLine = ModelRequestMetricsPresentation.automationSessionLine(
+                ModelGenerationHudState.visibleSnapshot(),
+                Text.literal("TEST | D-T")
+        );
+        require(sessionLine.getString().startsWith("session kts-")
+                        && sessionLine.getString().endsWith("| TEST | D-T")
+                        && !sessionLine.getString().contains(oversizedModelId)
+                        && !sessionLine.getString().matches(".*\\| \\d+ \\| \\d+.*"),
+                "Automation's visible session row included hidden model or numeric diagnostics");
+        require(sessionLine.getStyle().getColor() != null
+                        && sessionLine.getStyle().getColor().getRgb() == 0xAAAAAA,
+                "top Automation session word is not light gray");
+        require(hasTextWithColor(sessionLine, "kts-", 0xFFFFFF),
+                "top Automation session identifier is not white");
+        AutomationCliViewModel.beginSession("executor header proof");
+        Text executorHeader = AutomationCliViewModel.automationChatHeader();
+        require(executorHeader.getString().startsWith("Executor | session kes-")
+                        && !executorHeader.getString().contains("kas-"),
+                "bottom Executor identity did not replace Automation/kas");
+        require(hasTextWithColor(executorHeader, "session ", 0xAAAAAA)
+                        && hasTextWithColor(executorHeader, "kes-", 0xFFFFFF),
+                "bottom Executor session word/identifier colors are incorrect");
         ModelGenerationHudState.dismiss(headerRequest);
+        UUID automationHeaderRequest = UUID.randomUUID();
+        ModelGenerationHudState.begin(automationHeaderRequest, "automation header proof", true);
+        KoilLifetimeCounters.automationSessionStarted();
+        ModelGenerationHudState.refreshLifetimeCounters();
+        Text automationBottomHeader = ModelRequestMetricsPresentation.bottomHeader(
+                ModelGenerationHudState.visibleSnapshot(),
+                "proof-model",
+                0,
+                32_768
+        );
+        require(automationBottomHeader.getString().startsWith("Model | session kms-")
+                        && !automationBottomHeader.getString().contains("kes-")
+                        && !automationBottomHeader.getString().contains("kts-"),
+                "an Automation request changed the under-chat Model identity or kms counter");
+        ModelGenerationHudState.dismiss(automationHeaderRequest);
         ModelContextWindowState context = ModelContextWindowState.from(
                 new ModelUsage(24_000, 1_000, 12_000, 0L, 0L, 0.0D),
                 100_000
@@ -263,6 +345,19 @@ public final class LocalModelFoundationProof {
                 "context-window percentage double-counted reused prefix tokens");
         require(ModelContextWindowState.from(ModelUsage.empty(), 100_000).isEmpty(),
                 "context-window percentage fabricated usage before the provider reported it");
+    }
+
+    private static boolean hasTextWithColor(Text text, String prefix, int rgb) {
+        if (text == null) return false;
+        if (text.getString().startsWith(prefix)
+                && text.getStyle().getColor() != null
+                && text.getStyle().getColor().getRgb() == rgb) {
+            return true;
+        }
+        for (Text sibling : text.getSiblings()) {
+            if (hasTextWithColor(sibling, prefix, rgb)) return true;
+        }
+        return false;
     }
 
     private static void proveVoiceCatalogAndSynthesis() throws Exception {
@@ -292,6 +387,11 @@ public final class LocalModelFoundationProof {
                 "workspace read tool was not registered");
         require(ModelWorkspaceToolRegistry.supports("workspace.write"),
                 "workspace write tool was not registered");
+        require(ModelWorkspaceToolRegistry.supports("workspace.stat")
+                        && ModelWorkspaceToolRegistry.supports("workspace.mkdir")
+                        && ModelWorkspaceToolRegistry.supports("workspace.copy")
+                        && ModelWorkspaceToolRegistry.supports("workspace.move"),
+                "workspace management tools were not registered through the shared file API");
         require(ModelWorkspaceToolRegistry.supports("automation.ktl_apply"),
                 "validated KTL apply tool was not registered");
         require(LocalModelToolCatalog.automationModeTools().stream()
@@ -303,10 +403,31 @@ public final class LocalModelFoundationProof {
                                 && tool.confirmationRequired()),
                 "workspace mutation bypassed approval metadata");
         require(LocalModelToolCatalog.automationModeTools().stream()
+                        .filter(tool -> java.util.Set.of("workspace.mkdir", "workspace.copy", "workspace.move")
+                                .contains(tool.id()))
+                        .allMatch(com.spirit.koil.api.model.ModelToolDefinition::confirmationRequired),
+                "workspace management mutation bypassed approval metadata");
+        require(LocalModelToolCatalog.automationModeTools().stream()
                         .anyMatch(tool -> MinecraftKnowledgeModelToolRegistry.TOOL_ID.equals(tool.id())
                                 && tool.sideEffects().isEmpty()
                                 && !tool.confirmationRequired()),
                 "read-only Minecraft knowledge tool was not safely registered");
+        require(MinecraftKnowledgeModelToolRegistry.supports(MinecraftKnowledgeModelToolRegistry.ITEM_TOOL_ID)
+                        && MinecraftKnowledgeModelToolRegistry.supports(MinecraftKnowledgeModelToolRegistry.EFFECT_TOOL_ID)
+                        && MinecraftKnowledgeModelToolRegistry.supports(MinecraftKnowledgeModelToolRegistry.ENCHANTMENT_TOOL_ID),
+                "active-registry item/effect/enchantment detail tools were not registered");
+        require(com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry.modelTools().stream()
+                        .allMatch(tool -> tool.sideEffects().isEmpty() && !tool.confirmationRequired()),
+                "internet research was not registered as information-only");
+        ModelToolResult deniedWrite = com.spirit.koil.api.model.tool.DeepThoughtReadOnlyToolCoordinator.execute(
+                new ModelToolCall("read-only-proof", "workspace.write", new JsonObject())
+        ).get(2, java.util.concurrent.TimeUnit.SECONDS);
+        require("unsupported".equals(deniedWrite.status())
+                        && "read_only_boundary".equals(deniedWrite.failureCode()),
+                "/ask read-only routing accepted a filesystem mutation");
+        require("instance".equals(ModelWorkspaceRegistry.resolve("default", "", false).workspace().id())
+                        && "instance".equals(ModelWorkspaceRegistry.resolve("workspace", "", false).workspace().id()),
+                "compact-model workspace aliases did not resolve deterministically to instance");
         try {
             ModelWorkspaceRegistry.resolve("automation", "../outside.ktl", false);
             throw new IllegalStateException("workspace path escape was accepted");
@@ -317,6 +438,78 @@ public final class LocalModelFoundationProof {
     }
 
     private static void provePromptToolSelection() {
+        var directAsk = ConversationalReasoningPolicy.evaluate(
+                "Hello", 0,
+                new com.spirit.koil.api.model.ModelAgentCapabilityProfile(
+                        "proof", "proof",
+                        com.spirit.koil.api.model.ModelAgentCapabilityProfile.ToolReliability.WEAK,
+                        false, false, 4,
+                        com.spirit.koil.api.model.ModelAgentCapabilityProfile.PlanningReliability.WEAK,
+                        32_768, false, true, false, 2, "proof", true
+                ),
+                false
+        );
+        require(directAsk.depth() == ConversationalReasoningPolicy.Depth.DIRECT
+                        && directAsk.maximumOutputTokens() <= 192,
+                "simple /ask greeting did not select the bounded direct-response path");
+        require(LocalModelSystemPrompt.directConversationPrompt().length() < 1_600
+                        && LocalModelSystemPrompt.directConversationPrompt().contains("/ask has no action tools")
+                        && LocalModelSystemPrompt.directConversationPrompt().contains("latest user's language"),
+                "direct /ask cold-start contract was not compact and truth-preserving");
+        String directAutomationPrompt = LocalModelSystemPrompt.directAutomationToolPrompt()
+                + "\n\n" + LocalModelAutomationPrompt.directActionRules(false, true, true);
+        require(directAutomationPrompt.length() < 2_000
+                        && directAutomationPrompt.contains("STANDARD approval")
+                        && directAutomationPrompt.contains("No-Fail")
+                        && directAutomationPrompt.contains("Verification")
+                        && directAutomationPrompt.contains("structured tool call"),
+                "direct Automation tool-decision contract lost compact safety/composition boundaries");
+        require(LocalModelSystemPrompt.directAutomationResultPrompt().length() < 1_600
+                        && LocalModelSystemPrompt.directAutomationResultPrompt().contains("latest structured tool result")
+                        && LocalModelSystemPrompt.directAutomationResultPrompt().contains("§aCompleted§r"),
+                "verified direct-action final response lost its compact evidence/formatting contract");
+        var jumpThinking = AutomationThinkingPolicy.evaluate("jump", false);
+        var jumpTools = LocalModelToolCatalog.toolsForPrompt("jump", jumpThinking.includePlanTool());
+        var jumpLatency = AutomationToolCallLatencyPolicy.evaluate(
+                "jump", jumpThinking, LocalModelToolCatalog.requiredToolIdsForPrompt("jump"),
+                jumpTools, false, true
+        );
+        require(jumpLatency.directToolDecision()
+                        && jumpLatency.freshConversationWindow()
+                        && jumpLatency.maximumOutputTokens() == AutomationToolCallLatencyPolicy.DIRECT_TOOL_OUTPUT_TOKENS
+                        && jumpTools.stream().anyMatch(tool -> "player.jump".equals(tool.id())),
+                "single exact jump did not retain the model/tool path while selecting compact first-round context");
+        require(!AutomationToolCallLatencyPolicy.evaluate(
+                        "jump then walk forward", AutomationThinkingPolicy.evaluate("jump then walk forward", false),
+                        LocalModelToolCatalog.requiredToolIdsForPrompt("jump then walk forward"),
+                        LocalModelToolCatalog.toolsForPrompt("jump then walk forward"), false, true
+                ).directToolDecision()
+                        && !AutomationToolCallLatencyPolicy.evaluate(
+                        "do that again", AutomationThinkingPolicy.evaluate("do that again", false),
+                        LocalModelToolCatalog.requiredToolIdsForPrompt("do that again"),
+                        LocalModelToolCatalog.toolsForPrompt("do that again"), false, true
+                ).directToolDecision()
+                        && !AutomationToolCallLatencyPolicy.evaluate(
+                        "jump", jumpThinking, LocalModelToolCatalog.requiredToolIdsForPrompt("jump"),
+                        jumpTools, true, true
+                ).directToolDecision()
+                        && !AutomationToolCallLatencyPolicy.evaluate(
+                        "jump 10 times", AutomationThinkingPolicy.evaluate("jump 10 times", false),
+                        LocalModelToolCatalog.requiredToolIdsForPrompt("jump 10 times"),
+                        LocalModelToolCatalog.toolsForPrompt("jump 10 times"), false, true
+                ).directToolDecision()
+                        && !AutomationToolCallLatencyPolicy.evaluate(
+                        "jump over this gap", AutomationThinkingPolicy.evaluate("jump over this gap", false),
+                        LocalModelToolCatalog.requiredToolIdsForPrompt("jump over this gap"),
+                        LocalModelToolCatalog.toolsForPrompt("jump over this gap"), false, true
+                ).directToolDecision(),
+                "compact Automation latency policy consumed a compound, contextual, or planning-mode objective");
+        require(AutomationToolCallLatencyPolicy.useDirectVerifiedResultRound(true, 1, 1, true, false)
+                        && !AutomationToolCallLatencyPolicy.useDirectVerifiedResultRound(false, 1, 1, true, false)
+                        && !AutomationToolCallLatencyPolicy.useDirectVerifiedResultRound(true, 1, 0, true, false)
+                        && !AutomationToolCallLatencyPolicy.useDirectVerifiedResultRound(true, 1, 1, false, false)
+                        && !AutomationToolCallLatencyPolicy.useDirectVerifiedResultRound(true, 1, 1, true, true),
+                "direct result finalization bypassed model-path, success, objective, or reviewed-plan evidence");
         var all = LocalModelToolCatalog.automationModeTools();
         var movement = LocalModelToolCatalog.toolsForPrompt("Walk 10 blocks then jump");
         require(movement.size() < all.size(), "movement prompt retained the full tool catalog");
@@ -329,6 +522,17 @@ public final class LocalModelFoundationProof {
         require(LocalModelToolCatalog.requiredToolIdsForPrompt("Walk 10 blocks then jump")
                         .containsAll(java.util.Set.of("movement.walk_relative", "player.jump")),
                 "explicit multi-step objective did not retain both required capabilities");
+        require(LocalModelToolCatalog.toolsForPrompt("Place my boat nearby and mount it").stream()
+                        .anyMatch(tool -> "transport.boat_deploy".equals(tool.id()))
+                        && LocalModelToolCatalog.requiredToolIdsForPrompt("Place my boat nearby and mount it")
+                        .contains("transport.boat_deploy"),
+                "coordinate-free boat intent omitted its reviewed transport capability");
+        require(LocalModelToolCatalog.toolsForPrompt("Use my elytra to fly to 100 80 100").stream()
+                        .anyMatch(tool -> "transport.elytra_flight".equals(tool.id())),
+                "elytra intent omitted its reviewed flight capability");
+        require(LocalModelToolCatalog.toolsForPrompt("Use raw mouse look; turn camera by 20 yaw and 0 pitch").stream()
+                        .anyMatch(tool -> "input.mouse_delta".equals(tool.id())),
+                "raw mouse-look intent omitted input.mouse_delta");
         require(LocalModelToolCatalog.requiredToolIdsForPrompt(
                                 "Check the block I am looking at, then jump.")
                         .contains("player.jump"),
@@ -349,6 +553,13 @@ public final class LocalModelFoundationProof {
                 "coding prompt lost workspace inspection");
         require(coding.stream().anyMatch(tool -> "workspace.replace".equals(tool.id())),
                 "coding prompt lost exact replacement");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt(
+                        "Create a folder, copy a file, then rename a file")
+                        .containsAll(java.util.Set.of("workspace.mkdir", "workspace.copy", "workspace.move")),
+                "multi-action file management objective lost required operations");
+        require(LocalModelToolCatalog.toolsForPrompt("Tell me about this modded item").stream()
+                        .anyMatch(tool -> MinecraftKnowledgeModelToolRegistry.ITEM_TOOL_ID.equals(tool.id())),
+                "modded item detail request lost exact active-registry inspection");
         require(LocalModelToolCatalog.toolsForPrompt("hello!").isEmpty(),
                 "simple Automation conversation still paid for an unrelated tool schema");
         require(LocalModelToolCatalog.toolsForPrompt("How are you?").isEmpty(),
@@ -456,7 +667,7 @@ public final class LocalModelFoundationProof {
         require(commandSequence.stream().anyMatch(tool -> "minecraft.command".equals(tool.id())),
                 "Minecraft-only inventory/title actions did not expose the permission-bound command tool");
         require(commandSequence.stream().anyMatch(tool ->
-                        MinecraftKnowledgeModelToolRegistry.TOOL_ID.equals(tool.id())),
+                        MinecraftKnowledgeModelToolRegistry.COMMAND_TOOL_ID.equals(tool.id())),
                 "Minecraft command objective did not expose live Minecraft knowledge");
         require(LocalModelToolCatalog.requiresFreshApproval("movement.walk_relative"),
                 "side-effecting movement did not require fresh standard-mode approval");
@@ -464,8 +675,32 @@ public final class LocalModelFoundationProof {
                         MinecraftKnowledgeModelToolRegistry.TOOL_ID),
                 "read-only Minecraft knowledge incorrectly required action approval");
         var recipe = LocalModelToolCatalog.toolsForPrompt("How do I craft a modded weapon?");
-        require(recipe.stream().anyMatch(tool -> MinecraftKnowledgeModelToolRegistry.TOOL_ID.equals(tool.id())),
+        require(recipe.stream().anyMatch(tool -> MinecraftKnowledgeModelToolRegistry.RECIPE_TOOL_ID.equals(tool.id())),
                 "recipe question did not expose synchronized Minecraft knowledge");
+        require(LocalModelToolCatalog.toolsForPrompt("Look at a minecraft:sheep").stream()
+                        .anyMatch(tool -> "entity.look_at".equals(tool.id())),
+                "entity-facing objective did not expose entity.look_at");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("Look at a minecraft:sheep")
+                        .contains("entity.look_at"),
+                "entity-facing objective was not tracked through completion evidence");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("Look at dummmmmmy:target_dummy")
+                        .contains("entity.look_at"),
+                "modded namespaced entity-facing objective was not tracked");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("Place minecraft:stone at 12 64 -8")
+                        .contains("block.place"),
+                "coordinate-targeted namespaced block placement was not tracked");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("Break minecraft:stone")
+                        .contains("block.mine"),
+                "namespaced block breaking objective was not tracked");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("break a stone block thats below me")
+                        .contains("block.mine"),
+                "relative natural-language block breaking objective was not tracked");
+        var entityInteraction = LocalModelToolCatalog.requiredToolIdsForPrompt("Right click the minecraft:sheep entity");
+        require(entityInteraction.contains("entity.interact") && !entityInteraction.contains("block.interact"),
+                "entity interaction was incorrectly tracked as both a block and entity action");
+        require(LocalModelToolCatalog.toolsForPrompt("Build a 4 by 4 square of oak planks").stream()
+                        .anyMatch(tool -> "block.build_pattern".equals(tool.id())),
+                "square-building objective did not expose block.build_pattern");
         require(LocalModelToolCatalog.toolsForPrompt("perform an unfamiliar supported objective").size() == all.size(),
                 "unknown prompt did not retain the safe full-catalog fallback");
 

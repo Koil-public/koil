@@ -1,0 +1,13 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.movement_transport
+operations:
+  - id: sem.movement.boat_travel
+    intent: boat_travel
+    target_kinds: [location, item]
+    preferred_templates: [movement/transport/boat_travel]
+
+  - id: sem.movement.elytra_flight
+    intent: elytra_flight
+    target_kinds: [location, item]
+    preferred_templates: [movement/transport/elytra_flight]

@@ -1,0 +1,8 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.world_surroundings
+operations:
+  - id: sem.world.inspect_surroundings
+    intent: inspect_surroundings
+    target_kinds: [location]
+    preferred_templates: [world/core/inspect_surroundings]

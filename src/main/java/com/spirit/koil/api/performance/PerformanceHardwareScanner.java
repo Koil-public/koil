@@ -1,9 +1,9 @@
 package com.spirit.koil.api.performance;
 
-import com.spirit.Main;
 import com.sun.management.OperatingSystemMXBean;
 import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.loader.api.ModContainer;
+import net.minecraft.SharedConstants;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.resource.ResourcePackProfile;
 import org.lwjgl.glfw.GLFW;
@@ -12,22 +12,29 @@ import org.lwjgl.opengl.GL11;
 
 import java.lang.management.ManagementFactory;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 
 public final class PerformanceHardwareScanner {
     private static final List<String> OPTIMIZATION_MOD_IDS = List.of(
             "sodium", "lithium", "iris", "ferritecore", "immediatelyfast", "entityculling",
             "modernfix", "starlight", "c2me", "lazydfu", "krypton", "moreculling", "memoryleakfix"
     );
+    private static PerformanceHardwareProfile cachedProfile;
+    private static long cachedAtMillis;
 
     private PerformanceHardwareScanner() {
     }
 
     public static PerformanceHardwareProfile scan(MinecraftClient client) {
+        long now = System.currentTimeMillis();
+        if (cachedProfile != null && now - cachedAtMillis < 30_000L) {
+            return cachedProfile;
+        }
         List<String> mods = FabricLoader.getInstance().getAllMods().stream()
                 .map(ModContainer::getMetadata)
                 .map(metadata -> metadata.getId() + "@" + metadata.getVersion().getFriendlyString())
@@ -36,14 +43,10 @@ public final class PerformanceHardwareScanner {
         List<String> optimizationMods = OPTIMIZATION_MOD_IDS.stream()
                 .filter(id -> FabricLoader.getInstance().isModLoaded(id))
                 .toList();
-
-        int width = client != null && client.getWindow() != null ? client.getWindow().getWidth() : 0;
-        int height = client != null && client.getWindow() != null ? client.getWindow().getHeight() : 0;
-        int refreshRate = detectRefreshRate();
+        DisplayMode displayMode = detectDisplayMode(client);
         String[] gl = detectGlStrings();
-
         PerformanceHardwareProfile profile = new PerformanceHardwareProfile(
-                System.currentTimeMillis(),
+                now,
                 System.getProperty("os.name", "unknown") + " " + System.getProperty("os.version", ""),
                 System.getProperty("os.arch", "unknown"),
                 Runtime.getRuntime().availableProcessors(),
@@ -51,21 +54,33 @@ public final class PerformanceHardwareScanner {
                 gl[0],
                 gl[1],
                 gl[2],
-                "unknown",
+                "unavailable",
                 probeStorageSpeed(),
-                width,
-                height,
-                refreshRate,
-                detectBatteryStatus(),
-                Main.version(),
+                displayMode.width(),
+                displayMode.height(),
+                displayMode.refreshRate(),
+                "unknown",
+                minecraftVersion(),
                 mods,
                 optimizationMods,
                 enabledResourcePacks(client),
                 FabricLoader.getInstance().isModLoaded("iris") || FabricLoader.getInstance().isModLoaded("oculus")
         );
+        cachedProfile = profile;
+        cachedAtMillis = now;
         PerformanceJsonStore.write(PerformancePaths.HARDWARE_PROFILE, profile);
-        ensureDefaultColorConfig();
         return profile;
+    }
+
+    public static long systemMemoryAvailableMb() {
+        try {
+            java.lang.management.OperatingSystemMXBean bean = ManagementFactory.getOperatingSystemMXBean();
+            if (bean instanceof OperatingSystemMXBean osBean) {
+                return Math.max(0L, osBean.getFreeMemorySize() / 1024L / 1024L);
+            }
+        } catch (Throwable ignored) {
+        }
+        return -1L;
     }
 
     private static long detectSystemMemoryMb() {
@@ -76,7 +91,7 @@ public final class PerformanceHardwareScanner {
             }
         } catch (Throwable ignored) {
         }
-        return Runtime.getRuntime().maxMemory() / 1024L / 1024L;
+        return 0L;
     }
 
     private static String[] detectGlStrings() {
@@ -95,47 +110,69 @@ public final class PerformanceHardwareScanner {
         return value == null || value.isBlank() ? "unknown" : value;
     }
 
-    private static int detectRefreshRate() {
+    private static DisplayMode detectDisplayMode(MinecraftClient client) {
         try {
-            long monitor = GLFW.glfwGetPrimaryMonitor();
+            long monitor = 0L;
+            if (client != null && client.getWindow() != null) {
+                monitor = GLFW.glfwGetWindowMonitor(client.getWindow().getHandle());
+            }
+            if (monitor == 0L) {
+                monitor = GLFW.glfwGetPrimaryMonitor();
+            }
             if (monitor != 0L) {
                 GLFWVidMode mode = GLFW.glfwGetVideoMode(monitor);
                 if (mode != null) {
-                    return mode.refreshRate();
+                    return new DisplayMode(mode.width(), mode.height(), mode.refreshRate());
                 }
             }
         } catch (Throwable ignored) {
         }
-        return 0;
+        int width = client != null && client.getWindow() != null ? client.getWindow().getWidth() : 0;
+        int height = client != null && client.getWindow() != null ? client.getWindow().getHeight() : 0;
+        return new DisplayMode(width, height, 0);
     }
 
     private static double probeStorageSpeed() {
         Path file = PerformancePaths.ROOT.resolve("storage_probe.tmp");
+        int bytesPerPass = 4 * 1024 * 1024;
         try {
             Files.createDirectories(PerformancePaths.ROOT);
-            ByteBuffer buffer = ByteBuffer.allocate(1024 * 1024);
-            for (int i = 0; i < buffer.capacity(); i++) {
-                buffer.put((byte) (i * 31));
+            ByteBuffer writeBuffer = ByteBuffer.allocateDirect(bytesPerPass);
+            for (int i = 0; i < bytesPerPass; i++) {
+                writeBuffer.put((byte) (i * 31));
             }
-            byte[] bytes = buffer.array();
+            writeBuffer.flip();
             long start = System.nanoTime();
-            Files.write(file, bytes);
-            Files.readAllBytes(file);
+            try (FileChannel channel = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+                while (writeBuffer.hasRemaining()) {
+                    channel.write(writeBuffer);
+                }
+                channel.force(true);
+            }
+            ByteBuffer readBuffer = ByteBuffer.allocateDirect(bytesPerPass);
+            try (FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+                while (readBuffer.hasRemaining() && channel.read(readBuffer) >= 0) {
+                }
+            }
             long end = System.nanoTime();
             Files.deleteIfExists(file);
             double seconds = Math.max(0.001D, (end - start) / 1_000_000_000.0D);
-            return Math.round((2.0D / seconds) * 10.0D) / 10.0D;
+            return Math.round(((bytesPerPass * 2.0D / 1024.0D / 1024.0D) / seconds) * 10.0D) / 10.0D;
         } catch (Exception ignored) {
+            try {
+                Files.deleteIfExists(file);
+            } catch (Exception ignoredAgain) {
+            }
             return 0.0D;
         }
     }
 
-    private static String detectBatteryStatus() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        if (os.contains("mac") || os.contains("win")) {
-            return "unknown; laptop/battery mode will be inferred from user-selected profile";
+    private static String minecraftVersion() {
+        try {
+            return SharedConstants.getGameVersion().getName();
+        } catch (Throwable ignored) {
+            return "unknown";
         }
-        return "unknown";
     }
 
     private static List<String> enabledResourcePacks(MinecraftClient client) {
@@ -152,8 +189,6 @@ public final class PerformanceHardwareScanner {
         }
     }
 
-    private static void ensureDefaultColorConfig() {
-        // Performance color defaults now live in the main design.json tree under "performance".
-        // This method remains as a compatibility hook for older scanner call sites.
+    private record DisplayMode(int width, int height, int refreshRate) {
     }
 }

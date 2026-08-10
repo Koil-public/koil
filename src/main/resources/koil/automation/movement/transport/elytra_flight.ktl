@@ -1,0 +1,41 @@
+version: 2
+kind: task_template
+id: template.movement_transport_elytra_flight
+template_id: movement/transport/elytra_flight
+semantic_operation: sem.movement.elytra_flight
+params: [elytra.item, rocket.item, flight.use_rocket, target.x, target.y, target.z, arrival.radius, look.turn_speed]
+metadata:
+  semantic_operations: [sem.movement.elytra_flight]
+  target_kinds: [location, item]
+  required_params: [elytra.item, target.x, target.y, target.z]
+  optional_params: [rocket.item, flight.use_rocket, arrival.radius, look.turn_speed]
+  tags: [movement, transport, elytra, gliding, firework]
+  description: Equip, launch, optionally boost, and fly within a bounded target radius
+  visibility: public
+  model_callable: true
+  resource_locks: [inventory, equipment, look, input, world]
+  side_effects: [changes_equipment, moves_player, glides_player, may_consume_firework, changes_orientation]
+  timeout_ticks: 3600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.transport.prepare_elytra
+    params:
+      elytra.item: ${elytra.item}
+      rocket.item: ${rocket.item}
+      flight.use_rocket: ${flight.use_rocket}
+  - type: run_primitive
+    action: cap.transport.fly_elytra
+    params:
+      rocket.item: ${rocket.item}
+      flight.use_rocket: ${flight.use_rocket}
+      target.x: ${target.x}
+      target.y: ${target.y}
+      target.z: ${target.z}
+      arrival.radius: ${arrival.radius}
+      look.turn_speed: ${look.turn_speed}
+  - type: run_primitive
+    action: cap.transport.verify_elytra_arrival
+    params: {}
+  - type: return
+    label: done

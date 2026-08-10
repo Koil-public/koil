@@ -83,6 +83,32 @@ public final class AutomationFailureRegistry {
         return List.copyOf(types);
     }
 
+    /**
+     * Matches structured runtime evidence to an existing failure entry. A
+     * match requires shared node category plus concrete reason/id tokens; a
+     * loose filename or label similarity alone is never enough to execute a
+     * recovery.
+     */
+    public static Optional<Match> match(String action, String reason, Map<String, Object> evidence) {
+        ensureDefaultRegistry();
+        String searchable = (safe(action) + " " + safe(reason) + " " + String.valueOf(evidence))
+                .toLowerCase(Locale.ROOT).replace('_', ' ').replace('.', ' ');
+        String nodeType = explicitType(searchable);
+        if (nodeType.isBlank()) nodeType = "ui";
+        Match best = null;
+        int bestScore = 0;
+        for (FailureTypeFile file : files()) {
+            for (AutomationFailureType type : file.failure_types == null ? List.<AutomationFailureType>of() : file.failure_types) {
+                if (!applies(type, nodeType)) continue;
+                int score = score(type, searchable);
+                if (score < 2 || score <= bestScore) continue;
+                bestScore = score;
+                best = new Match(type, nodeType, file.source == null ? "" : file.source, score);
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
     public static void ensureDefaultRegistry() {
         if (bootstrapped && Files.exists(ROOT)) {
             return;
@@ -126,6 +152,7 @@ public final class AutomationFailureRegistry {
                             if (file.node_type == null || file.node_type.isBlank()) {
                                 file.node_type = fileNameNodeType(path);
                             }
+                            file.source = ROOT.relativize(path).toString().replace('\\', '/');
                             loaded.add(file);
                         }
                     } catch (RuntimeException ignored) {
@@ -201,6 +228,20 @@ public final class AutomationFailureRegistry {
             }
         }
         return false;
+    }
+
+    private static int score(AutomationFailureType type, String searchable) {
+        int score = 0;
+        String id = safe(type.id()).toLowerCase(Locale.ROOT);
+        String suffix = id.contains(".") ? id.substring(id.indexOf('.') + 1) : id;
+        String normalizedSuffix = suffix.replace('_', ' ');
+        if (!normalizedSuffix.isBlank() && searchable.contains(normalizedSuffix)) score += 5;
+        for (String token : normalizedSuffix.split("\\s+")) {
+            if (token.length() >= 4 && searchable.contains(token)) score++;
+        }
+        String label = safe(type.label()).toLowerCase(Locale.ROOT).replace('_', ' ');
+        if (!label.isBlank() && searchable.contains(label)) score += 3;
+        return score;
     }
 
     private static String fileNameNodeType(Path path) {
@@ -485,5 +526,13 @@ public final class AutomationFailureRegistry {
         private String node_type;
         private List<String> node_type_aliases;
         private List<AutomationFailureType> failure_types;
+        private transient String source;
+    }
+
+    public record Match(AutomationFailureType type, String nodeType, String file, int confidence) {
+        public Match {
+            nodeType = safe(nodeType);
+            file = safe(file);
+        }
     }
 }

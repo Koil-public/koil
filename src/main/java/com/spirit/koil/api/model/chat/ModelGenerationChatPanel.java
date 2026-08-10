@@ -12,6 +12,7 @@ import com.spirit.koil.api.chat.SlidingStatusText;
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.api.design.uiColorVal;
 import com.spirit.koil.api.model.format.RichChatModelOutputSanitizer;
+import com.spirit.koil.api.model.ModelSemanticPalette;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ChatScreen;
@@ -34,6 +35,8 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
     private static final Set<UUID> MANUAL_SCROLL = ConcurrentHashMap.newKeySet();
     private static final Set<UUID> EXPANDED_DETAILS = ConcurrentHashMap.newKeySet();
     private static final Map<UUID, CachedLines> FORMATTED_LINES = new ConcurrentHashMap<>();
+    private static UUID scrollbarDragRequest;
+    private static int scrollbarDragOffset;
 
     @Override
     public String id() {
@@ -83,6 +86,10 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
         int y = bounds.y() + 4;
         drawContext.drawTextWithShadow(client.textRenderer, block.header(), x, y, uiColorVal.uiColorLocalModelPopupText);
         y += client.textRenderer.fontHeight + 2;
+        int contentTop = y;
+        if (block.maximumScroll() > 0) {
+            drawContext.enableScissor(bounds.x(), contentTop, bounds.x() + bounds.width(), contentTop + block.viewportHeight());
+        }
         for (PanelLine line : block.visibleLines()) {
             RichChatAttachmentRenderer.renderPreviewOrDrawText(
                     drawContext,
@@ -96,6 +103,10 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
                 line.statusAnimation().render(drawContext, client, x, y);
             }
             y += line.height();
+        }
+        if (block.maximumScroll() > 0) {
+            drawContext.disableScissor();
+            ModelPopupScrollbar.render(drawContext, scrollbarMetrics(bounds, block, client));
         }
         for (Button button : buttons(block, bounds, client)) {
             drawContext.fill(
@@ -124,6 +135,17 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
         Block block = block(context);
         if (block == null) {
             return false;
+        }
+        ModelPopupScrollbar.Metrics scrollbar = scrollbarMetrics(bounds, block, context.client());
+        if (scrollbar != null && scrollbar.contains(mouseX, mouseY)) {
+            scrollbarDragRequest = block.snapshot().requestId();
+            if (scrollbar.thumbContains(mouseX, mouseY)) {
+                scrollbarDragOffset = (int) mouseY - scrollbar.thumbY();
+            } else {
+                scrollbarDragOffset = scrollbar.thumbHeight() / 2;
+                setScrollFromThumb(block.snapshot().requestId(), (int) mouseY - scrollbarDragOffset, scrollbar);
+            }
+            return true;
         }
         for (Button action : buttons(block, bounds, context.client())) {
             if (!action.contains(mouseX, mouseY)) {
@@ -181,6 +203,25 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
         return true;
     }
 
+    @Override
+    public boolean mouseDragged(ChatHudPanelContext context, ChatHudPanelBounds bounds, double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        if (button != 0 || scrollbarDragRequest == null) return false;
+        Block block = block(context);
+        if (block == null || !scrollbarDragRequest.equals(block.snapshot().requestId())) return false;
+        ModelPopupScrollbar.Metrics metrics = scrollbarMetrics(bounds, block, context.client());
+        if (metrics == null) return false;
+        setScrollFromThumb(block.snapshot().requestId(), (int) mouseY - scrollbarDragOffset, metrics);
+        return true;
+    }
+
+    @Override
+    public boolean mouseReleased(ChatHudPanelContext context, ChatHudPanelBounds bounds, double mouseX, double mouseY, int button) {
+        if (button != 0 || scrollbarDragRequest == null) return false;
+        scrollbarDragRequest = null;
+        scrollbarDragOffset = 0;
+        return true;
+    }
+
     private static Block block(ChatHudPanelContext context) {
         ModelGenerationHudState.Snapshot snapshot = ModelGenerationHudState.visibleSnapshot();
         MinecraftClient client = context.client();
@@ -220,6 +261,7 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
         SCROLL_OFFSETS.put(snapshot.requestId(), offset);
         List<PanelLine> visible = visibleLines(all, offset, maximumContentHeight);
         int visibleTextHeight = visible.stream().mapToInt(PanelLine::height).sum();
+        int totalTextHeight = all.stream().mapToInt(PanelLine::height).sum();
         int buttonHeight = client.textRenderer.fontHeight + 6;
         int headerWidth = Math.max(1, context.panelWidth() - 12);
         Text headerText = ModelRequestMetricsPresentation.bottomHeaderFitted(
@@ -240,7 +282,8 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
         int height = 4 + client.textRenderer.fontHeight + 2
                 + visibleTextHeight
                 + buttonHeight + 4;
-        return new Block(snapshot, header, visible, Math.max(32, height), maximumScroll);
+        return new Block(snapshot, header, visible, Math.max(32, height), maximumScroll, offset,
+                Math.max(1, visibleTextHeight), Math.max(1, totalTextHeight));
     }
 
     private static List<PanelLine> formattedLines(
@@ -260,7 +303,11 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
         }
         List<PanelLine> lines = new ArrayList<>();
         if (!visibleText.isBlank()) {
-            Text wrappingText = RichChatPreviewFormatter.format(Text.literal(visibleText));
+            Text sourceText = Text.literal(visibleText);
+            if (approval) {
+                sourceText = RichChatBodyWrapFormatter.formatConfirmationDetails(sourceText, width);
+            }
+            Text wrappingText = RichChatPreviewFormatter.format(sourceText);
             int nativeWidth = width + RichChatBodyWrapFormatter.nativeWrapWidthAdjustment(
                     client.textRenderer,
                     wrappingText.getString()
@@ -412,7 +459,8 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
     }
 
     private static String activityText(ModelGenerationHudState.Snapshot snapshot) {
-        if (snapshot.currentToolStep() > 0 && snapshot.totalToolSteps() > 0
+        if (!snapshot.automationRequest()
+                && snapshot.currentToolStep() > 0 && snapshot.totalToolSteps() > 1
                 && (snapshot.state() == com.spirit.koil.api.model.ModelRequestState.EXECUTING_TOOL
                 || snapshot.state() == com.spirit.koil.api.model.ModelRequestState.WAITING_FOR_TOOL_RESULT)) {
             String tool = snapshot.activeToolId()
@@ -445,10 +493,13 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
             int spaces = ModelChatIdentity.alignedPrefixAdvance(prefixWidth, spaceWidth) / spaceWidth;
             line.append(Text.literal(" ".repeat(Math.max(0, spaces))));
         }
-        if (snapshot.currentToolStep() > 0 && snapshot.totalToolSteps() > 0
+        if (!snapshot.automationRequest()
+                && snapshot.currentToolStep() > 0 && snapshot.totalToolSteps() > 1
                 && (snapshot.state() == com.spirit.koil.api.model.ModelRequestState.EXECUTING_TOOL
                 || snapshot.state() == com.spirit.koil.api.model.ModelRequestState.WAITING_FOR_TOOL_RESULT)) {
-            line.append(Text.literal(activityText(snapshot)));
+            line.append(Text.literal(activityText(snapshot)).styled(style -> style.withColor(
+                    ModelSemanticPalette.color(snapshot.activityState()) & 0x00FFFFFF
+            )));
             return new PanelLine(line.asOrderedText(), client.textRenderer.fontHeight + 1);
         } else {
             ModelRequestStatusPresentation.View status = ModelRequestStatusPresentation.forActivity(
@@ -457,11 +508,6 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
                     snapshot.activeToolId()
             );
             int statusOffset = client.textRenderer.getWidth(line);
-            line.append(SlidingStatusText.baseStyled(
-                    status.label(),
-                    status.semanticState(),
-                    uiColorVal.uiColorLocalModelPopupText
-            ));
             return new PanelLine(
                     line.asOrderedText(),
                     client.textRenderer.fontHeight + 1,
@@ -469,10 +515,15 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
                             statusOffset,
                             status.label(),
                             status.semanticState(),
-                            uiColorVal.uiColorLocalModelPopupText
+                            ModelSemanticPalette.color(status.activityState()),
+                            statusHighlightPixelOffset(status.label(), includeIdentity)
                     )
             );
         }
+    }
+
+    public static int statusHighlightPixelOffset(String label, boolean includeIdentity) {
+        return includeIdentity && ("Starting".equals(label) || "Thinking".equals(label)) ? -1 : 0;
     }
 
     private static String combinedVisibleText(ModelGenerationHudState.Snapshot snapshot) {
@@ -496,7 +547,7 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
         if (snapshot.activity() == null || snapshot.activity().isBlank()) {
             return approval;
         }
-        return snapshot.activity().strip() + "\n\n" + approval;
+        return snapshot.activity().strip() + "\n" + approval;
     }
 
     private record Block(
@@ -504,7 +555,10 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
             OrderedText header,
             List<PanelLine> visibleLines,
             int height,
-            int maximumScroll
+            int maximumScroll,
+            int scrollOffset,
+            int viewportHeight,
+            int totalContentHeight
     ) {
     }
 
@@ -521,7 +575,8 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
             int xOffset,
             String label,
             String semanticState,
-            int color
+            int color,
+            int highlightPixelOffset
     ) {
         private void render(DrawContext drawContext, MinecraftClient client, int x, int y) {
             SlidingStatusText.HighlightWindow window = SlidingStatusText.highlightWindow(
@@ -529,15 +584,23 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
                     this.semanticState,
                     System.currentTimeMillis()
             );
-            if (!window.active() || window.endCharacter() <= window.startCharacter()) return;
             String visible = window.visibleText();
-            int textX = x + this.xOffset;
-            if (window.startCharacter() > 0) {
+            int textX = x + this.xOffset + this.highlightPixelOffset;
+            drawContext.drawTextWithShadow(
+                    client.textRenderer,
+                    SlidingStatusText.baseStyled(this.label, this.semanticState, this.color),
+                    textX,
+                    y,
+                    this.color & 0x00FFFFFF
+            );
+            if (!window.active() || window.endCharacter() <= window.startCharacter()) return;
+            int visibleBandWidth = window.endCharacter() - window.startCharacter();
+            if (visibleBandWidth > 1 && window.startCharacter() > 0) {
                 renderRange(drawContext, client, visible, textX, y,
                         window.startCharacter() - 1, window.startCharacter(),
                         SlidingStatusText.transitionColor(this.color));
             }
-            if (window.endCharacter() < visible.length()) {
+            if (visibleBandWidth > 1 && window.endCharacter() < visible.length()) {
                 renderRange(drawContext, client, visible, textX, y,
                         window.endCharacter(), window.endCharacter() + 1,
                         SlidingStatusText.transitionColor(this.color));
@@ -562,6 +625,27 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
             drawContext.drawTextWithShadow(client.textRenderer, Text.literal(visible), textX, y, color);
             drawContext.disableScissor();
         }
+    }
+
+    private static ModelPopupScrollbar.Metrics scrollbarMetrics(ChatHudPanelBounds bounds, Block block, MinecraftClient client) {
+        if (bounds == null || block == null || client == null || block.maximumScroll() <= 0) return null;
+        int contentTop = bounds.y() + 4 + client.textRenderer.fontHeight + 2;
+        double fraction = block.viewportHeight() / (double) Math.max(block.viewportHeight(), block.totalContentHeight());
+        return ModelPopupScrollbar.topDownRange(
+                bounds.x() + bounds.width() - 5,
+                contentTop,
+                block.viewportHeight(),
+                block.maximumScroll(),
+                block.scrollOffset(),
+                fraction
+        );
+    }
+
+    private static void setScrollFromThumb(UUID requestId, int thumbTop, ModelPopupScrollbar.Metrics metrics) {
+        int next = ModelPopupScrollbar.offsetFromThumbTop(thumbTop, metrics);
+        SCROLL_OFFSETS.put(requestId, next);
+        if (next >= metrics.maxScroll()) MANUAL_SCROLL.remove(requestId);
+        else MANUAL_SCROLL.add(requestId);
     }
 
     private record Button(String action, String label, int x, int y, int width, int height) {

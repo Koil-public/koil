@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.world_core_inspect_surroundings
+template_id: world/core/inspect_surroundings
+semantic_operation: sem.world.inspect_surroundings
+params: [search.radius, inspect.focus]
+metadata:
+  semantic_operations: [sem.world.inspect_surroundings]
+  target_kinds: [location]
+  required_params: []
+  optional_params: [search.radius, inspect.focus]
+  tags: [world, inspection, surroundings, terrain, entities, boat]
+  description: Capture one bounded client-visible surroundings snapshot without side effects
+  visibility: public
+  model_callable: true
+  resource_locks: [world]
+  side_effects: []
+  timeout_ticks: 200
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.world.inspect_surroundings
+    params:
+      search.radius: ${search.radius}
+      inspect.focus: ${inspect.focus}
+  - type: return
+    label: done

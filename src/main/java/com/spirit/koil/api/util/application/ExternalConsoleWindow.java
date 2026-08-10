@@ -74,8 +74,8 @@ public final class ExternalConsoleWindow extends JFrame implements ConsoleReposi
     }
 
     public ExternalConsoleWindow(ConsoleChannel channel, boolean standalone) {
-        super("Koil Console :: " + channel.id().toUpperCase());
-        this.channel = channel;
+        super("Koil Console :: " + (channel == ConsoleChannel.CLI ? ConsoleChannel.KOIL : channel).id().toUpperCase());
+        this.channel = channel == ConsoleChannel.CLI ? ConsoleChannel.KOIL : channel;
         this.standalone = standalone;
         this.uiScaleFactor = readUiScaleFactor();
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
@@ -124,7 +124,7 @@ public final class ExternalConsoleWindow extends JFrame implements ConsoleReposi
         if (this.standalone) {
             startFilePolling();
         } else {
-            ConsoleRepository.getInstance().subscribe(channel, this);
+            ConsoleRepository.getInstance().subscribe(this.channel, this);
         }
     }
 
@@ -170,7 +170,7 @@ public final class ExternalConsoleWindow extends JFrame implements ConsoleReposi
         JPanel buttonBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         buttonBar.setOpaque(false);
         buttonBar.applyComponentOrientation(ComponentOrientation.LEFT_TO_RIGHT);
-        for (ConsoleChannel consoleChannel : new ConsoleChannel[]{ConsoleChannel.KOIL, ConsoleChannel.PACKAGE, ConsoleChannel.MINECRAFT, ConsoleChannel.CLI}) {
+        for (ConsoleChannel consoleChannel : new ConsoleChannel[]{ConsoleChannel.KOIL, ConsoleChannel.PACKAGE, ConsoleChannel.MINECRAFT}) {
             JButton button = createTopButton(channelLabel(consoleChannel));
             button.addActionListener(event -> {
                 DesktopUiSoundHelper.playClick();

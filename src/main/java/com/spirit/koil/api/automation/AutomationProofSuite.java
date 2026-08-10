@@ -1,6 +1,8 @@
 package com.spirit.koil.api.automation;
 
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
+import com.spirit.koil.api.automation.ktl.KtlBuiltinLibraryInstaller;
+import com.spirit.koil.api.automation.ktl.KtlDevelopmentLibrarySynchronizer;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.automation.feedback.AutomationFailureRegistry;
 import com.spirit.koil.api.automation.feedback.AutomationFailureType;
@@ -35,6 +37,7 @@ public final class AutomationProofSuite {
         AutomationReporter.run("[task]", "proof.suite = start");
         KtlCompilerService.getInstance().reload();
         boolean passed = true;
+        passed &= proveClientCommandTree();
         passed &= proveInterpret("task.walk.forward", new AutomationRequest(
                 "movement/navigation/move_relative.ktl direction.id=forward count.value=5 unit.id=blocks",
                 true,
@@ -56,14 +59,70 @@ public final class AutomationProofSuite {
                 "target.id", "minecraft:zombie",
                 "target.selector", "nearest"
         ));
+        passed &= proveInterpret("task.input.hold", new AutomationRequest(
+                "flow/core/hold_input.ktl input.key=forward count.value=4",
+                true,
+                true
+        ), "sem.task.hold_input", "flow/core/hold_input", Map.of(
+                "input.key", "forward",
+                "count.value", 4
+        ));
+        passed &= proveInterpret("task.input.mouse", new AutomationRequest(
+                "flow/core/mouse_delta.ktl yaw.delta=8 pitch.delta=-2",
+                true,
+                true
+        ), "sem.task.mouse_input", "flow/core/mouse_delta", Map.of(
+                "yaw.delta", 8,
+                "pitch.delta", -2
+        ));
         passed &= proveRejectedLanguagePrompt();
         passed &= proveRetiredPromptTemplate();
         passed &= proveV2LibraryContract();
+        passed &= proveAdditiveBuiltinMigration();
+        passed &= proveDevelopmentLibrarySync();
         passed &= proveComposedSkillFamilies();
         passed &= proveCacheRoundTrip();
         passed &= proveFeedbackRegistryFlow();
         AutomationReporter.done("[done]", "proof.suite = " + (passed ? "success" : "failed"));
         return passed;
+    }
+
+    private static boolean proveClientCommandTree() {
+        try {
+            var automate = AutomationRouter.automationModeCommand("automate").build();
+            var feedback = automate.getChild("feedback");
+            var proof = automate.getChild("proof");
+            var deep = automate.getChild("deep");
+            var plan = automate.getChild("plan");
+            boolean valid = feedback != null
+                    && feedback.getChild("good") != null
+                    && feedback.getChild("bad") != null
+                    && feedback.getChild("note") != null
+                    && feedback.getChild("file") != null
+                    && feedback.getChild("node") != null
+                    && feedback.getChild("type") != null
+                    && feedback.getChild("cancel") != null
+                    && proof != null
+                    && proof.getChild("all") != null
+                    && proof.getChild("cache") != null
+                    && deep != null
+                    && deep.getChild("on") != null
+                    && deep.getChild("off") != null
+                    && deep.getChild("status") != null
+                    && plan != null
+                    && plan.getChild("on") != null
+                    && plan.getChild("off") != null
+                    && plan.getChild("status") != null;
+            if (!valid) {
+                AutomationReporter.fail("[fail]", "command.tree = feedback/proof are not real /automate children");
+                return false;
+            }
+            AutomationReporter.done("[done]", "command.tree = /automate feedback + /automate proof");
+            return true;
+        } catch (RuntimeException exception) {
+            AutomationReporter.fail("[fail]", "command.tree threw " + messageOf(exception));
+            return false;
+        }
     }
 
     private static boolean proveV2LibraryContract() {
@@ -102,6 +161,114 @@ public final class AutomationProofSuite {
         } catch (RuntimeException exception) {
             AutomationReporter.fail("[fail]", "ktl.v2 threw " + messageOf(exception));
             return false;
+        }
+    }
+
+    private static boolean proveAdditiveBuiltinMigration() {
+        Path temporary = null;
+        try {
+            temporary = Files.createTempDirectory("koil-ktl-migration-proof-");
+            Path legacyPack = temporary.resolve("flow/semantics/flow-operations.ktl");
+            Files.createDirectories(legacyPack.getParent());
+            String legacy = "legacy-user-edited-flow-pack";
+            Files.writeString(legacyPack, legacy, StandardCharsets.UTF_8);
+            int installed = KtlBuiltinLibraryInstaller.installMissing(temporary);
+            Path additivePack = temporary.resolve("flow/semantics/input-operations.ktl");
+            boolean passed = installed > 0
+                    && Files.isRegularFile(additivePack)
+                    && Files.readString(additivePack).contains("sem.task.hold_input")
+                    && Files.readString(additivePack).contains("sem.task.mouse_input")
+                    && legacy.equals(Files.readString(legacyPack));
+            if (passed) {
+                AutomationReporter.done("[done]", "ktl.migration = additive semantics preserved local pack");
+            } else {
+                AutomationReporter.fail("[fail]", "ktl.migration = missing additive pack or local overwrite");
+            }
+            return passed;
+        } catch (Exception exception) {
+            AutomationReporter.fail("[fail]", "ktl.migration threw " + messageOf(exception));
+            return false;
+        } finally {
+            if (temporary != null) {
+                try (Stream<Path> paths = Files.walk(temporary)) {
+                    paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException ignored) {
+                        }
+                    });
+                } catch (IOException ignored) {
+                }
+            }
+        }
+    }
+
+    private static boolean proveDevelopmentLibrarySync() {
+        Path temporary = null;
+        try {
+            temporary = Files.createTempDirectory("koil-ktl-sync-proof-");
+            Files.createDirectories(temporary.resolve(".git"));
+            Files.writeString(temporary.resolve("build.gradle"), "// proof", StandardCharsets.UTF_8);
+            Path sourceRoot = temporary.resolve("src/main/resources/koil/automation");
+            Path runRoot = temporary.resolve("run/koil/automation");
+            Path sourceTask = sourceRoot.resolve("flow/proof.ktl");
+            Path runTask = runRoot.resolve("flow/proof.ktl");
+            Files.createDirectories(sourceTask.getParent());
+            Files.createDirectories(runTask.getParent());
+            Files.writeString(sourceTask, "source-forward", StandardCharsets.UTF_8);
+            Files.writeString(runTask, "legacy-run", StandardCharsets.UTF_8);
+
+            KtlDevelopmentLibrarySynchronizer.sync(temporary);
+            if (!"source-forward".equals(Files.readString(runTask))) return false;
+
+            Files.writeString(runTask, "edited-in-run", StandardCharsets.UTF_8);
+            KtlDevelopmentLibrarySynchronizer.sync(temporary);
+            if (!"edited-in-run".equals(Files.readString(sourceTask))) return false;
+
+            Files.writeString(sourceTask, "edited-in-source", StandardCharsets.UTF_8);
+            KtlDevelopmentLibrarySynchronizer.sync(temporary);
+            if (!"edited-in-source".equals(Files.readString(runTask))) return false;
+
+            Path runOnly = runRoot.resolve("movement/new-capability.ktl");
+            Files.createDirectories(runOnly.getParent());
+            Files.writeString(runOnly, "new-task", StandardCharsets.UTF_8);
+            KtlDevelopmentLibrarySynchronizer.sync(temporary);
+            boolean newFileSynced = Files.readString(sourceRoot.resolve("movement/new-capability.ktl")).equals("new-task")
+                    && Files.readString(sourceRoot.resolve("manifest.txt")).contains("movement/new-capability.ktl")
+                    && Files.readString(sourceRoot.resolve("manifest.txt")).equals(Files.readString(runRoot.resolve("manifest.txt")));
+            if (!newFileSynced) return false;
+
+            Files.writeString(sourceTask, "source-conflict", StandardCharsets.UTF_8);
+            Files.writeString(runTask, "run-conflict", StandardCharsets.UTF_8);
+            boolean conflictRejected = false;
+            try {
+                KtlDevelopmentLibrarySynchronizer.sync(temporary);
+            } catch (IllegalStateException expected) {
+                conflictRejected = expected.getMessage() != null && expected.getMessage().contains("both sides");
+            }
+            boolean preserved = "source-conflict".equals(Files.readString(sourceTask))
+                    && "run-conflict".equals(Files.readString(runTask));
+            if (conflictRejected && preserved) {
+                AutomationReporter.done("[done]", "ktl.development_sync = bidirectional and conflict safe");
+                return true;
+            }
+            AutomationReporter.fail("[fail]", "ktl.development_sync = conflict was overwritten or accepted");
+            return false;
+        } catch (Exception exception) {
+            AutomationReporter.fail("[fail]", "ktl.development_sync threw " + messageOf(exception));
+            return false;
+        } finally {
+            if (temporary != null) {
+                try (Stream<Path> paths = Files.walk(temporary)) {
+                    paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException ignored) {
+                        }
+                    });
+                } catch (IOException ignored) {
+                }
+            }
         }
     }
 

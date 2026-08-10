@@ -1,6 +1,7 @@
 package com.spirit;
 
 import com.spirit.client.gui.UiSoundHelper;
+import com.spirit.client.gui.main.ConsoleToast;
 import com.spirit.client.gui.pkg.PackageDetectionService;
 import com.spirit.koil.api.automation.AutomationPresenceClientBridge;
 import com.spirit.koil.api.automation.AutomationRouter;
@@ -9,6 +10,7 @@ import com.spirit.koil.api.chat.RichChatPrivacyNoticeClient;
 import com.spirit.koil.api.chat.sync.RichChatSyncClientBridge;
 import com.spirit.koil.api.command.ExitCommandBridge;
 import com.spirit.koil.api.console.ConsoleRequestBridge;
+import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.development.command.DevelopmentCommandBridge;
 import com.spirit.koil.api.f3.F3CommandBridge;
 import com.spirit.koil.api.f3.F3SnapshotService;
@@ -31,9 +33,14 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
+import net.minecraft.text.Text;
+import com.spirit.koil.api.util.console.log.SubFileLogger;
+import com.spirit.koil.api.util.application.ExternalWindowConsole;
+import com.spirit.koil.api.util.application.WindowManager;
 
 public class Client implements ClientModInitializer {
 
@@ -44,6 +51,20 @@ public class Client implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        SubFileLogger.installToastSink((type, title, description) -> {
+            net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+            if (client != null && client.getToastManager() != null) {
+                ConsoleToast.add(client.getToastManager(), ConsoleToast.Type.valueOf(type.name()), Text.of(title), Text.of(description));
+            }
+        });
+        net.minecraft.client.MinecraftClient startupClient = net.minecraft.client.MinecraftClient.getInstance();
+        String username = startupClient != null && startupClient.getSession() != null
+                ? startupClient.getSession().getUsername()
+                : "";
+        Main.initializeClientBootstrap(username);
+        if (!Boolean.getBoolean(ExternalWindowConsole.PROCESS_MARKER_PROPERTY) && Main.openKoilLogOnStartup()) {
+            WindowManager.openConsoleWindow(ConsoleChannel.KOIL);
+        }
         DevelopmentCommandBridge.initialize();
         LocalModelService.initialize();
         DeepThoughtSessionLifecycleBridge.initialize();
@@ -56,6 +77,10 @@ public class Client implements ClientModInitializer {
         RichChatSyncClientBridge.registerReceiver();
         KoilRemoteScreenClientBridge.registerReceiver();
         ClientTickEvents.START_CLIENT_TICK.register(client -> AutomationRouter.tick());
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
+            LocalModelService.cancelActiveWork();
+            AutomationRouter.cancelCurrentTask("player disconnected");
+        }));
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             PackageDetectionService.tick(client);
             AutomationPresenceClientBridge.tick(client);

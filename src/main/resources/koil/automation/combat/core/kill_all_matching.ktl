@@ -1,0 +1,31 @@
+version: 2
+kind: task_template
+id: template.combat_core_kill_all_matching
+template_id: combat/core/kill_all_matching
+semantic_operation: sem.task.kill_target_collection
+params: [target.id, target.kind, target.selector, radius, stop.distance, attack.range, count.value, quantity.mode, state.counter]
+metadata:
+  semantic_operations: [sem.task.kill_target_collection]
+  target_kinds: [entity]
+  required_params: [target.id]
+  optional_params: [target.kind, target.selector, radius, stop.distance, attack.range, count.value, quantity.mode, state.counter]
+  tags: [combat, kill, collection, all, entity]
+  description: Kill All Matching Entities In Bounded Radius
+  visibility: public
+  model_callable: true
+  resource_locks: [movement, look, input, combat]
+  side_effects: [moves_player, attacks_entity]
+  timeout_ticks: 6000
+  failure_policy: recover
+  recovery_task: movement/recovery/recover_stuck.ktl
+steps:
+  - type: run_primitive
+    action: cap.world.snapshot_target_count
+    params:
+      target.id: ${target.id}
+      target.kind: entity
+      radius: ${radius}
+  - type: delegate
+    delegate: combat/core/kill_entity_until_count.ktl target.id=${target.id} target.kind=entity target.selector=${target.selector} count.value=${count.value} state.counter=${state.counter} radius=${radius} stop.distance=${stop.distance} attack.range=${attack.range}
+  - type: return
+    label: collection_exhausted

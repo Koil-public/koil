@@ -34,9 +34,17 @@ public final class ModelObjectiveLedger {
         if (result == null) return;
         for (int i=0;i<objectives.size();i++) {
             Objective objective=objectives.get(i);
-            if (objective.state != State.PENDING || !objective.toolId.equals(result.toolId())) continue;
-            State state = result.completedAndValidated() ? State.COMPLETED
-                    : result.retryable() ? State.PENDING : State.BLOCKED;
+            if ((objective.state == State.COMPLETED || objective.state == State.CANCELLED)
+                    || !objective.toolId.equals(result.toolId())) continue;
+            String status = result.status().toLowerCase(Locale.ROOT);
+            String failure = result.failureCode().toLowerCase(Locale.ROOT);
+            boolean terminalLimitation = failure.startsWith("unknown_") || failure.contains("invalid_id")
+                    || failure.contains("unsupported") || failure.contains("permission")
+                    || failure.contains("impossible");
+            State state = result.completedAndValidated() || "already_satisfied".equals(status)
+                    ? State.COMPLETED
+                    : result.cancelled() || "cancelled".equals(status) ? State.CANCELLED
+                    : terminalLimitation ? State.BLOCKED : State.PENDING;
             objectives.set(i, new Objective(objective.id, objective.text, objective.toolId,
                     objective.requiredEvidence, state, result.status(), result.failureCode()));
             return;
@@ -49,8 +57,21 @@ public final class ModelObjectiveLedger {
         return Set.copyOf(ids);
     }
 
+    /** Includes recoverable blocked objectives for persistent No-Fail rounds. */
+    public synchronized Set<String> incompleteToolIds() {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        objectives.stream()
+                .filter(value -> value.state != State.COMPLETED && value.state != State.CANCELLED)
+                .map(Objective::toolId)
+                .forEach(ids::add);
+        return Set.copyOf(ids);
+    }
+
     public synchronized List<Objective> snapshot() { return List.copyOf(objectives); }
     public synchronized boolean satisfied() { return objectives.stream().noneMatch(value -> value.state == State.PENDING); }
+    public synchronized boolean allCompleted() {
+        return objectives.stream().allMatch(value -> value.state == State.COMPLETED);
+    }
 
     private static String evidenceRequirement(String toolId) {
         if (toolId.startsWith("workspace.")) return "completed result, filesystem reread, and matching resulting hash";

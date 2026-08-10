@@ -1,0 +1,31 @@
+version: 2
+kind: task_template
+id: template.blocks_core_mine_all_matching
+template_id: blocks/core/mine_all_matching
+semantic_operation: sem.task.mine_block_collection
+params: [target.id, target.selector, radius, stop.distance, count.value, quantity.mode, state.counter]
+metadata:
+  semantic_operations: [sem.task.mine_block_collection]
+  target_kinds: [block]
+  required_params: [target.id]
+  optional_params: [target.selector, radius, stop.distance, count.value, quantity.mode, state.counter]
+  tags: [block, mine, collection, all]
+  description: Mine All Matching Blocks In Bounded Radius
+  visibility: public
+  model_callable: true
+  resource_locks: [movement, look, input, world]
+  side_effects: [moves_player, changes_world_blocks]
+  timeout_ticks: 6000
+  failure_policy: recover
+  recovery_task: movement/recovery/recover_stuck.ktl
+steps:
+  - type: run_primitive
+    action: cap.world.snapshot_target_count
+    params:
+      target.id: ${target.id}
+      target.kind: block
+      radius: ${radius}
+  - type: delegate
+    delegate: blocks/core/mine_block_until_count.ktl target.id=${target.id} target.selector=${target.selector} count.value=${count.value} state.counter=${state.counter} radius=${radius} stop.distance=${stop.distance}
+  - type: return
+    label: collection_exhausted

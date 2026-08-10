@@ -74,7 +74,10 @@ public record ValidatedAutomationPlan(
                         step.toolId(),
                         step.reason(),
                         ModelGenerationHudState.PlanStepStatus.PENDING,
-                        ""
+                        "",
+                        com.spirit.koil.api.model.chat.ModelToolCallPresentation.arguments(step.arguments()),
+                        step.expectedObservation(),
+                        step.validationRequirement()
                 ))
                 .toList();
     }

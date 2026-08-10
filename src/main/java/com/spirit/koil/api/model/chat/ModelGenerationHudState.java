@@ -1,11 +1,14 @@
 package com.spirit.koil.api.model.chat;
 
+import com.google.gson.JsonObject;
 import com.spirit.koil.api.model.ModelCancellationHandle;
 import com.spirit.koil.api.model.ModelRequestState;
 import com.spirit.koil.api.model.ModelExecutionEvent;
 import com.spirit.koil.api.model.ModelFinalizationHandle;
 import com.spirit.koil.api.model.ModelDeepThoughtControl;
 import com.spirit.koil.api.model.ModelUsage;
+import com.spirit.koil.api.model.ModelActivityState;
+import com.spirit.koil.api.model.KoilLifetimeCounters;
 import com.spirit.koil.api.model.presence.ModelPresenceState;
 import com.spirit.koil.api.model.voice.ModelVoiceService;
 
@@ -23,6 +26,7 @@ public final class ModelGenerationHudState {
     private static final Map<UUID, MutableRequest> REQUESTS = new LinkedHashMap<>();
     private static final AtomicLong SESSION_SEQUENCE = new AtomicLong();
     private static UUID selectedRequestId;
+    private static Snapshot retainedMetricsSnapshot;
 
     private ModelGenerationHudState() {
     }
@@ -32,11 +36,14 @@ public final class ModelGenerationHudState {
     }
 
     public static synchronized void begin(UUID requestId, String prompt, boolean automationRequest) {
+        retainedMetricsSnapshot = null;
+        KoilLifetimeCounters.Snapshot counters = KoilLifetimeCounters.modelRequestStarted();
         REQUESTS.put(requestId, new MutableRequest(
                 requestId,
                 prompt == null ? "" : prompt,
                 automationRequest,
                 SESSION_SEQUENCE.incrementAndGet(),
+                counters,
                 System.currentTimeMillis()
         ));
         if (selectedRequestId == null) selectedRequestId = requestId;
@@ -44,7 +51,7 @@ public final class ModelGenerationHudState {
                 automationRequest
                         ? ModelPresenceState.ActivityKind.AUTOMATION
                         : ModelPresenceState.ActivityKind.ASK,
-                "waiting",
+                "starting",
                 true
         );
         trim();
@@ -107,7 +114,7 @@ public final class ModelGenerationHudState {
     public static synchronized void appendEvent(UUID requestId, ModelExecutionEvent event) {
         MutableRequest request = REQUESTS.get(requestId);
         if (request != null && event != null) {
-            request.appendEvent(map(event.type()), event.summary());
+            request.appendEvent(map(event.type()), event.activity(), event.eventId(), event.summary(), event.data(), event.timestampMillis());
         }
     }
 
@@ -118,11 +125,16 @@ public final class ModelGenerationHudState {
         }
         request.state = state == null ? ModelRequestState.FAILED : state;
         request.detail = detail == null ? "" : detail;
+        request.activityState = ModelRequestStatusPresentation.forActivity(
+                request.state,
+                request.detail,
+                request.activeToolId
+        ).activityState();
         ModelPresenceState.updateRequest(
                 request.automationRequest
                         ? ModelPresenceState.ActivityKind.AUTOMATION
                         : ModelPresenceState.ActivityKind.ASK,
-                presenceState(request.state, request.detail),
+                request.activityState.id(),
                 !request.state.terminal()
         );
         if (request.state.terminal()) {
@@ -202,7 +214,7 @@ public final class ModelGenerationHudState {
     ) {
         MutableRequest request = REQUESTS.get(requestId);
         if (request != null) {
-            request.appendEvent(type, summary);
+            request.appendEvent(type, activityFor(type, summary), "", summary, new JsonObject(), System.currentTimeMillis());
         }
     }
 
@@ -277,6 +289,19 @@ public final class ModelGenerationHudState {
             request.totalToolSteps = Math.max(request.currentToolStep, totalSteps);
             request.activeToolId = toolId == null ? "" : toolId;
             request.activeToolDetail = toolDetail == null ? "" : toolDetail;
+            request.activityState = ModelRequestStatusPresentation.forActivity(
+                    request.state,
+                    request.activeToolDetail,
+                    request.activeToolId
+            ).activityState();
+        }
+    }
+
+    /** Updates only nonterminal displayed requests when another startup-lifetime session begins. */
+    public static synchronized void refreshLifetimeCounters() {
+        KoilLifetimeCounters.Snapshot current = KoilLifetimeCounters.snapshot();
+        for (MutableRequest request : REQUESTS.values()) {
+            if (!request.state.terminal()) request.counters = current;
         }
     }
 
@@ -299,6 +324,17 @@ public final class ModelGenerationHudState {
             selected = request;
         }
         return selected == null ? null : selected.snapshot();
+    }
+
+    public static synchronized Snapshot snapshot(UUID requestId) {
+        MutableRequest request = requestId == null ? null : REQUESTS.get(requestId);
+        return request == null ? null : request.snapshot();
+    }
+
+    /** Retains completed usage/context values until a new prompt starts. */
+    public static synchronized Snapshot metricsSnapshot() {
+        Snapshot visible = visibleSnapshot();
+        return visible == null ? retainedMetricsSnapshot : visible;
     }
 
     public static synchronized boolean selectNextVisible() {
@@ -349,6 +385,7 @@ public final class ModelGenerationHudState {
         MutableRequest removed = REQUESTS.remove(requestId);
         if (requestId != null && requestId.equals(selectedRequestId)) selectedRequestId = null;
         if (removed != null) {
+            retainedMetricsSnapshot = removed.snapshot();
             removed.resolveApproval(false);
         }
     }
@@ -383,13 +420,16 @@ public final class ModelGenerationHudState {
             return "failed";
         }
         return switch (state) {
-            case WAITING_FOR_RUNTIME, QUEUED, WAITING_FOR_DATA, PAUSED -> "waiting";
+            case WAITING_FOR_RUNTIME, QUEUED -> "starting";
+            case WAITING_FOR_DATA -> "observing";
+            case PAUSED -> "idle";
             case PREPARING_CONTEXT, PREFILLING, THINKING -> "thinking";
             case INSPECTING -> "inspecting";
-            case PLANNING, VALIDATING_PLAN, WAITING_FOR_PLAN_APPROVAL -> "planning";
+            case PLANNING, VALIDATING_PLAN -> "planning";
+            case WAITING_FOR_PLAN_APPROVAL -> "awaiting_approval";
             case GENERATING -> "writing";
             case SELECTING_TOOL -> "thinking";
-            case WAITING_FOR_ACTION_APPROVAL -> "waiting";
+            case WAITING_FOR_ACTION_APPROVAL -> "awaiting_approval";
             case EXECUTING_TOOL, EDITING -> "executing";
             case WAITING_FOR_TOOL_RESULT, OBSERVING_RESULT -> "observing";
             case VALIDATING -> "validating";
@@ -427,6 +467,8 @@ public final class ModelGenerationHudState {
             PlanView plan,
             boolean automationRequest,
             long sessionNumber,
+            KoilLifetimeCounters.Snapshot counters,
+            ModelActivityState activityState,
             long createdAtMillis,
             long completedAtMillis
     ) {
@@ -448,8 +490,10 @@ public final class ModelGenerationHudState {
         private final List<ActivityEvent> events = new ArrayList<>();
         private final boolean automationRequest;
         private final long sessionNumber;
+        private KoilLifetimeCounters.Snapshot counters;
         private final long createdAtMillis;
         private ModelRequestState state = ModelRequestState.QUEUED;
+        private ModelActivityState activityState = ModelActivityState.STARTING;
         private String detail = "queued";
         private ModelUsage usage = ModelUsage.empty();
         private ModelCancellationHandle cancellation;
@@ -471,12 +515,14 @@ public final class ModelGenerationHudState {
                 String prompt,
                 boolean automationRequest,
                 long sessionNumber,
+                KoilLifetimeCounters.Snapshot counters,
                 long createdAtMillis
         ) {
             this.requestId = requestId;
             this.prompt = prompt;
             this.automationRequest = automationRequest;
             this.sessionNumber = sessionNumber;
+            this.counters = counters == null ? KoilLifetimeCounters.snapshot() : counters;
             this.createdAtMillis = createdAtMillis;
         }
 
@@ -497,24 +543,52 @@ public final class ModelGenerationHudState {
         }
 
         private void appendEvent(ActivityEventType type, String summary) {
+            appendEvent(type, activityFor(type, summary), "", summary, new JsonObject(), System.currentTimeMillis());
+        }
+
+        private void appendEvent(
+                ActivityEventType type,
+                ModelActivityState activityState,
+                String eventId,
+                String summary,
+                JsonObject data,
+                long timestampMillis
+        ) {
             String safe = cleanVisibleSummary(summary);
             if (safe.isBlank()) {
                 return;
             }
             ActivityEvent event = new ActivityEvent(
                     type == null ? ActivityEventType.RESULT : type,
+                    activityState == null ? activityFor(type, summary) : activityState,
                     safe,
-                    System.currentTimeMillis()
+                    timestampMillis,
+                    eventId,
+                    data
             );
+            if (!event.eventId().isBlank()) {
+                for (int index = 0; index < this.events.size(); index++) {
+                    if (event.eventId().equals(this.events.get(index).eventId())) {
+                        this.events.set(index, event);
+                        return;
+                    }
+                }
+            }
             this.events.add(event);
             while (this.events.size() > 64) {
                 this.events.remove(0);
             }
-            appendActivity(ModelActivityPresentation.timelineEvent(event, this.events.size() == 1));
         }
 
         private String renderActivity() {
             String base = this.activity.toString().strip();
+            List<ActivityEvent> visibleEvents = this.automationRequest
+                    ? this.events.stream().filter(ModelGenerationHudState::isModelLevelAutomationEvent).toList()
+                    : this.events;
+            String timeline = ModelActivityPresentation.timeline(this.prompt, visibleEvents);
+            if (!timeline.isBlank()) {
+                base = base.isBlank() ? timeline : timeline + "\n\n" + base;
+            }
             String planText = this.plan == null ? "" : this.plan.render();
             if (base.isBlank()) {
                 return planText;
@@ -550,6 +624,8 @@ public final class ModelGenerationHudState {
                     this.plan == null ? null : this.plan.snapshot(),
                     this.automationRequest,
                     this.sessionNumber,
+                    this.counters,
+                    this.activityState,
                     this.createdAtMillis,
                     this.completedAtMillis
             );
@@ -562,6 +638,14 @@ public final class ModelGenerationHudState {
                 pending.decision.complete(approved);
             }
         }
+    }
+
+    private static boolean isModelLevelAutomationEvent(ActivityEvent event) {
+        if (event == null) return false;
+        return switch (event.type()) {
+            case THOUGHT_SUMMARY, THOUGHT_STOPPED, PLAN_STEP, APPROVAL, REPLAN, CANCELLATION, CHECKPOINT -> true;
+            case TOOL_START, TOOL_PROGRESS, FILE, DIFF, COMMAND, VALIDATION, RESULT, FAILURE -> false;
+        };
     }
 
     private static String cleanVisibleSummary(String value) {
@@ -595,9 +679,41 @@ public final class ModelGenerationHudState {
 
     public record ActivityEvent(
             ActivityEventType type,
+            ModelActivityState activityState,
             String summary,
-            long timestampMillis
+            long timestampMillis,
+            String eventId,
+            JsonObject data
     ) {
+        public ActivityEvent {
+            type = type == null ? ActivityEventType.RESULT : type;
+            activityState = activityState == null ? activityFor(type, summary) : activityState;
+            summary = cleanVisibleSummary(summary);
+            eventId = eventId == null ? "" : eventId.strip();
+            data = data == null ? new JsonObject() : data.deepCopy();
+        }
+
+        public ActivityEvent(ActivityEventType type, String summary, long timestampMillis) {
+            this(type, activityFor(type, summary), summary, timestampMillis, "", new JsonObject());
+        }
+    }
+
+    private static ModelActivityState activityFor(ActivityEventType type, String summary) {
+        return switch (type == null ? ActivityEventType.RESULT : type) {
+            case THOUGHT_SUMMARY -> ModelActivityState.THINKING;
+            case THOUGHT_STOPPED, CANCELLATION -> ModelActivityState.CANCELLED;
+            case PLAN_STEP -> ModelActivityState.PLANNING;
+            case APPROVAL -> ModelActivityState.AWAITING_APPROVAL;
+            case TOOL_START, TOOL_PROGRESS -> ModelActivityState.fromLegacy(summary);
+            case FILE -> ModelActivityState.READING;
+            case DIFF -> ModelActivityState.COMPARING;
+            case COMMAND -> ModelActivityState.INSPECTING;
+            case VALIDATION -> ModelActivityState.VALIDATING;
+            case RESULT -> ModelActivityState.OBSERVING;
+            case FAILURE -> ModelActivityState.FAILED;
+            case REPLAN -> ModelActivityState.REPLANNING;
+            case CHECKPOINT -> ModelActivityState.WRITING;
+        };
     }
 
     public enum PlanStepStatus {
@@ -636,13 +752,23 @@ public final class ModelGenerationHudState {
             String toolId,
             String summary,
             PlanStepStatus status,
-            String result
+            String result,
+            String arguments,
+            String expectedObservation,
+            String validationRequirement
     ) {
         public PlanStep {
             toolId = toolId == null ? "" : toolId;
             summary = cleanVisibleSummary(summary);
             status = status == null ? PlanStepStatus.PENDING : status;
             result = cleanVisibleSummary(result);
+            arguments = cleanVisibleSummary(arguments);
+            expectedObservation = cleanVisibleSummary(expectedObservation);
+            validationRequirement = cleanVisibleSummary(validationRequirement);
+        }
+
+        public PlanStep(int index, String toolId, String summary, PlanStepStatus status, String result) {
+            this(index, toolId, summary, status, result, "", "", "");
         }
     }
 
@@ -674,7 +800,10 @@ public final class ModelGenerationHudState {
                             step.toolId(),
                             step.summary(),
                             PlanStepStatus.PENDING,
-                            ""
+                            "",
+                            step.arguments(),
+                            step.expectedObservation(),
+                            step.validationRequirement()
                     ));
                 }
             }
@@ -691,7 +820,10 @@ public final class ModelGenerationHudState {
                     current.toolId(),
                     current.summary(),
                     status,
-                    result
+                    result,
+                    current.arguments(),
+                    current.expectedObservation(),
+                    current.validationRequirement()
             ));
         }
 

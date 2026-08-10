@@ -21,14 +21,52 @@ public final class PerformanceBenchmarkRunner {
     }
 
     public static PerformanceBenchmarkResult finishBenchmark(MinecraftClient client, PerformanceProfileMode mode, long startedAtMillis, List<String> testNotes, boolean worldUiHidden, boolean automationProbeUsed) {
-        PerformanceSnapshot snapshot = PerformanceMonitor.snapshotSince(client, startedAtMillis);
+        long now = System.currentTimeMillis();
+        long movementStart = automationProbeUsed ? startedAtMillis + Math.max(1L, (now - startedAtMillis) / 2L) : 0L;
+        return finishBenchmark(client, mode, startedAtMillis, testNotes, worldUiHidden, automationProbeUsed, movementStart);
+    }
+
+    public static PerformanceBenchmarkResult finishBenchmark(MinecraftClient client, PerformanceProfileMode mode, long startedAtMillis, List<String> testNotes, boolean worldUiHidden, boolean automationProbeUsed, long movementProbeStartedAtMillis) {
+        long endedAtMillis = System.currentTimeMillis();
+        PerformanceSnapshot snapshot = PerformanceMonitor.snapshotBetween(client, startedAtMillis, endedAtMillis);
         List<PerformanceBenchmarkPhaseResult> phases = new ArrayList<>();
-        phases.add(phase(client, startedAtMillis, System.currentTimeMillis(), worldUiHidden ? "world_hidden" : "client_baseline", worldUiHidden ? "World baseline, UI hidden" : "Client/menu baseline", worldUiHidden, false, worldUiHidden ? "World/render cost sampled without Koil UI." : "Menu/client pressure sampled without world-only metrics."));
-        if (automationProbeUsed) {
-            phases.add(phase(client, startedAtMillis + Math.max(1L, (System.currentTimeMillis() - startedAtMillis) / 2L), System.currentTimeMillis(), "world_movement", "Movement and chunk streaming probe", worldUiHidden, true, "Automation movement requested so Koil can compare static world cost against movement/chunk streaming cost."));
+        long baselineEnd = automationProbeUsed && movementProbeStartedAtMillis > startedAtMillis
+                ? Math.min(endedAtMillis, movementProbeStartedAtMillis)
+                : endedAtMillis;
+        phases.add(phase(
+                client,
+                startedAtMillis,
+                baselineEnd,
+                worldUiHidden ? "world_static" : "client_baseline",
+                worldUiHidden ? "Static world baseline" : "Client/menu baseline",
+                worldUiHidden,
+                false,
+                worldUiHidden ? "Static world/render cost sampled before movement begins." : "Client/menu frame pacing sampled in the current screen context."
+        ));
+        if (automationProbeUsed && movementProbeStartedAtMillis > 0L && movementProbeStartedAtMillis < endedAtMillis) {
+            phases.add(phase(
+                    client,
+                    movementProbeStartedAtMillis,
+                    endedAtMillis,
+                    "world_movement",
+                    "Movement and chunk streaming probe",
+                    worldUiHidden,
+                    true,
+                    "A four-block movement probe samples the change from a static world to movement and nearby chunk streaming."
+            ));
         }
         if (client != null && client.currentScreen != null) {
-            phases.add(phase(client, Math.max(startedAtMillis, System.currentTimeMillis() - 1500L), System.currentTimeMillis(), "ui_overlay_cost", "UI overlay cost", false, false, "A UI is open; this phase is tracked separately so UI frame cost is not labeled as shader pressure."));
+            long uiStart = Math.max(startedAtMillis, endedAtMillis - 1500L);
+            phases.add(phase(
+                    client,
+                    uiStart,
+                    endedAtMillis,
+                    "ui_overlay_context",
+                    "Screen-open frame context",
+                    false,
+                    false,
+                    "A screen is open. This is reported as screen-open frame pressure, not isolated UI render cost."
+            ));
         }
         return finishBenchmark(client, mode, startedAtMillis, snapshot, testNotes, phases, worldUiHidden, automationProbeUsed);
     }
@@ -47,6 +85,8 @@ public final class PerformanceBenchmarkRunner {
                 : PerformanceRecommendationEngine.recommendFromBenchmark(client, mode, snapshot, phaseResults);
         String summary = snapshot.primaryBottleneck() == PerformanceBottleneck.HEALTHY
                 ? "Benchmark complete. Stable sample window."
+                : snapshot.primaryBottleneck() == PerformanceBottleneck.UNKNOWN
+                ? "Benchmark complete. Performance pressure is present, but no single cause is verified."
                 : "Benchmark complete. Primary pressure: " + snapshot.primaryBottleneck().label();
         PerformanceBenchmarkResult result = new PerformanceBenchmarkResult(
                 startedAtMillis,
@@ -66,7 +106,7 @@ public final class PerformanceBenchmarkRunner {
     }
 
     private static PerformanceBenchmarkPhaseResult phase(MinecraftClient client, long startMillis, long endMillis, String phaseId, String label, boolean uiHidden, boolean automationProbeUsed, String note) {
-        PerformanceSnapshot snapshot = PerformanceMonitor.snapshotSince(client, startMillis);
+        PerformanceSnapshot snapshot = PerformanceMonitor.snapshotBetween(client, startMillis, endMillis);
         return new PerformanceBenchmarkPhaseResult(
                 phaseId,
                 label,
@@ -76,7 +116,7 @@ public final class PerformanceBenchmarkRunner {
                 uiHidden,
                 automationProbeUsed,
                 snapshot,
-                snapshot == null ? PerformanceBottleneck.HEALTHY : snapshot.primaryBottleneck(),
+                snapshot == null ? PerformanceBottleneck.UNKNOWN : snapshot.primaryBottleneck(),
                 note
         );
     }

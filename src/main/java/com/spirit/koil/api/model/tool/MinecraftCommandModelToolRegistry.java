@@ -63,6 +63,10 @@ public final class MinecraftCommandModelToolRegistry {
             output.addProperty("valid", inspection.executable());
             output.addProperty("cursor", inspection.cursor());
             output.addProperty("problem", inspection.problem());
+            output.addProperty("rootAvailable", inspection.rootAvailable());
+            JsonArray roots = new JsonArray();
+            inspection.availableRoots().forEach(roots::add);
+            output.add("availableRoots", roots);
             JsonArray suggestions = new JsonArray();
             inspection.suggestions().forEach(suggestions::add);
             output.add("suggestions", suggestions);

@@ -8,9 +8,15 @@ import com.spirit.koil.api.f3.F3TargetInspector;
 import com.spirit.koil.api.f3.F3TargetSnapshot;
 import net.minecraft.advancement.Advancement;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.Block;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.effect.StatusEffectInstance;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.effect.StatusEffect;
+import net.minecraft.enchantment.Enchantment;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.Item;
 import net.minecraft.recipe.Ingredient;
 import net.minecraft.recipe.Recipe;
 import net.minecraft.registry.Registries;
@@ -72,6 +78,19 @@ public final class MinecraftKnowledgeService {
                     case "registry" -> registry(client, registryKind, needle, limit);
                     case "recipe", "recipes" -> recipes(client, needle, limit);
                     case "advancement", "advancements" -> advancements(client, needle, limit);
+                    case "block", "block_info" -> blockInfo(needle);
+                    case "item", "item_info" -> itemInfo(needle);
+                    case "entity", "entity_info", "creature" -> entityInfo(needle);
+                    case "effect", "status_effect", "effect_info" -> effectInfo(needle);
+                    case "enchantment", "enchantment_info" -> enchantmentInfo(needle);
+                    case "biome", "biomes" -> dynamicRegistry(client, "biome", RegistryKeys.BIOME, needle, limit);
+                    case "dimension", "dimensions" -> dynamicRegistry(
+                            client,
+                            "dimension_type",
+                            RegistryKeys.DIMENSION_TYPE,
+                            needle,
+                            limit
+                    );
                     case "structure", "structures" -> dynamicRegistry(
                             client,
                             "structure",
@@ -83,7 +102,7 @@ public final class MinecraftKnowledgeService {
                     default -> new Result(
                             false,
                             new JsonObject(),
-                            "Unknown knowledge query. Use catalog, player, target, registry, recipe, advancement, structure, or nbt."
+                            "Unknown knowledge query. Use catalog, player, target, registry, item, block, entity, effect, enchantment, biome, dimension, recipe, advancement, structure, command, or nbt."
                     );
                 });
             } catch (RuntimeException failure) {
@@ -113,7 +132,7 @@ public final class MinecraftKnowledgeService {
                         "facing", "yaw", "pitch", "gameMode", "health", "maximumHealth",
                         "food", "saturation", "armor", "experienceLevel", "onGround",
                         "sprinting", "sneaking", "swimming", "flying", "mainHand",
-                        "offHand", "standingOn", "effects", "inventory", "lookingAt"
+                        "offHand", "standingOn", "effects", "inventory", "lookingAt", "travelOptions"
                 )
         );
         addCategory(
@@ -135,6 +154,48 @@ public final class MinecraftKnowledgeService {
                         "item", "block", "entity_type", "status_effect", "enchantment",
                         "sound_event", "biome", "structure"
                 )
+        );
+        addCategory(
+                categories,
+                "item",
+                true,
+                "active static item registry and default stack",
+                List.of("id", "name", "translationKey", "maximumCount", "maximumDamage", "damageable", "fireproof", "rarity", "enchantable", "enchantability", "food")
+        );
+        addCategory(
+                categories,
+                "block",
+                true,
+                "active static block registry and default block state",
+                List.of("id", "name", "item", "translationKey", "blastResistance", "luminance", "air", "properties", "defaultState")
+        );
+        addCategory(
+                categories,
+                "entity",
+                true,
+                "active static entity-type registry",
+                List.of("id", "name", "translationKey", "spawnGroup", "width", "height", "summonable", "fireImmune", "saveable")
+        );
+        addCategory(
+                categories,
+                "effect",
+                true,
+                "active static status-effect registry",
+                List.of("id", "name", "translationKey", "category", "color", "beneficial")
+        );
+        addCategory(
+                categories,
+                "enchantment",
+                true,
+                "active static enchantment registry",
+                List.of("id", "name", "translationKey", "rarity", "target", "minimumLevel", "maximumLevel", "treasure", "cursed")
+        );
+        addCategory(
+                categories,
+                "dimension",
+                client.getNetworkHandler() != null,
+                "active synchronized dimension-type registry",
+                List.of("identifier")
         );
         addCategory(
                 categories,
@@ -270,6 +331,38 @@ public final class MinecraftKnowledgeService {
             inventory.add(encoded);
         }
         output.add("inventory", inventory);
+        JsonObject travel = new JsonObject();
+        travel.addProperty("riding", client.player.hasVehicle());
+        travel.addProperty("vehicle", client.player.getVehicle() == null
+                ? ""
+                : Registries.ENTITY_TYPE.getId(client.player.getVehicle().getType()).toString());
+        travel.addProperty("fallFlying", client.player.isFallFlying());
+        travel.addProperty("inWater", client.player.isSubmergedInWater());
+        String chestItem = stackId(client.player.getEquippedStack(EquipmentSlot.CHEST));
+        travel.addProperty("chestItem", chestItem);
+        travel.addProperty("elytraEquipped", "minecraft:elytra".equals(chestItem));
+        int fireworks = 0;
+        int boats = 0;
+        int saddles = 0;
+        for (int slot = 0; slot < client.player.getInventory().size(); slot++) {
+            ItemStack stack = client.player.getInventory().getStack(slot);
+            String id = stackId(stack);
+            if ("minecraft:firework_rocket".equals(id)) fireworks += stack.getCount();
+            if (id.endsWith("_boat") || id.endsWith("_raft")) boats += stack.getCount();
+            if ("minecraft:saddle".equals(id)) saddles += stack.getCount();
+        }
+        travel.addProperty("fireworkRockets", fireworks);
+        travel.addProperty("boatItems", boats);
+        travel.addProperty("saddles", saddles);
+        JsonArray availableModes = new JsonArray();
+        availableModes.add("walk");
+        availableModes.add("sprint");
+        if (client.player.isSubmergedInWater() || client.player.isSwimming()) availableModes.add("swim");
+        if (client.player.hasVehicle()) availableModes.add("mounted");
+        if ("minecraft:elytra".equals(chestItem)) availableModes.add("elytra");
+        if (boats > 0) availableModes.add("boat_available");
+        travel.add("availableModes", availableModes);
+        output.add("travelOptions", travel);
         output.add("lookingAt", targetJson(F3TargetInspector.inspect(client, F3Mode.DEVELOPER)));
         JsonObject selected = selectFields(output, fields);
         return success(
@@ -447,6 +540,8 @@ public final class MinecraftKnowledgeService {
             }
         }
         matches.sort(Comparator.comparing(advancement -> advancement.getId().toString()));
+        var progressSnapshot = com.spirit.koil.api.automation.AutomationCompletionModeController
+                .advancementProgressSnapshot(client);
         JsonArray rows = new JsonArray();
         for (Advancement advancement : matches.stream().limit(limit).toList()) {
             JsonObject encoded = new JsonObject();
@@ -459,6 +554,8 @@ public final class MinecraftKnowledgeService {
             }
             encoded.addProperty("criteriaCount", advancement.getCriteria().size());
             encoded.addProperty("requirementGroups", advancement.getRequirements().length);
+            boolean completed = progressSnapshot.containsKey(advancement) && progressSnapshot.get(advancement).isDone();
+            encoded.addProperty("completed", completed);
             rows.add(encoded);
         }
         JsonObject output = new JsonObject();
@@ -467,6 +564,119 @@ public final class MinecraftKnowledgeService {
         output.addProperty("truncated", matches.size() > limit);
         output.add("advancements", rows);
         return success(output, "Advancements were read from the active synchronized advancement manager.");
+    }
+
+    private static Result blockInfo(String query) {
+        Identifier id = Identifier.tryParse(query);
+        if (id == null || !Registries.BLOCK.containsId(id)) {
+            return unavailable("No active block registry entry matches '" + query + "'. Use a namespaced id such as minecraft:stone.");
+        }
+        Block block = Registries.BLOCK.get(id);
+        BlockState state = block.getDefaultState();
+        JsonObject output = new JsonObject();
+        output.addProperty("id", id.toString());
+        output.addProperty("name", block.getName().getString());
+        output.addProperty("translationKey", block.getTranslationKey());
+        output.addProperty("item", Registries.ITEM.getId(block.asItem()).toString());
+        output.addProperty("blastResistance", block.getBlastResistance());
+        output.addProperty("luminance", state.getLuminance());
+        output.addProperty("air", state.isAir());
+        output.addProperty("defaultState", state.toString());
+        JsonObject properties = new JsonObject();
+        state.getProperties().forEach(property -> {
+            JsonArray values = new JsonArray();
+            property.getValues().forEach(value -> values.add(String.valueOf(value)));
+            properties.add(property.getName(), values);
+        });
+        output.add("properties", properties);
+        return success(output, "Block data was read from the active registry and its default state.");
+    }
+
+    private static Result itemInfo(String query) {
+        Identifier id = Identifier.tryParse(query);
+        if (id == null || !Registries.ITEM.containsId(id)) {
+            return unavailable("No active item registry entry matches '" + query + "'. Search item identifiers first when the namespace is unknown.");
+        }
+        Item item = Registries.ITEM.get(id);
+        ItemStack stack = item.getDefaultStack();
+        JsonObject output = new JsonObject();
+        output.addProperty("id", id.toString());
+        output.addProperty("name", item.getName(stack).getString());
+        output.addProperty("translationKey", item.getTranslationKey(stack));
+        output.addProperty("maximumCount", item.getMaxCount());
+        output.addProperty("maximumDamage", item.getMaxDamage());
+        output.addProperty("damageable", item.isDamageable());
+        output.addProperty("fireproof", item.isFireproof());
+        output.addProperty("rarity", item.getRarity(stack).name().toLowerCase(Locale.ROOT));
+        output.addProperty("enchantable", item.isEnchantable(stack));
+        output.addProperty("enchantability", item.getEnchantability());
+        output.addProperty("useAction", item.getUseAction(stack).name().toLowerCase(Locale.ROOT));
+        output.addProperty("maximumUseTicks", item.getMaxUseTime(stack));
+        output.addProperty("food", item.isFood());
+        if (item.getFoodComponent() != null) {
+            JsonObject food = new JsonObject();
+            food.addProperty("hunger", item.getFoodComponent().getHunger());
+            food.addProperty("saturationModifier", item.getFoodComponent().getSaturationModifier());
+            food.addProperty("meat", item.getFoodComponent().isMeat());
+            food.addProperty("alwaysEdible", item.getFoodComponent().isAlwaysEdible());
+            food.addProperty("snack", item.getFoodComponent().isSnack());
+            output.add("foodData", food);
+        }
+        return success(output, "Item data was read from the active vanilla/modded registry and default stack.");
+    }
+
+    private static Result entityInfo(String query) {
+        Identifier id = Identifier.tryParse(query);
+        if (id == null || !Registries.ENTITY_TYPE.containsId(id)) {
+            return unavailable("No active entity-type registry entry matches '" + query + "'. Use a namespaced id such as minecraft:sheep.");
+        }
+        EntityType<?> type = Registries.ENTITY_TYPE.get(id);
+        JsonObject output = new JsonObject();
+        output.addProperty("id", id.toString());
+        output.addProperty("name", type.getName().getString());
+        output.addProperty("translationKey", type.getTranslationKey());
+        output.addProperty("spawnGroup", type.getSpawnGroup().getName());
+        output.addProperty("width", type.getWidth());
+        output.addProperty("height", type.getHeight());
+        output.addProperty("summonable", type.isSummonable());
+        output.addProperty("fireImmune", type.isFireImmune());
+        output.addProperty("saveable", type.isSaveable());
+        return success(output, "Entity-type data was read from the active registry.");
+    }
+
+    private static Result effectInfo(String query) {
+        Identifier id = Identifier.tryParse(query);
+        if (id == null || !Registries.STATUS_EFFECT.containsId(id)) {
+            return unavailable("No active status-effect registry entry matches '" + query + "'. Search status_effect identifiers first when the namespace is unknown.");
+        }
+        StatusEffect effect = Registries.STATUS_EFFECT.get(id);
+        JsonObject output = new JsonObject();
+        output.addProperty("id", id.toString());
+        output.addProperty("name", effect.getName().getString());
+        output.addProperty("translationKey", effect.getTranslationKey());
+        output.addProperty("category", effect.getCategory().name().toLowerCase(Locale.ROOT));
+        output.addProperty("color", String.format(Locale.ROOT, "#%06X", effect.getColor() & 0x00FFFFFF));
+        output.addProperty("beneficial", effect.isBeneficial());
+        return success(output, "Status-effect data was read from the active vanilla/modded registry.");
+    }
+
+    private static Result enchantmentInfo(String query) {
+        Identifier id = Identifier.tryParse(query);
+        if (id == null || !Registries.ENCHANTMENT.containsId(id)) {
+            return unavailable("No active enchantment registry entry matches '" + query + "'. Search enchantment identifiers first when the namespace is unknown.");
+        }
+        Enchantment enchantment = Registries.ENCHANTMENT.get(id);
+        JsonObject output = new JsonObject();
+        output.addProperty("id", id.toString());
+        output.addProperty("name", enchantment.getName(enchantment.getMinLevel()).getString());
+        output.addProperty("translationKey", enchantment.getTranslationKey());
+        output.addProperty("rarity", enchantment.getRarity().name().toLowerCase(Locale.ROOT));
+        output.addProperty("target", enchantment.target.name().toLowerCase(Locale.ROOT));
+        output.addProperty("minimumLevel", enchantment.getMinLevel());
+        output.addProperty("maximumLevel", enchantment.getMaxLevel());
+        output.addProperty("treasure", enchantment.isTreasure());
+        output.addProperty("cursed", enchantment.isCursed());
+        return success(output, "Enchantment data was read from the active vanilla/modded registry.");
     }
 
     private static Result registry(MinecraftClient client, String kind, String query, int limit) {
@@ -483,8 +693,10 @@ public final class MinecraftKnowledgeService {
             case "biome", "biomes" -> dynamicRegistry(client, "biome", RegistryKeys.BIOME, query, limit);
             case "structure", "structures" ->
                     dynamicRegistry(client, "structure", RegistryKeys.STRUCTURE, query, limit);
+            case "dimension", "dimensions", "dimension_type", "dimension_types" ->
+                    dynamicRegistry(client, "dimension_type", RegistryKeys.DIMENSION_TYPE, query, limit);
             default -> unavailable(
-                    "Unknown registry. Use item, block, entity_type, status_effect, enchantment, sound_event, biome, or structure."
+                    "Unknown registry. Use item, block, entity_type, status_effect, enchantment, sound_event, biome, structure, or dimension_type."
             );
         };
     }

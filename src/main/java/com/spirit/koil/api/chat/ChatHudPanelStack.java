@@ -52,6 +52,16 @@ public final class ChatHudPanelStack {
         return ChatHudPanelRegistry.mouseScrolled(client, mouseX, mouseY, amount);
     }
 
+    public static boolean mouseDragged(MinecraftClient client, double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        ensureBuiltInsRegistered();
+        return ChatHudPanelRegistry.mouseDragged(client, mouseX, mouseY, button, deltaX, deltaY);
+    }
+
+    public static boolean mouseReleased(MinecraftClient client, double mouseX, double mouseY, int button) {
+        ensureBuiltInsRegistered();
+        return ChatHudPanelRegistry.mouseReleased(client, mouseX, mouseY, button);
+    }
+
     private static synchronized void ensureBuiltInsRegistered() {
         if (builtInsRegistered) {
             return;

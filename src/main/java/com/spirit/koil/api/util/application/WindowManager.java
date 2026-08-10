@@ -39,6 +39,9 @@ public class WindowManager {
     }
 
     public static synchronized void openConsoleWindow(ConsoleChannel channel) {
+        if (channel == null || channel == ConsoleChannel.CLI) {
+            return;
+        }
         Process existing = CONSOLE_PROCESSES.get(channel);
         if (existing != null && existing.isAlive()) {
             return;
@@ -85,6 +88,9 @@ public class WindowManager {
                     continue;
                 }
                 ConsoleChannel channel = ConsoleChannel.fromId(element.getAsString());
+                if (channel == ConsoleChannel.CLI) {
+                    continue;
+                }
                 REMEMBERED_OPEN_WINDOWS.add(channel);
                 openConsoleWindow(channel);
             }

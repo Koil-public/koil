@@ -81,7 +81,7 @@ public final class ProjectValidationModelToolRegistry {
             return CompletableFuture.completedFuture(status(call, "unsupported", "unregistered_operation",
                     "The requested project operation is not registered.", new JsonObject(), false));
         }
-        CompletableFuture<Boolean> approval = preapproved || AutomationModeController.isYoloMode()
+        CompletableFuture<Boolean> approval = preapproved || AutomationModeController.isUnrestrictedMode()
                 ? CompletableFuture.completedFuture(true)
                 : requestId == null
                 ? CompletableFuture.completedFuture(false)

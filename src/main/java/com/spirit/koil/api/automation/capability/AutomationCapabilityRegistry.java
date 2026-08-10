@@ -5,16 +5,11 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.spirit.koil.api.automation.AutomationRequest;
 import com.spirit.koil.api.model.ModelToolDefinition;
+import net.minecraft.registry.Registries;
+import net.minecraft.util.Identifier;
 
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.regex.Pattern;
 
 /**
@@ -23,6 +18,7 @@ import java.util.regex.Pattern;
  */
 public final class AutomationCapabilityRegistry {
     private static final Pattern RESOURCE_ID = Pattern.compile("^[a-z0-9_.-]+:[a-z0-9_./-]+$");
+    private static final Pattern RESOURCE_PATH = Pattern.compile("^[a-z0-9_./-]+$");
     private static final Map<String, AutomationCapabilityDefinition> DEFINITIONS = build();
     private static final String VERSION = "automation-capabilities-v1:"
             + Integer.toHexString(DEFINITIONS.keySet().hashCode());
@@ -77,8 +73,22 @@ public final class AutomationCapabilityRegistry {
         register(definitions, walkRelative());
         register(definitions, moveTo());
         register(definitions, jump());
+        register(definitions, lookAtEntity());
+        register(definitions, mountEntity());
+        register(definitions, dismount());
+        register(definitions, inspectSurroundings());
+        register(definitions, tapRawInput());
+        register(definitions, holdRawInput());
+        register(definitions, releaseRawInput());
+        register(definitions, releaseAllRawInput());
+        register(definitions, rawMouseDelta());
+        register(definitions, boatDeploy());
+        register(definitions, elytraFlight());
         register(definitions, interactWithBlock());
+        register(definitions, interactWithEntity());
         register(definitions, mineBlock());
+        register(definitions, placeBlock());
+        register(definitions, buildBlockPattern());
         register(definitions, openContainer());
         register(definitions, takeFromContainer());
         register(definitions, storeInContainer());
@@ -109,13 +119,14 @@ public final class AutomationCapabilityRegistry {
         properties.add("distance", number(0.1D, 4096.0D));
         properties.add("precise", bool());
         properties.add("sprint", bool());
+        addMovementOptionSchema(properties);
         require(schema, "direction", "distance");
         return definition(
                 "movement.walk_relative",
                 "Walk a measured number of blocks relative to the player's orientation at planning time.",
                 schema,
                 List.of("direction", "distance"),
-                List.of("precise", "sprint"),
+                List.of("precise", "sprint", "allow_parkour", "allow_swim", "allow_break_blocks", "allow_place_blocks", "allow_combat_clear"),
                 List.of("world_loaded", "player_available", "no_conflicting_automation"),
                 Set.of("moves_player", "may_change_player_orientation"),
                 false,
@@ -130,7 +141,8 @@ public final class AutomationCapabilityRegistry {
                             + " count.value=" + decimal(distance)
                             + " unit.id=blocks"
                             + " movement.precise=" + precise
-                            + " movement.allow_sprint=" + sprint;
+                            + " movement.allow_sprint=" + sprint
+                            + movementOptions(arguments);
                     return execute("movement.walk_relative", "Walk " + decimal(distance) + " blocks " + direction, invocation);
                 }
         );
@@ -144,13 +156,14 @@ public final class AutomationCapabilityRegistry {
         properties.add("z", number(-30_000_000.0D, 30_000_000.0D));
         properties.add("precise", bool());
         properties.add("sprint", bool());
+        addMovementOptionSchema(properties);
         require(schema, "x", "z");
         return definition(
                 "movement.move_to",
                 "Navigate to world coordinates using live progress, collision and stuck detection.",
                 schema,
                 List.of("x", "z"),
-                List.of("y", "precise", "sprint"),
+                List.of("y", "precise", "sprint", "allow_parkour", "allow_swim", "allow_break_blocks", "allow_place_blocks", "allow_combat_clear"),
                 List.of("world_loaded", "player_available", "no_conflicting_automation"),
                 Set.of("moves_player", "may_change_player_orientation"),
                 false,
@@ -167,7 +180,8 @@ public final class AutomationCapabilityRegistry {
                     }
                     invocation.append(" target.z=").append(decimal(z))
                             .append(" movement.precise=").append(precise)
-                            .append(" movement.allow_sprint=").append(sprint);
+                            .append(" movement.allow_sprint=").append(sprint)
+                            .append(movementOptions(arguments));
                     return execute("movement.move_to", "Move to " + decimal(x) + ", " + decimal(z), invocation.toString());
                 }
         );
@@ -189,14 +203,91 @@ public final class AutomationCapabilityRegistry {
         );
     }
 
+    private static JsonObject rawInputSchema(boolean ticks) {
+        JsonObject schema = objectSchema();
+        schema.getAsJsonObject("properties").add("key", enumString(
+                "forward", "back", "left", "right", "jump", "sneak", "sprint",
+                "attack", "use", "inventory", "chat", "swap_hands", "drop",
+                "pick_block", "perspective", "w", "a", "s", "d", "space",
+                "shift", "ctrl", "left_click", "right_click", "e", "t", "f", "q"));
+        if (ticks) schema.getAsJsonObject("properties").add("ticks", number(1, 1200));
+        require(schema, "key");
+        return schema;
+    }
+
+    private static AutomationCapabilityDefinition tapRawInput() {
+        return definition(
+                "input.tap",
+                "Tap one normal Minecraft player key or mouse action through KTL. Prefer a semantic gameplay capability when one exists.",
+                rawInputSchema(true), List.of("key"), List.of("ticks"),
+                List.of("world_loaded", "player_available", "no_conflicting_automation"),
+                Set.of("synthetic_player_input"), false, Duration.ofSeconds(10),
+                arguments -> execute("input.tap", "Tap " + stringValue(arguments, "key", ""),
+                        "flow/core/tap_input.ktl input.key=" + stringValue(arguments, "key", "")
+                                + " count.value=" + wholeNumber(arguments, "ticks", 2))
+        );
+    }
+
+    private static AutomationCapabilityDefinition holdRawInput() {
+        return definition(
+                "input.hold",
+                "Hold one normal Minecraft player input for a bounded number of ticks, then always release it through KTL cleanup.",
+                rawInputSchema(true), List.of("key"), List.of("ticks"),
+                List.of("world_loaded", "player_available", "no_conflicting_automation"),
+                Set.of("synthetic_player_input"), false, Duration.ofMinutes(1),
+                arguments -> execute("input.hold", "Hold " + stringValue(arguments, "key", ""),
+                        "flow/core/hold_input.ktl input.key=" + stringValue(arguments, "key", "")
+                                + " count.value=" + wholeNumber(arguments, "ticks", 20))
+        );
+    }
+
+    private static AutomationCapabilityDefinition releaseRawInput() {
+        return definition(
+                "input.release",
+                "Release one Koil-owned normal Minecraft player input through KTL.",
+                rawInputSchema(false), List.of("key"), List.of(),
+                List.of("player_available"), Set.of("releases_automation_input"), false, Duration.ofSeconds(5),
+                arguments -> execute("input.release", "Release " + stringValue(arguments, "key", ""),
+                        "flow/core/release_input.ktl input.key=" + stringValue(arguments, "key", ""))
+        );
+    }
+
+    private static AutomationCapabilityDefinition releaseAllRawInput() {
+        return definition(
+                "input.release_all",
+                "Release every player input currently owned by Koil automation.",
+                objectSchema(), List.of(), List.of(), List.of("player_available"),
+                Set.of("releases_automation_input"), false, Duration.ofSeconds(5),
+                arguments -> execute("input.release_all", "Release all Automation input", "flow/core/release_all_input.ktl")
+        );
+    }
+
+    private static AutomationCapabilityDefinition rawMouseDelta() {
+        JsonObject schema = objectSchema();
+        schema.getAsJsonObject("properties").add("yaw", number(-180.0D, 180.0D));
+        schema.getAsJsonObject("properties").add("pitch", number(-90.0D, 90.0D));
+        require(schema, "yaw", "pitch");
+        return definition(
+                "input.mouse_delta",
+                "Apply a bounded raw mouse-look delta through KTL when no semantic look target is available.",
+                schema, List.of("yaw", "pitch"), List.of(), List.of("world_loaded", "player_available"),
+                Set.of("changes_player_orientation", "synthetic_player_input"), false, Duration.ofSeconds(10),
+                arguments -> execute("input.mouse_delta", "Move mouse view",
+                        "flow/core/mouse_delta.ktl yaw.delta=" + decimal(arguments.get("yaw").getAsDouble())
+                                + " pitch.delta=" + decimal(arguments.get("pitch").getAsDouble()))
+        );
+    }
+
     private static AutomationCapabilityDefinition interactWithBlock() {
         JsonObject schema = targetedResourceSchema("block");
+        schema.getAsJsonObject("properties").add("hand", enumString("main", "off"));
+        schema.getAsJsonObject("properties").add("sneak", bool());
         return definition(
                 "block.interact",
-                "Navigate to and use a block through the same interaction path available to the player.",
+                "Navigate to and use a block through the player's normal interaction path, optionally while crouching for blocks whose alternate action requires sneak-use.",
                 schema,
                 List.of("block"),
-                List.of("selector", "radius"),
+                List.of("selector", "radius", "hand", "sneak"),
                 List.of("world_loaded", "player_available", "block_reachable"),
                 Set.of("moves_player", "uses_block"),
                 false,
@@ -204,30 +295,362 @@ public final class AutomationCapabilityRegistry {
                 arguments -> execute(
                         "block.interact",
                         "Interact with " + arguments.get("block").getAsString(),
-                        targetedInvocation("movement/interact/move_to_use_block.ktl", "block", arguments)
+                        targetedInvocation("movement/interact/move_to_use_block_configured.ktl", "block", arguments)
+                                + " hand.id=" + stringValue(arguments, "hand", "main")
+                                + " interaction.sneak=" + booleanValue(arguments, "sneak", false)
                 )
+        );
+    }
+
+    private static AutomationCapabilityDefinition interactWithEntity() {
+        JsonObject schema = targetedResourceSchema("entity");
+        schema.getAsJsonObject("properties").add("hand", enumString("main", "off"));
+        schema.getAsJsonObject("properties").add("sneak", bool());
+        return definition(
+                "entity.interact",
+                "Navigate to and right-click a namespaced entity target with the selected hand, optionally while crouching.",
+                schema,
+                List.of("entity"),
+                List.of("selector", "radius", "hand", "sneak"),
+                List.of("world_loaded", "player_available", "target_available"),
+                Set.of("moves_player", "uses_entity", "may_change_inventory"),
+                false,
+                Duration.ofMinutes(2),
+                arguments -> execute(
+                        "entity.interact",
+                        "Interact with " + resourceId(arguments, "entity"),
+                        targetedInvocation("interaction/core/interact_entity_configured.ktl", "entity", arguments)
+                                + " target.kind=entity"
+                                + " hand.id=" + stringValue(arguments, "hand", "main")
+                                + " interaction.sneak=" + booleanValue(arguments, "sneak", false)
+                )
+        );
+    }
+
+    private static AutomationCapabilityDefinition lookAtEntity() {
+        JsonObject schema = targetedResourceSchema("entity");
+        schema.getAsJsonObject("properties").add("horizontal_only", bool());
+        schema.getAsJsonObject("properties").add("turn_speed", enumString("slow", "natural", "fast"));
+        schema.getAsJsonObject("properties").add("maximum_degrees_per_tick", number(0.5D, 30.0D));
+        return definition(
+                "entity.look_at",
+                "Find a namespaced entity type, including modded entities, and turn the player's view toward the selected live target.",
+                schema,
+                List.of("entity"),
+                List.of("selector", "radius", "horizontal_only", "turn_speed", "maximum_degrees_per_tick"),
+                List.of("world_loaded", "player_available", "target_available"),
+                Set.of("changes_player_orientation"),
+                true,
+                Duration.ofSeconds(30),
+                arguments -> execute(
+                        "entity.look_at",
+                        "Look at " + resourceId(arguments, "entity"),
+                        targetedInvocation("look/core/face_target.ktl", "entity", arguments)
+                                + " target.kind=entity"
+                                + " look.horizontal_only=" + booleanValue(arguments, "horizontal_only", false)
+                                + " look.turn_speed=" + stringValue(arguments, "turn_speed", "natural")
+                                + (arguments.has("maximum_degrees_per_tick")
+                                ? " look.maximum_degrees_per_tick=" + decimal(arguments.get("maximum_degrees_per_tick").getAsDouble())
+                                : "")
+                )
+        );
+    }
+
+    private static AutomationCapabilityDefinition mountEntity() {
+        JsonObject schema = targetedResourceSchema("entity");
+        return definition(
+                "entity.mount",
+                "Approach and mount one exact namespaced rideable entity, including modded rideable entities, then verify the player is riding that selected target.",
+                schema,
+                List.of("entity"),
+                List.of("selector", "radius"),
+                List.of("world_loaded", "player_available", "target_available", "target_rideable"),
+                Set.of("moves_player", "uses_entity", "mounts_entity"),
+                false,
+                Duration.ofMinutes(2),
+                arguments -> execute(
+                        "entity.mount",
+                        "Mount " + resourceId(arguments, "entity"),
+                        targetedInvocation("movement/transport/mount_entity.ktl", "entity", arguments)
+                                + " target.kind=entity"
+                )
+        );
+    }
+
+    private static AutomationCapabilityDefinition dismount() {
+        return definition(
+                "player.dismount",
+                "Dismount the player's current vehicle or ridden entity and verify the player is no longer riding.",
+                objectSchema(),
+                List.of(),
+                List.of(),
+                List.of("world_loaded", "player_available"),
+                Set.of("dismounts_entity"),
+                false,
+                Duration.ofSeconds(15),
+                arguments -> execute("player.dismount", "Dismount", "movement/transport/dismount.ktl")
+        );
+    }
+
+    private static AutomationCapabilityDefinition boatDeploy() {
+        JsonObject schema = objectSchema();
+        JsonObject properties = schema.getAsJsonObject("properties");
+        properties.add("boat", string(3, 128));
+        properties.add("x", number(-30_000_000.0D, 30_000_000.0D));
+        properties.add("y", number(-2048.0D, 2048.0D));
+        properties.add("z", number(-30_000_000.0D, 30_000_000.0D));
+        properties.add("craft_if_missing", bool());
+        properties.add("recipe", string(3, 128));
+        properties.add("placement", enumString("auto", "water", "ground"));
+        properties.add("search_radius", number(2.0D, 8.0D));
+        require(schema, "boat");
+        return confirmedDefinition(
+                "transport.boat_deploy",
+                "Deploy and mount an exact registered boat without requiring coordinates. Omit x/y/z to inspect a bounded nearby area automatically; use placement=water when the user prefers water, placement=ground for land, or auto when unspecified. Exact coordinates remain optional and must be supplied together. Craft only when explicitly requested and a real 3x3 crafting-table screen, active recipe, and ingredients are verified.",
+                schema,
+                List.of("boat"),
+                List.of("x", "y", "z", "craft_if_missing", "recipe", "placement", "search_radius"),
+                List.of("world_loaded", "player_available", "reachable_boat_surface", "boat_or_verified_recipe_available"),
+                Set.of("may_craft_item", "changes_inventory", "uses_item", "deploys_transport", "mounts_entity", "may_change_player_orientation"),
+                false,
+                Duration.ofMinutes(3),
+                arguments -> {
+                    String boat = resourceId(arguments, "boat");
+                    boolean anyCoordinate = arguments.has("x") || arguments.has("y") || arguments.has("z");
+                    if (anyCoordinate && !(arguments.has("x") && arguments.has("y") && arguments.has("z"))) {
+                        throw new AutomationCapabilityException(
+                                "missing_coordinate",
+                                "transport.boat_deploy requires x, y, and z together only when exact placement is requested. Omit all three for automatic nearby placement."
+                        );
+                    }
+                    StringBuilder invocation = new StringBuilder("movement/transport/boat_deploy_smart.ktl")
+                            .append(" boat.item=").append(boat)
+                            .append(" craft.if_missing=").append(booleanValue(arguments, "craft_if_missing", false))
+                            .append(" placement.preference=").append(stringValue(arguments, "placement", "auto"))
+                            .append(" search.radius=").append(decimal(arguments.has("search_radius")
+                                    ? arguments.get("search_radius").getAsDouble()
+                                    : 6.0D));
+                    if (anyCoordinate) {
+                        invocation.append(" target.x=").append(decimal(arguments.get("x").getAsDouble()))
+                                .append(" target.y=").append(decimal(arguments.get("y").getAsDouble()))
+                                .append(" target.z=").append(decimal(arguments.get("z").getAsDouble()));
+                    }
+                    if (arguments.has("recipe")) {
+                        invocation.append(" recipe.id=").append(namespacedIdentifier(arguments, "recipe"));
+                    }
+                    return execute("transport.boat_deploy", "Resolve a nearby surface, deploy " + boat + ", and mount it", invocation.toString());
+                }
+        );
+    }
+
+    private static AutomationCapabilityDefinition inspectSurroundings() {
+        JsonObject schema = objectSchema();
+        JsonObject properties = schema.getAsJsonObject("properties");
+        properties.add("radius", number(2.0D, 8.0D));
+        properties.add("focus", enumString("general", "boat", "water", "ground", "navigation"));
+        return definition(
+                "world.inspect_surroundings",
+                "Read a bounded client-visible snapshot around the player. Reports the player position, nearby hostile/passive counts, and nearest reachable boat placement evidence for water and ground. Use this only when a plan needs environmental evidence; direct boat placement already performs the same bounded resolution internally.",
+                schema,
+                List.of(),
+                List.of("radius", "focus"),
+                List.of("world_loaded", "player_available"),
+                Set.of(),
+                true,
+                Duration.ofSeconds(10),
+                arguments -> execute(
+                        "world.inspect_surroundings",
+                        "Inspect bounded nearby terrain and entities",
+                        "world/core/inspect_surroundings.ktl"
+                                + " search.radius=" + decimal(arguments.has("radius") ? arguments.get("radius").getAsDouble() : 6.0D)
+                                + " inspect.focus=" + stringValue(arguments, "focus", "general")
+                )
+        );
+    }
+
+    private static AutomationCapabilityDefinition elytraFlight() {
+        JsonObject schema = objectSchema();
+        JsonObject properties = schema.getAsJsonObject("properties");
+        properties.add("elytra", string(3, 128));
+        properties.add("rocket", string(3, 128));
+        properties.add("use_rocket", bool());
+        properties.add("x", number(-30_000_000.0D, 30_000_000.0D));
+        properties.add("y", number(-2048.0D, 2048.0D));
+        properties.add("z", number(-30_000_000.0D, 30_000_000.0D));
+        properties.add("arrival_radius", number(2.0D, 32.0D));
+        properties.add("turn_speed", enumString("slow", "natural", "fast"));
+        require(schema, "x", "y", "z");
+        return confirmedDefinition(
+                "transport.elytra_flight",
+                "Equip a verified usable elytra, launch through the normal fall-flying action, optionally use one exact firework rocket, and steer with bounded camera easing until the requested target radius is reached.",
+                schema,
+                List.of("x", "y", "z"),
+                List.of("elytra", "rocket", "use_rocket", "arrival_radius", "turn_speed"),
+                List.of("world_loaded", "player_available", "usable_elytra_available", "launch_clearance"),
+                Set.of("changes_equipment", "moves_player", "glides_player", "may_consume_firework", "changes_player_orientation"),
+                false,
+                Duration.ofMinutes(3),
+                arguments -> {
+                    String elytra = arguments.has("elytra") ? resourceId(arguments, "elytra") : "minecraft:elytra";
+                    String rocket = arguments.has("rocket") ? resourceId(arguments, "rocket") : "minecraft:firework_rocket";
+                    boolean useRocket = booleanValue(arguments, "use_rocket", true);
+                    String invocation = "movement/transport/elytra_flight.ktl"
+                            + " elytra.item=" + elytra
+                            + " rocket.item=" + rocket
+                            + " flight.use_rocket=" + useRocket
+                            + " target.x=" + decimal(arguments.get("x").getAsDouble())
+                            + " target.y=" + decimal(arguments.get("y").getAsDouble())
+                            + " target.z=" + decimal(arguments.get("z").getAsDouble())
+                            + " arrival.radius=" + decimal(arguments.has("arrival_radius") ? arguments.get("arrival_radius").getAsDouble() : 6.0D)
+                            + " look.turn_speed=" + stringValue(arguments, "turn_speed", "natural");
+                    return execute("transport.elytra_flight", "Fly elytra to the requested target radius", invocation);
+                }
         );
     }
 
     private static AutomationCapabilityDefinition mineBlock() {
         JsonObject schema = targetedResourceSchema("block");
+        schema.getAsJsonObject("properties").add(
+                "selector",
+                enumString("nearest", "visible", "any", "below", "above", "looking_at")
+        );
         schema.getAsJsonObject("properties").add("count", number(1, 4096));
+        schema.getAsJsonObject("properties").add("quantity", enumString("exact", "all"));
         return definition(
                 "block.mine",
-                "Find and mine a measured count of blocks through player movement and block-breaking controls.",
+                "Find and mine a measured collection of blocks through player controls. Use quantity=all to snapshot and process every matching block in the bounded radius; one completed member never completes that collection. Use selector below for the block directly under the player's feet, above for the block above the player, or looking_at for the crosshair block.",
                 schema,
                 List.of("block"),
-                List.of("selector", "radius", "count"),
+                List.of("selector", "radius", "count", "quantity"),
                 List.of("world_loaded", "player_available", "block_reachable"),
                 Set.of("moves_player", "breaks_block", "may_change_inventory"),
                 false,
                 Duration.ofMinutes(10),
-                arguments -> execute(
-                        "block.mine",
-                        "Mine " + resourceId(arguments, "block"),
-                        targetedInvocation("blocks/core/mine_block_until_count.ktl", "block", arguments)
-                                + " count.value=" + wholeNumber(arguments, "count", 1)
-                )
+                arguments -> {
+                    String selector = stringValue(arguments, "selector", "nearest");
+                    long count = wholeNumber(arguments, "count", 1);
+                    boolean all = "all".equals(stringValue(arguments, "quantity", "exact"));
+                    boolean relativeSingle = count == 1L
+                            && !all && Set.of("below", "above", "looking_at").contains(selector);
+                    String task = all ? "blocks/core/mine_all_matching.ktl" : relativeSingle
+                            ? "blocks/core/mine_relative_block.ktl"
+                            : "blocks/core/mine_block_until_count.ktl";
+                    return execute(
+                            "block.mine",
+                            "Mine " + resourceId(arguments, "block"),
+                            targetedInvocation(task, "block", arguments) + " count.value=" + count
+                                    + " quantity.mode=" + (all ? "all" : "exact")
+                    );
+                }
+        );
+    }
+
+    private static AutomationCapabilityDefinition placeBlock() {
+        JsonObject schema = objectSchema();
+        JsonObject properties = schema.getAsJsonObject("properties");
+        properties.add("block", string(3, 128));
+        properties.add("item", string(3, 128));
+        properties.add("direction", enumString("forward", "backward", "left", "right", "north", "south", "east", "west"));
+        properties.add("hand", enumString("main", "off"));
+        properties.add("x", number(-30_000_000, 30_000_000));
+        properties.add("y", number(-2048, 2048));
+        properties.add("z", number(-30_000_000, 30_000_000));
+        require(schema, "block");
+        return definition(
+                "block.place",
+                "Place one namespaced block forward-adjacent to the player's footing or at an exact x/y/z target using inventory selection, crouched edge safety, normal block interaction, and resulting-world verification.",
+                schema,
+                List.of("block"),
+                List.of("item", "direction", "hand", "x", "y", "z"),
+                List.of("world_loaded", "player_available", "placement_item_available"),
+                Set.of("moves_player", "places_block", "changes_inventory"),
+                false,
+                Duration.ofMinutes(2),
+                arguments -> {
+                    String block = resourceId(arguments, "block");
+                    String item = arguments.has("item") ? resourceId(arguments, "item") : block;
+                    boolean anyCoordinate = arguments.has("x") || arguments.has("y") || arguments.has("z");
+                    if (anyCoordinate && !(arguments.has("x") && arguments.has("y") && arguments.has("z"))) {
+                        throw new AutomationCapabilityException("missing_coordinate", "block.place requires x, y, and z together for exact placement.");
+                    }
+                    if (anyCoordinate) {
+                        return execute(
+                                "block.place",
+                                "Place " + block + " at exact coordinates",
+                                "blocks/core/place_block_at.ktl"
+                                        + " block.id=" + block
+                                        + " item.id=" + item
+                                        + " target.x=" + wholeNumber(arguments, "x", 0)
+                                        + " target.y=" + wholeNumber(arguments, "y", 0)
+                                        + " target.z=" + wholeNumber(arguments, "z", 0)
+                                        + " hand.id=" + stringValue(arguments, "hand", "main")
+                        );
+                    }
+                    return execute(
+                            "block.place",
+                            "Place " + block,
+                            "blocks/core/place_block_pattern.ktl"
+                                    + " block.id=" + block
+                                    + " item.id=" + item
+                                    + " pattern.id=line count.value=1 pattern.length=1 pattern.width=1"
+                                    + " direction.id=" + stringValue(arguments, "direction", "forward")
+                                    + " hand.id=" + stringValue(arguments, "hand", "main")
+                    );
+                }
+        );
+    }
+
+    private static AutomationCapabilityDefinition buildBlockPattern() {
+        JsonObject schema = objectSchema();
+        JsonObject properties = schema.getAsJsonObject("properties");
+        properties.add("block", string(3, 128));
+        properties.add("item", string(3, 128));
+        properties.add("shape", enumString("line", "perimeter", "platform"));
+        properties.add("length", number(1, 64));
+        properties.add("width", number(1, 64));
+        properties.add("direction", enumString("forward", "backward", "left", "right", "north", "south", "east", "west"));
+        properties.add("hand", enumString("main", "off"));
+        require(schema, "block", "shape", "length");
+        return definition(
+                "block.build_pattern",
+                "Build a verified line, rectangular perimeter/square, or filled platform from a namespaced block. Koil computes each placement, moves safely between adjacent positions, crouches at edges, and validates every placed block.",
+                schema,
+                List.of("block", "shape", "length"),
+                List.of("item", "width", "direction", "hand"),
+                List.of("world_loaded", "player_available", "enough_placement_items"),
+                Set.of("moves_player", "places_multiple_blocks", "changes_inventory"),
+                false,
+                Duration.ofMinutes(20),
+                arguments -> {
+                    String block = resourceId(arguments, "block");
+                    String item = arguments.has("item") ? resourceId(arguments, "item") : block;
+                    String shape = arguments.get("shape").getAsString();
+                    long length = wholeNumber(arguments, "length", 1);
+                    long width = wholeNumber(arguments, "width", shape.equals("line") ? 1 : length);
+                    long count = switch (shape) {
+                        case "platform" -> Math.multiplyExact(length, width);
+                        case "perimeter" -> length == 1 || width == 1
+                                ? Math.max(length, width)
+                                : Math.addExact(Math.multiplyExact(2L, length), Math.multiplyExact(2L, width)) - 4L;
+                        default -> length;
+                    };
+                    if (count > 4096L) {
+                        throw new AutomationCapabilityException("pattern_too_large", "The requested build pattern exceeds 4096 verified placements.");
+                    }
+                    return execute(
+                            "block.build_pattern",
+                            "Build " + shape + " with " + block,
+                            "blocks/core/place_block_pattern.ktl"
+                                    + " block.id=" + block
+                                    + " item.id=" + item
+                                    + " pattern.id=" + shape
+                                    + " pattern.length=" + length
+                                    + " pattern.width=" + width
+                                    + " count.value=" + count
+                                    + " direction.id=" + stringValue(arguments, "direction", "forward")
+                                    + " hand.id=" + stringValue(arguments, "hand", "main")
+                    );
+                }
         );
     }
 
@@ -374,22 +797,27 @@ public final class AutomationCapabilityRegistry {
     private static AutomationCapabilityDefinition killEntity() {
         JsonObject schema = targetedResourceSchema("entity");
         schema.getAsJsonObject("properties").add("count", number(1, 128));
+        schema.getAsJsonObject("properties").add("quantity", enumString("exact", "all"));
         return definition(
                 "entity.kill",
-                "Find and defeat a measured count of live entity targets using player movement and combat.",
+                "Find and defeat a measured collection of live entity targets using player movement and combat. Use quantity=all to snapshot all matching live targets in the bounded radius; defeating one member never completes the collection.",
                 schema,
                 List.of("entity"),
-                List.of("selector", "radius", "count"),
+                List.of("selector", "radius", "count", "quantity"),
                 List.of("world_loaded", "player_available", "target_available"),
                 Set.of("moves_player", "attacks_entity", "may_kill_entity"),
                 false,
                 Duration.ofMinutes(10),
-                arguments -> execute(
-                        "entity.kill",
-                        "Defeat " + resourceId(arguments, "entity"),
-                        targetedInvocation("combat/core/kill_entity_until_count.ktl", "entity", arguments)
-                                + " target.kind=entity count.value=" + wholeNumber(arguments, "count", 1)
-                )
+                arguments -> {
+                    boolean all = "all".equals(stringValue(arguments, "quantity", "exact"));
+                    return execute(
+                            "entity.kill",
+                            "Defeat " + resourceId(arguments, "entity"),
+                            targetedInvocation(all ? "combat/core/kill_all_matching.ktl" : "combat/core/kill_entity_until_count.ktl", "entity", arguments)
+                                    + " target.kind=entity count.value=" + wholeNumber(arguments, "count", 1)
+                                    + " quantity.mode=" + (all ? "all" : "exact")
+                    );
+                }
         );
     }
 
@@ -527,9 +955,36 @@ public final class AutomationCapabilityRegistry {
                 true,
                 AutomationMultiplayerPolicy.ALLOWED_WITH_PLAYER_PERMISSIONS,
                 false,
-                Set.of("completed", "blocked", "cancelled", "failed", "timed_out"),
+                resultStates(),
                 compiler
         );
+    }
+
+    private static AutomationCapabilityDefinition confirmedDefinition(
+            String id,
+            String description,
+            JsonObject schema,
+            List<String> required,
+            List<String> optional,
+            List<String> preconditions,
+            Set<String> sideEffects,
+            boolean reversible,
+            Duration timeout,
+            AutomationCapabilityDefinition.InvocationCompiler compiler
+    ) {
+        return new AutomationCapabilityDefinition(
+                id, description, schema, required, optional, preconditions, sideEffects,
+                reversible, timeout, true,
+                AutomationMultiplayerPolicy.ALLOWED_WITH_PLAYER_PERMISSIONS,
+                true,
+                resultStates(),
+                compiler
+        );
+    }
+
+    private static Set<String> resultStates() {
+        return Set.of("completed", "partial", "blocked", "failed", "cancelled",
+                "interrupted", "no_target", "already_satisfied");
     }
 
     private static AutomationCapabilityPlan execute(String id, String objective, String invocation) {
@@ -650,11 +1105,73 @@ public final class AutomationCapabilityRegistry {
 
     private static String resourceId(JsonObject arguments, String key) {
         String value = arguments.get(key).getAsString().toLowerCase(Locale.ROOT);
+        if (!value.contains(":")) {
+            value = resolveUnnamespacedResource(value, key);
+        }
         if (!RESOURCE_ID.matcher(value).matches()) {
             throw new AutomationCapabilityException(
                     "invalid_resource_id",
-                    "'" + key + "' must be a namespaced Minecraft identifier such as minecraft:stone."
+                    "'" + key + "' must be a namespaced identifier (e.g. minecraft:stone, or dummmmmmy:target_dummy)"
             );
+        }
+        return value;
+    }
+
+    private static String resolveUnnamespacedResource(String value, String key) {
+        if (!RESOURCE_PATH.matcher(value).matches()) {
+            throw new AutomationCapabilityException(
+                    "invalid_resource_id",
+                    "'" + key + "' must be a resource name such as stone or a namespaced id such as minecraft:stone"
+            );
+        }
+        Set<Identifier> ids = resourceIds(key);
+        Identifier vanilla = Identifier.tryParse("minecraft:" + value);
+        if (vanilla != null && ids.contains(vanilla)) {
+            return vanilla.toString();
+        }
+        List<Identifier> matches = ids.stream()
+                .filter(id -> id.getPath().equals(value))
+                .sorted(Comparator.comparing(Identifier::toString))
+                .limit(6)
+                .toList();
+        if (matches.size() == 1) {
+            return matches.get(0).toString();
+        }
+        if (matches.size() > 1) {
+            throw new AutomationCapabilityException(
+                    "ambiguous_resource_id",
+                    "'" + value + "' matches multiple " + key + " ids: "
+                            + matches.stream().map(Identifier::toString).toList()
+            );
+        }
+        // Keep the common Minecraft namespace as the deterministic fallback.
+        // The registered executor will return a structured not-found result if
+        // the active game registry truly lacks the resource.
+        return "minecraft:" + value;
+    }
+
+    private static Set<Identifier> resourceIds(String key) {
+        try {
+            return switch (key) {
+                case "block" -> Registries.BLOCK.getIds();
+                case "item", "boat", "elytra", "rocket" -> Registries.ITEM.getIds();
+                case "entity" -> Registries.ENTITY_TYPE.getIds();
+                default -> Set.of();
+            };
+        } catch (LinkageError | IllegalStateException unavailable) {
+            // Standalone proof processes do not bootstrap Minecraft's dynamic
+            // registries. Runtime clients do, while the deterministic
+            // minecraft: fallback below keeps validation testable headlessly.
+            return Set.of();
+        }
+    }
+
+    private static String namespacedIdentifier(JsonObject arguments, String key) {
+        String value = arguments.get(key).getAsString().toLowerCase(Locale.ROOT);
+        if (!value.contains(":")) value = "minecraft:" + value;
+        if (!RESOURCE_ID.matcher(value).matches()) {
+            throw new AutomationCapabilityException("invalid_resource_id",
+                    "'" + key + "' must be a namespaced resource identifier.");
         }
         return value;
     }
@@ -712,6 +1229,27 @@ public final class AutomationCapabilityRegistry {
 
     private static boolean booleanValue(JsonObject object, String key, boolean fallback) {
         return object.has(key) ? object.get(key).getAsBoolean() : fallback;
+    }
+
+    private static void addMovementOptionSchema(JsonObject properties) {
+        properties.add("allow_parkour", bool());
+        properties.add("allow_swim", bool());
+        properties.add("allow_break_blocks", bool());
+        properties.add("allow_place_blocks", bool());
+        properties.add("allow_combat_clear", bool());
+    }
+
+    private static String movementOptions(JsonObject arguments) {
+        return " movement.policy=human_smart"
+                + " movement.allow_parkour=" + booleanValue(arguments, "allow_parkour", true)
+                + " movement.allow_swim=" + booleanValue(arguments, "allow_swim", true)
+                + " movement.allow_break_blocks=" + booleanValue(arguments, "allow_break_blocks", false)
+                + " movement.allow_place_blocks=" + booleanValue(arguments, "allow_place_blocks", false)
+                + " movement.allow_combat_clear=" + booleanValue(arguments, "allow_combat_clear", false);
+    }
+
+    private static String stringValue(JsonObject object, String key, String fallback) {
+        return object.has(key) ? object.get(key).getAsString() : fallback;
     }
 
     private static String normalizeMinecraftCommand(String raw) {

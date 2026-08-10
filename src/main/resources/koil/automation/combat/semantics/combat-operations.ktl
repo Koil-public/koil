@@ -7,8 +7,12 @@ operations:
     target_kinds: [entity, player]
     preferred_templates: [combat/core/kill_entity_until_count]
 
+  - id: sem.task.kill_target_collection
+    intent: kill_all
+    target_kinds: [entity]
+    preferred_templates: [combat/core/kill_all_matching]
+
   - id: sem.task.attack_until_dead
     intent: attack_until_dead
     target_kinds: [entity, player]
     preferred_templates: [combat/core/attack_entity_until_dead]
-

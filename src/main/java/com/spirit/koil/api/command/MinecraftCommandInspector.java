@@ -58,6 +58,12 @@ public final class MinecraftCommandInspector {
         }
         try {
             var dispatcher = client.getNetworkHandler().getCommandDispatcher();
+            List<String> roots = dispatcher.getRoot().getChildren().stream()
+                    .map(node -> node.getName())
+                    .sorted()
+                    .toList();
+            String requestedRoot = command.split("\\s+", 2)[0];
+            boolean rootAvailable = roots.contains(requestedRoot);
             ParseResults<CommandSource> parse =
                     dispatcher.parse(command, client.getNetworkHandler().getCommandSource());
             boolean executable = isExecutable(parse);
@@ -65,7 +71,7 @@ public final class MinecraftCommandInspector {
             String problem = executable ? "" : problem(parse);
             dispatcher.getCompletionSuggestions(parse).whenComplete((suggestions, failure) -> {
                 if (failure != null) {
-                    result.complete(new Inspection(command, executable, cursor, problem, List.of()));
+                    result.complete(new Inspection(command, executable, cursor, problem, List.of(), rootAvailable, roots));
                     return;
                 }
                 LinkedHashSet<String> values = new LinkedHashSet<>();
@@ -80,13 +86,12 @@ public final class MinecraftCommandInspector {
                         }
                     }
                 }
-                result.complete(new Inspection(
-                        command,
-                        executable,
-                        cursor,
-                        problem,
-                        List.copyOf(values)
-                ));
+                String exactProblem = problem;
+                if (!executable && rootAvailable && (exactProblem.isBlank() || exactProblem.startsWith("Unknown"))) {
+                    exactProblem = "The live command root /" + requestedRoot + " exists, but the supplied arguments are incomplete or invalid.";
+                }
+                result.complete(new Inspection(command, executable, cursor, exactProblem,
+                        List.copyOf(values), rootAvailable, roots));
             });
         } catch (RuntimeException failure) {
             result.complete(new Inspection(
@@ -153,12 +158,18 @@ public final class MinecraftCommandInspector {
             boolean executable,
             int cursor,
             String problem,
-            List<String> suggestions
+            List<String> suggestions,
+            boolean rootAvailable,
+            List<String> availableRoots
     ) {
+        public Inspection(String normalizedCommand, boolean executable, int cursor, String problem, List<String> suggestions) {
+            this(normalizedCommand, executable, cursor, problem, suggestions, false, List.of());
+        }
         public Inspection {
             normalizedCommand = normalizedCommand == null ? "" : normalizedCommand;
             problem = problem == null ? "" : problem;
             suggestions = suggestions == null ? List.of() : List.copyOf(suggestions);
+            availableRoots = availableRoots == null ? List.of() : List.copyOf(availableRoots);
         }
     }
 }

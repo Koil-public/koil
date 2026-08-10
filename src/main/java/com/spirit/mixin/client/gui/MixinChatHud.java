@@ -2,6 +2,7 @@ package com.spirit.mixin.client.gui;
 
 import com.spirit.koil.api.automation.AutomationChatTrigger;
 import com.spirit.koil.api.chat.ChatHudPanelStack;
+import com.spirit.koil.api.chat.ChatHudScrollbar;
 import com.spirit.koil.api.chat.ChatHudRefreshBridge;
 import com.spirit.koil.api.chat.LocalOverflowChatBridge;
 import com.spirit.koil.api.chat.LocalMultilineChatBridge;
@@ -380,7 +381,9 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
             return RichChatPrivateMessageBridge.filterEnabled() ? KOIL_COMMAND_BLOCK_REPEATING_INDICATOR_DIM : KOIL_COMMAND_BLOCK_REPEATING_INDICATOR_BRIGHT;
         }
         if (rowType == RichChatRowType.MODEL_RESPONSE) {
-            return ModelChatMessageBridge.indicator();
+            return ModelChatMessageBridge.isModelIndicator(original)
+                    ? original
+                    : ModelChatMessageBridge.indicator();
         }
         return original;
     }
@@ -402,7 +405,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
 
     @Override
     public boolean koil$chatScrollbarContains(double mouseX, double mouseY) {
-        ScrollbarMetrics metrics = koil$chatScrollbarMetrics();
+        ChatHudScrollbar.Metrics metrics = koil$chatScrollbarMetrics();
         return metrics != null
                 && mouseX >= metrics.x() - 2
                 && mouseX <= metrics.x() + metrics.width() + 2
@@ -412,7 +415,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
 
     @Override
     public void koil$beginChatScrollbarDrag(double mouseY) {
-        ScrollbarMetrics metrics = koil$chatScrollbarMetrics();
+        ChatHudScrollbar.Metrics metrics = koil$chatScrollbarMetrics();
         if (metrics == null) {
             return;
         }
@@ -430,7 +433,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         if (!koil$chatScrollbarDragging) {
             return;
         }
-        ScrollbarMetrics metrics = koil$chatScrollbarMetrics();
+        ChatHudScrollbar.Metrics metrics = koil$chatScrollbarMetrics();
         if (metrics == null) {
             return;
         }
@@ -443,15 +446,14 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
     }
 
     private void koil$renderChatScrollbar(DrawContext context) {
-        ScrollbarMetrics metrics = koil$chatScrollbarMetrics();
+        ChatHudScrollbar.Metrics metrics = koil$chatScrollbarMetrics();
         if (context == null || metrics == null) {
             return;
         }
-        context.fill(metrics.x(), metrics.y(), metrics.x() + metrics.width(), metrics.y() + metrics.height(), 0x20374455);
-        context.fill(metrics.x(), metrics.thumbY(), metrics.x() + metrics.width(), metrics.thumbY() + metrics.thumbHeight(), 0x8890A7C1);
+        ChatHudScrollbar.render(context, metrics);
     }
 
-    private ScrollbarMetrics koil$chatScrollbarMetrics() {
+    private ChatHudScrollbar.Metrics koil$chatScrollbarMetrics() {
         int visibleLineCount = Math.max(1, getVisibleLineCount());
         int totalLines = visibleMessages == null ? 0 : visibleMessages.size();
         if (totalLines <= visibleLineCount) {
@@ -462,26 +464,13 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
         int viewportHeight = Math.max(1, viewportBottom - viewportTop);
         int trackX = 4 + Math.round((float) (getWidth() * getChatScale())) + 6;
         int trackY = viewportTop;
-        int trackWidth = 3;
-        int thumbHeight = Math.max(18, viewportHeight * visibleLineCount / Math.max(visibleLineCount, totalLines));
-        int maxScroll = Math.max(1, totalLines - visibleLineCount);
-        float ratio = Math.max(0.0F, Math.min(1.0F, scrolledLines / (float) maxScroll));
-        int thumbY = trackY + Math.round((viewportHeight - thumbHeight) * (1.0F - ratio));
-        return new ScrollbarMetrics(trackX, trackY, trackWidth, viewportHeight, thumbY, thumbHeight, maxScroll);
+        return ChatHudScrollbar.bottomUp(trackX, trackY, viewportHeight, totalLines, visibleLineCount, scrolledLines);
     }
 
-    private void koil$setChatScrollFromThumbTop(int thumbTop, ScrollbarMetrics metrics) {
+    private void koil$setChatScrollFromThumbTop(int thumbTop, ChatHudScrollbar.Metrics metrics) {
         if (metrics == null) {
             return;
         }
-        int minTop = metrics.y();
-        int maxTop = metrics.y() + metrics.height() - metrics.thumbHeight();
-        int clampedTop = Math.max(minTop, Math.min(maxTop, thumbTop));
-        int track = Math.max(1, metrics.height() - metrics.thumbHeight());
-        float ratio = (clampedTop - minTop) / (float) track;
-        scrolledLines = Math.max(0, Math.min(metrics.maxScroll(), Math.round((1.0F - ratio) * metrics.maxScroll())));
-    }
-
-    private record ScrollbarMetrics(int x, int y, int width, int height, int thumbY, int thumbHeight, int maxScroll) {
+        scrolledLines = ChatHudScrollbar.offsetFromThumbTop(thumbTop, metrics);
     }
 }

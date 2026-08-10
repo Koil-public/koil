@@ -1,5 +1,6 @@
 package com.spirit.koil.api.performance;
 
+import com.sun.management.OperatingSystemMXBean;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
@@ -18,6 +19,10 @@ public final class PerformanceMonitor {
     private static long latestWarningAt;
     private static long lastGcCount;
     private static long lastGcTimeMs;
+    private static long lastHostProbeAtMillis;
+    private static double latestProcessCpuLoad = -1.0D;
+    private static double latestSystemCpuLoad = -1.0D;
+    private static long latestFreeSystemMemoryMb = -1L;
 
     private PerformanceMonitor() {
     }
@@ -40,8 +45,10 @@ public final class PerformanceMonitor {
         double chunkStress = chunkStress(frameMs, renderDistance, context.worldType());
         boolean screenOpen = client.currentScreen != null;
         double uiFramePressure = screenOpen ? Math.min(1.0D, Math.max(0.0D, (frameMs - 18.0D) / 90.0D)) : 0.0D;
-        double shaderPressure = !screenOpen && !"none detected".equals(context.shaderState()) ? Math.min(1.0D, (120.0D - Math.max(0.0D, fps)) / 90.0D) : 0.0D;
+        boolean shaderActive = PerformanceRuntimeContextService.shaderPipelineActive();
+        double shaderPressure = !screenOpen && shaderActive ? shaderPressure(fps, options.maxFps(), options.vsync()) : 0.0D;
         double modLoadPressure = Math.min(1.0D, FabricLoader.getInstance().getAllMods().size() / 220.0D);
+        refreshHostStats();
         double resourcePackPressure = Math.min(1.0D, context.resourcePackCount() / 12.0D);
         SAMPLES.addLast(new Sample(System.currentTimeMillis(), fps, frameMs, used, max, entityCount, gc.countDelta(), gc.timeDeltaMs(), round(chunkStress), round(shaderPressure), round(uiFramePressure), round(modLoadPressure), round(resourcePackPressure), context.worldType()));
         while (SAMPLES.size() > SAMPLE_LIMIT) {
@@ -65,12 +72,17 @@ public final class PerformanceMonitor {
     }
 
     public static PerformanceSnapshot snapshotSince(MinecraftClient client, long startMillis) {
+        return snapshotBetween(client, startMillis, Long.MAX_VALUE);
+    }
+
+    public static PerformanceSnapshot snapshotBetween(MinecraftClient client, long startMillis, long endMillis) {
         if (SAMPLES.isEmpty()) {
             return latestSnapshot(client);
         }
         Deque<Sample> filtered = new ArrayDeque<>();
+        long safeEnd = Math.max(startMillis, endMillis);
         for (Sample sample : SAMPLES) {
-            if (sample.capturedAtMillis() >= startMillis) {
+            if (sample.capturedAtMillis() >= startMillis && sample.capturedAtMillis() <= safeEnd) {
                 filtered.addLast(sample);
             }
         }
@@ -78,6 +90,21 @@ public final class PerformanceMonitor {
             return latestSnapshot(client);
         }
         return buildSnapshotFromSamples(client, filtered);
+    }
+
+    public static double processCpuLoad() {
+        refreshHostStats();
+        return latestProcessCpuLoad;
+    }
+
+    public static double systemCpuLoad() {
+        refreshHostStats();
+        return latestSystemCpuLoad;
+    }
+
+    public static long freeSystemMemoryMb() {
+        refreshHostStats();
+        return latestFreeSystemMemoryMb;
     }
 
     public static String latestWarning() {
@@ -94,15 +121,16 @@ public final class PerformanceMonitor {
 
     private static PerformanceSnapshot buildSnapshotFromSamples(MinecraftClient client, Deque<Sample> samples) {
         Runtime runtime = Runtime.getRuntime();
-        long used = (runtime.totalMemory() - runtime.freeMemory()) / 1024L / 1024L;
-        long max = Math.max(1L, runtime.maxMemory() / 1024L / 1024L);
+        Sample lastSample = samples.peekLast();
+        long used = lastSample == null ? (runtime.totalMemory() - runtime.freeMemory()) / 1024L / 1024L : lastSample.usedMemoryMb();
+        long max = lastSample == null ? Math.max(1L, runtime.maxMemory() / 1024L / 1024L) : Math.max(1L, lastSample.maxMemoryMb());
         double memoryPressure = Math.min(1.0D, used / (double) max);
         MinecraftPerformanceDataReader.FrameMetrics frameMetrics = MinecraftPerformanceDataReader.frameMetrics(client);
-        int fps = frameMetrics.currentFps();
+        int fps = lastSample == null ? frameMetrics.currentFps() : lastSample.fps();
         double averageFps = samples.stream().mapToInt(Sample::fps).average().orElse(fps);
         double onePercentLow = percentileLowFps(samples);
-        double frameMs = samples.peekLast() == null ? frameMetrics.latestFrameTimeMs() : samples.peekLast().frameTimeMs();
-        double maxFrameMs = Math.max(frameMetrics.maxFrameTimeMs(), samples.stream().mapToDouble(Sample::frameTimeMs).max().orElse(frameMs));
+        double frameMs = lastSample == null ? frameMetrics.latestFrameTimeMs() : lastSample.frameTimeMs();
+        double maxFrameMs = samples.isEmpty() ? frameMetrics.maxFrameTimeMs() : samples.stream().mapToDouble(Sample::frameTimeMs).max().orElse(frameMs);
         MinecraftPerformanceDataReader.OptionMetrics options = MinecraftPerformanceDataReader.options(client);
         int renderDistance = options.renderDistance();
         int simulationDistance = options.simulationDistance();
@@ -117,19 +145,27 @@ public final class PerformanceMonitor {
         boolean entityShadows = options.entityShadows();
         boolean vsync = options.vsync();
         boolean shaderInstalled = FabricLoader.getInstance().isModLoaded("iris") || FabricLoader.getInstance().isModLoaded("oculus");
-        int entityCount = countEntities(client);
+        int entityCount = lastSample == null ? countEntities(client) : lastSample.entityCount();
         PerformanceRuntimeContext context = PerformanceRuntimeContextService.capture(client);
         double gcPressure = Math.min(1.0D, samples.stream().mapToLong(Sample::gcTimeMs).sum() / 250.0D);
-        double chunkStress = chunkStress(maxFrameMs, renderDistance, context.worldType());
+        double chunkStress = samples.isEmpty()
+                ? chunkStress(maxFrameMs, renderDistance, context.worldType())
+                : samples.stream().mapToDouble(Sample::chunkStress).max().orElse(0.0D);
         boolean screenOpen = client != null && client.currentScreen != null;
-        double shaderPressure = !screenOpen && (shaderInstalled || !"none detected".equals(context.shaderState())) ? Math.min(1.0D, (120.0D - Math.max(0.0D, averageFps)) / 90.0D) : 0.0D;
+        boolean shaderActive = PerformanceRuntimeContextService.shaderPipelineActive();
+        double shaderPressure = !shaderActive
+                ? 0.0D
+                : samples.isEmpty()
+                ? (!screenOpen ? shaderPressure(averageFps, maxFps, vsync) : 0.0D)
+                : samples.stream().mapToDouble(Sample::shaderPressure).max().orElse(0.0D);
         double uiFramePressure = samples.stream().mapToDouble(Sample::uiFramePressure).max().orElse(screenOpen ? Math.min(1.0D, Math.max(0.0D, (frameMs - 18.0D) / 90.0D)) : 0.0D);
         double modLoadPressure = Math.min(1.0D, FabricLoader.getInstance().getAllMods().size() / 220.0D);
         double resourcePackPressure = Math.min(1.0D, context.resourcePackCount() / 12.0D);
-        PerformanceBottleneck bottleneck = classify(fps, averageFps, maxFrameMs, memoryPressure, entityCount, gcPressure, chunkStress, shaderPressure, uiFramePressure, modLoadPressure);
+        refreshHostStats();
+        PerformanceBottleneck bottleneck = classify(fps, averageFps, maxFrameMs, memoryPressure, entityCount, gcPressure, chunkStress, shaderPressure, modLoadPressure, context.worldType(), maxFps, vsync);
         String likelyCause = likelyCause(bottleneck, context);
         return new PerformanceSnapshot(
-                System.currentTimeMillis(),
+                lastSample == null ? System.currentTimeMillis() : lastSample.capturedAtMillis(),
                 fps,
                 round(averageFps),
                 round(onePercentLow),
@@ -198,32 +234,84 @@ public final class PerformanceMonitor {
         return 1_000.0D / frameTimes[index];
     }
 
-    private static PerformanceBottleneck classify(int fps, double averageFps, double maxFrameMs, double memoryPressure, int entityCount, double gcPressure, double chunkStress, double shaderPressure, double uiFramePressure, double modLoadPressure) {
+    private static PerformanceBottleneck classify(int fps, double averageFps, double maxFrameMs, double memoryPressure, int entityCount, double gcPressure, double chunkStress, double shaderPressure, double modLoadPressure, String worldType, int maxFps, boolean vsync) {
         if (memoryPressure > 0.90D || gcPressure > 0.70D) {
             return PerformanceBottleneck.MEMORY;
         }
         if (modLoadPressure > 0.90D && memoryPressure > 0.75D) {
             return PerformanceBottleneck.MOD_OVERLOAD;
         }
-        if (chunkStress > 0.70D || maxFrameMs > 120.0D) {
+        if (chunkStress > 0.70D || (worldActive(worldType) && chunkStress > 0.38D && maxFrameMs > 120.0D)) {
             return PerformanceBottleneck.CHUNK_STORAGE;
         }
-        if (entityCount > 180 && averageFps < 50.0D) {
+        if (entityCount > 180 && averageFps > 0.0D && averageFps < 50.0D) {
             return PerformanceBottleneck.ENTITY_TICK;
         }
-        if (shaderPressure > 0.45D && averageFps > 0.0D && averageFps < 60.0D) {
+        if (shaderPressure > 0.45D && averageFps > 0.0D && fpsBelowConfiguredTarget(averageFps, maxFps, vsync)) {
             return PerformanceBottleneck.SHADER_RENDER;
         }
-        if (uiFramePressure > 0.70D && averageFps > 0.0D && averageFps < 60.0D) {
-            return PerformanceBottleneck.GPU;
+        if (fps > 0 && fpsBelowConfiguredTarget(averageFps, maxFps, vsync)) {
+            return PerformanceBottleneck.UNKNOWN;
         }
-        if (fps > 0 && averageFps < 45.0D) {
-            return PerformanceBottleneck.GPU;
-        }
-        if (memoryPressure > 0.80D || maxFrameMs > 75.0D) {
-            return PerformanceBottleneck.CPU;
+        if (maxFrameMs > 90.0D) {
+            return PerformanceBottleneck.UNKNOWN;
         }
         return PerformanceBottleneck.HEALTHY;
+    }
+
+    private static double shaderPressure(double observedFps, int maxFps, boolean vsync) {
+        if (observedFps <= 0.0D) {
+            return 0.0D;
+        }
+        double target = configuredFpsTarget(maxFps, vsync);
+        return Math.max(0.0D, Math.min(1.0D, (target - observedFps) / Math.max(30.0D, target * 0.75D)));
+    }
+
+    private static boolean fpsBelowConfiguredTarget(double observedFps, int maxFps, boolean vsync) {
+        if (observedFps <= 0.0D) {
+            return false;
+        }
+        double target = configuredFpsTarget(maxFps, vsync);
+        double threshold = Math.min(45.0D, target * 0.75D);
+        return observedFps < threshold;
+    }
+
+    private static double configuredFpsTarget(int maxFps, boolean vsync) {
+        if (maxFps > 0 && maxFps < 260) {
+            return Math.max(10.0D, maxFps);
+        }
+        return vsync ? 60.0D : 120.0D;
+    }
+
+    private static boolean worldActive(String worldType) {
+        return "singleplayer".equals(worldType) || "server".equals(worldType);
+    }
+
+    private static void refreshHostStats() {
+        long now = System.currentTimeMillis();
+        if (now - lastHostProbeAtMillis < 1000L) {
+            return;
+        }
+        lastHostProbeAtMillis = now;
+        try {
+            java.lang.management.OperatingSystemMXBean bean = ManagementFactory.getOperatingSystemMXBean();
+            if (bean instanceof OperatingSystemMXBean osBean) {
+                latestProcessCpuLoad = normalizeLoad(osBean.getProcessCpuLoad());
+                latestSystemCpuLoad = normalizeLoad(osBean.getCpuLoad());
+                latestFreeSystemMemoryMb = Math.max(0L, osBean.getFreeMemorySize() / 1024L / 1024L);
+            }
+        } catch (Throwable ignored) {
+            latestProcessCpuLoad = -1.0D;
+            latestSystemCpuLoad = -1.0D;
+            latestFreeSystemMemoryMb = -1L;
+        }
+    }
+
+    private static double normalizeLoad(double value) {
+        if (!Double.isFinite(value) || value < 0.0D) {
+            return -1.0D;
+        }
+        return Math.max(0.0D, Math.min(1.0D, value));
     }
 
     private static double chunkStress(double maxFrameMs, int renderDistance, String worldType) {
@@ -324,8 +412,8 @@ public final class PerformanceMonitor {
         if (maxFrameMs > 120.0D) {
             return "Heavy frame spikes (" + whole(maxFrameMs) + " ms spike)";
         }
-        if (fps > 0 && averageFps > 0.0D && averageFps < 25.0D) {
-            return "Sustained very low FPS (" + whole(averageFps) + " avg)";
+        if (fps > 0 && fpsBelowConfiguredTarget(averageFps, snapshot.maxFps(), snapshot.vsync()) && averageFps < 25.0D) {
+            return "Sustained very low FPS relative to the configured frame target (" + whole(averageFps) + " avg)";
         }
         if (fps > 0 && averageFps > 0.0D && fps < averageFps * 0.55D && latestFrameMs > 45.0D) {
             return "Sudden FPS drop (" + fps + " FPS)";
@@ -343,7 +431,7 @@ public final class PerformanceMonitor {
             return "Shader/render pressure (" + percent(shaderPressure) + ")";
         }
         if (uiFramePressure > 0.70D) {
-            return "UI render pressure (" + percent(uiFramePressure) + ")";
+            return "Screen-open frame pressure estimate (" + percent(uiFramePressure) + ")";
         }
         if (modLoadPressure > 0.92D && memoryPressure > 0.70D) {
             return "Large modpack memory pressure (" + percent(modLoadPressure) + ")";
@@ -355,7 +443,7 @@ public final class PerformanceMonitor {
             return "Resource pack stack pressure (" + percent(resourcePackPressure) + ")";
         }
         if (snapshot.primaryBottleneck() == PerformanceBottleneck.GPU && averageFps < 45.0D) {
-            return "GPU render bottleneck (" + whole(averageFps) + " avg FPS)";
+            return "Render bottleneck (" + whole(averageFps) + " avg FPS)";
         }
         if (snapshot.primaryBottleneck() == PerformanceBottleneck.CPU && averageFrameMs > 35.0D) {
             return "CPU/tick bottleneck (" + whole(averageFrameMs) + " ms avg)";

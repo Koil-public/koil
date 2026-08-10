@@ -13,19 +13,19 @@ import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolResult;
 import com.spirit.koil.api.model.LocalModelService;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
+import com.spirit.koil.api.automation.cli.AutomationChatHudState;
 import com.spirit.koil.api.model.tool.MinecraftCommandModelToolRegistry;
 import com.spirit.koil.api.model.tool.MinecraftKnowledgeModelToolRegistry;
 import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
 import com.spirit.koil.api.model.tool.AutomationPlanModelToolRegistry;
 import com.spirit.koil.api.model.tool.AutomationKtlSkillModelToolRegistry;
 import com.spirit.koil.api.model.tool.ProjectValidationModelToolRegistry;
+import com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry;
 import net.minecraft.client.MinecraftClient;
 
-import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Validates model calls against the shared capability registry and hands the
@@ -40,6 +40,24 @@ public final class AutomationToolCoordinator {
     }
 
     public static CompletableFuture<ModelToolResult> execute(
+            UUID displayRequestId,
+            ModelToolCall call,
+            boolean preapproved
+    ) {
+        AutomationChatHudState.toolStarted(call);
+        CompletableFuture<ModelToolResult> execution;
+        try {
+            execution = executeInternal(displayRequestId, call, preapproved);
+        } catch (RuntimeException exception) {
+            execution = CompletableFuture.completedFuture(failure(call, "tool_execution_failed", message(exception)));
+        }
+        return execution.whenComplete((result, error) -> AutomationChatHudState.toolFinished(
+                call,
+                error == null ? result : failure(call, "tool_execution_failed", message(error))
+        ));
+    }
+
+    private static CompletableFuture<ModelToolResult> executeInternal(
             UUID displayRequestId,
             ModelToolCall call,
             boolean preapproved
@@ -68,6 +86,9 @@ public final class AutomationToolCoordinator {
         }
         if (MinecraftKnowledgeModelToolRegistry.supports(call.toolId())) {
             return MinecraftKnowledgeModelToolRegistry.execute(call);
+        }
+        if (InternetResearchModelToolRegistry.supports(call.toolId())) {
+            return InternetResearchModelToolRegistry.execute(call);
         }
         if (AutomationPlanModelToolRegistry.supports(call.toolId())) {
             return AutomationPlanModelToolRegistry.execute(call);
@@ -144,16 +165,13 @@ public final class AutomationToolCoordinator {
             }
         });
 
-        Duration timeout = definition.timeout();
-        return execution
-                .orTimeout(Math.max(1L, timeout.toMillis()), TimeUnit.MILLISECONDS)
-                .handle((result, error) -> {
-                    if (error != null) {
-                        client.execute(() -> AutomationRouter.cancelCurrentTask("model tool timed out"));
-                        return failure(call, "tool_timed_out", "Automation tool timed out after " + timeout.toSeconds() + " seconds.");
-                    }
-                    return toToolResult(call, result);
-                });
+        // The capability definition's duration remains operation guidance for
+        // KTL primitives/watchdogs. It is deliberately not an overall agent
+        // wall-clock deadline: persistent automation ends by verified outcome,
+        // cancellation, or an observed unrecoverable condition.
+        return execution.handle((result, error) -> error == null
+                ? toToolResult(call, result)
+                : failure(call, "tool_execution_failed", message(error)));
     }
 
     private static CompletableFuture<ModelToolResult> executeKtlSkill(
@@ -193,7 +211,7 @@ public final class AutomationToolCoordinator {
                     "Another automation task currently owns movement or input."
             ));
         }
-        if (preapproved || AutomationModeController.isYoloMode()) {
+        if (preapproved || AutomationModeController.isUnrestrictedMode()) {
             return submitKtlSkill(client, call, prepared);
         }
         if (displayRequestId == null) {
@@ -272,20 +290,9 @@ public final class AutomationToolCoordinator {
                 ));
             }
         });
-        Duration timeout = Duration.ofMinutes(10);
-        return execution
-                .orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS)
-                .handle((result, error) -> {
-                    if (error != null) {
-                        client.execute(() -> AutomationRouter.cancelCurrentTask("model KTL skill timed out"));
-                        return failure(
-                                call,
-                                "tool_timed_out",
-                                "Registered KTL skill timed out after " + timeout.toMinutes() + " minutes."
-                        );
-                    }
-                    return toToolResult(call, result);
-                });
+        return execution.handle((result, error) -> error == null
+                ? toToolResult(call, result)
+                : failure(call, "ktl_execution_failed", message(error)));
     }
 
     private static CompletableFuture<ModelToolResult> submitCommand(
@@ -313,7 +320,7 @@ public final class AutomationToolCoordinator {
                         "The command was not sent. Repair it using the active command-tree problem and suggestions."
                 ));
             }
-            if (preapproved || !definition.confirmationRequired() || AutomationModeController.isYoloMode()) {
+            if (preapproved || !definition.confirmationRequired() || AutomationModeController.isUnrestrictedMode()) {
                 return submitCurrentPlayerCommand(client, call, command);
             }
             if (displayRequestId == null) {
@@ -423,9 +430,23 @@ public final class AutomationToolCoordinator {
         output.addProperty("valid", inspection.executable());
         output.addProperty("cursor", inspection.cursor());
         output.addProperty("problem", inspection.problem());
+        output.addProperty("rootAvailable", inspection.rootAvailable());
+        com.google.gson.JsonArray roots = new com.google.gson.JsonArray();
+        inspection.availableRoots().forEach(roots::add);
+        output.add("availableRoots", roots);
         com.google.gson.JsonArray suggestions = new com.google.gson.JsonArray();
         inspection.suggestions().forEach(suggestions::add);
         output.add("suggestions", suggestions);
+        output.add("structuredResult", commandStructuredResult(
+                "FAILED",
+                "minecraft.command",
+                inspection.rootAvailable() ? "invalid_command_syntax" : "command_root_not_available",
+                false,
+                false,
+                inspection.normalizedCommand(),
+                0,
+                inspection.problem()
+        ));
         return output;
     }
 
@@ -449,11 +470,59 @@ public final class AutomationToolCoordinator {
             rows.add(encoded);
         }
         output.add("feedback", rows);
+        boolean succeeded = "succeeded".equals(feedback.assessment());
+        boolean failed = "failed".equals(feedback.assessment());
+        output.add("structuredResult", commandStructuredResult(
+                succeeded ? "SUCCESS" : failed ? "FAILED" : "PARTIAL",
+                "minecraft.command",
+                succeeded ? "server_confirmed" : failed ? "server_rejected_command" : "feedback_unobserved",
+                succeeded,
+                succeeded,
+                command,
+                feedback.feedback().size(),
+                feedback.assessment()
+        ));
         return output;
+    }
+
+    private static JsonObject commandStructuredResult(
+            String status,
+            String action,
+            String reason,
+            boolean objectiveReached,
+            boolean stateChanged,
+            String command,
+            int feedbackCount,
+            String assessment
+    ) {
+        JsonObject structured = new JsonObject();
+        structured.addProperty("status", status);
+        structured.addProperty("action", action);
+        structured.addProperty("reason", reason);
+        structured.addProperty("objectiveReached", objectiveReached);
+        structured.addProperty("stateChanged", stateChanged);
+        structured.addProperty("retrySameAction", false);
+        structured.addProperty("continueRecommended", "PARTIAL".equals(status));
+        structured.addProperty("replanRecommended", !"SUCCESS".equals(status));
+        JsonObject requested = new JsonObject();
+        requested.addProperty("command", "/" + command);
+        structured.add("requested", requested);
+        structured.add("before", new JsonObject());
+        JsonObject after = new JsonObject();
+        after.addProperty("feedbackAssessment", assessment == null ? "" : assessment);
+        structured.add("after", after);
+        structured.add("delta", new JsonObject());
+        JsonObject metrics = new JsonObject();
+        metrics.addProperty("feedback_count", feedbackCount);
+        structured.add("metrics", metrics);
+        structured.add("failures", new com.google.gson.JsonArray());
+        structured.add("recoveries", new com.google.gson.JsonArray());
+        return structured;
     }
 
     private static ModelToolResult toToolResult(ModelToolCall call, AutomationExecutionResult result) {
         JsonObject output = new JsonObject();
+        com.spirit.koil.api.automation.runtime.AutomationStructuredResult structured = result.structured();
         output.addProperty("executionId", result.executionId().toString());
         output.addProperty("template", result.templateId());
         output.addProperty("durationMs", Math.max(0L,
@@ -471,20 +540,72 @@ public final class AutomationToolCoordinator {
                 addPrimitive(output, entry.getKey(), entry.getValue());
             }
         }
-        String status = switch (result.status().toLowerCase(java.util.Locale.ROOT)) {
-            case "success" -> "completed";
-            case "cancelled", "canceled" -> "cancelled";
-            case "blocked" -> "blocked";
-            default -> "failed";
+        output.add("structuredResult", structured.toJson());
+        output.addProperty("objectiveReached", structured.objectiveReached());
+        output.addProperty("stateChanged", structured.stateChanged());
+        output.addProperty("retrySameAction", structured.retrySameAction());
+        output.addProperty("continueRecommended", structured.continueRecommended());
+        output.addProperty("replanRecommended", structured.replanRecommended());
+        String status = switch (structured.status()) {
+            case SUCCESS -> "completed";
+            case PARTIAL -> "partial";
+            case BLOCKED -> "blocked";
+            case CANCELLED -> "cancelled";
+            case INTERRUPTED -> "interrupted";
+            case NO_TARGET -> "no_target";
+            case ALREADY_SATISFIED -> "already_satisfied";
+            case FAILED -> "failed";
         };
+        String validationStatus = result.state().getOrDefault("result.validation.status", "not_required").toString();
+        if (AutomationModeController.isVerificationEnabled() && "completed".equals(status)) {
+            output.addProperty("verification.enabled", true);
+            if ("not_required".equals(validationStatus)) {
+                validationStatus = "passed";
+                output.addProperty("verification.kind", "structured_terminal_check");
+                output.addProperty(
+                        "verification.fact",
+                        "Koil independently checked the registered executor's terminal status, failure code, and structured result state."
+                );
+            } else {
+                output.addProperty("verification.kind", "capability_state_check");
+            }
+        } else {
+            output.addProperty("verification.enabled", false);
+        }
+        if ("failed".equals(validationStatus) && "completed".equals(status)) {
+            status = "failed";
+        }
+        String failureCode = "failed".equals(validationStatus) && result.failureCode().isBlank()
+                ? "validation_failed"
+                : result.failureCode();
+        boolean retryable = structured.retrySameAction() || isRetryableResult(result, status, failureCode);
         return new ModelToolResult(
                 call.id(),
                 call.toolId(),
                 status,
                 output,
-                result.failureCode(),
-                result.detail()
+                failureCode,
+                structured.conciseSummary(),
+                result.startedAt() == null ? System.currentTimeMillis() : result.startedAt().toEpochMilli(),
+                result.finishedAt() == null ? System.currentTimeMillis() : result.finishedAt().toEpochMilli(),
+                validationStatus,
+                java.util.List.of(),
+                retryable,
+                "cancelled".equals(status),
+                "approved"
         );
+    }
+
+    static boolean isRetryableResult(AutomationExecutionResult result, String status, String failureCode) {
+        Object declared = result.state().get("result.retryable");
+        if (declared instanceof Boolean bool) return bool;
+        if (declared != null) return Boolean.parseBoolean(declared.toString());
+        String code = failureCode == null ? "" : failureCode.toLowerCase(java.util.Locale.ROOT);
+        if (code.startsWith("unknown_") || code.contains("unsupported") || code.contains("permission")
+                || code.contains("invalid_id")) {
+            return false;
+        }
+        return "failed".equals(status) || "blocked".equals(status);
     }
 
     private static void addPosition(JsonObject output, String key, AutomationPositionSnapshot position) {

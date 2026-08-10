@@ -35,11 +35,15 @@ public final class ModelVoicePhrasePlanner {
         List<ModelVoicePhrase> ready = new ArrayList<>();
         for (int index = 0; index < delta.length(); index++) {
             char character = delta.charAt(index);
+            char previous = this.pendingToken.isEmpty()
+                    ? '\0'
+                    : this.pendingToken.charAt(this.pendingToken.length() - 1);
+            char next = index + 1 < delta.length() ? delta.charAt(index + 1) : '\0';
             if (Character.isWhitespace(character)) {
                 completeToken(ready);
             } else if (this.pendingToken.length() < MAXIMUM_PENDING_TOKEN_CHARS) {
                 this.pendingToken.append(character);
-                if (isPhraseBoundary(character)) {
+                if (isPhraseBoundary(character, previous, next)) {
                     completeToken(ready);
                 }
             }
@@ -127,12 +131,20 @@ public final class ModelVoicePhrasePlanner {
 
     private static String sanitizeToken(String token) {
         return RichChatSectionFormatting.speechSafeText(token)
+                .replaceAll("(?<=\\d)\\.(?=\\d)", " point ")
+                .replace("&", " and ")
+                .replaceAll("(?i)\\bid(?=[:=,.!?;]|$)", "I D")
+                .replaceAll("(?i)\\blvl(?=[:=,.!?;]|$)", "level")
                 .replaceAll("[`*_#|\\[\\]{}<>]", "")
                 .replaceAll("\\s+", " ")
                 .strip();
     }
 
-    private static boolean isPhraseBoundary(char character) {
+    private static boolean isPhraseBoundary(char character, char previous, char next) {
+        if (character == '.' && Character.isDigit(previous)
+                && (Character.isDigit(next) || next == '\0')) {
+            return false;
+        }
         return character == '.'
                 || character == '!'
                 || character == '?'

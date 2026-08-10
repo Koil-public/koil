@@ -7,8 +7,17 @@ operations:
     target_kinds: [block]
     preferred_templates: [blocks/core/mine_block_until_count]
 
+  - id: sem.task.mine_block_collection
+    intent: mine_all
+    target_kinds: [block]
+    preferred_templates: [blocks/core/mine_all_matching]
+
   - id: sem.task.place_item_on_target
     intent: place
     target_kinds: [block]
     preferred_templates: [blocks/core/place_item_on_block_target]
 
+  - id: sem.task.place_block_pattern
+    intent: build_pattern
+    target_kinds: [block, location]
+    preferred_templates: [blocks/core/place_block_pattern]

@@ -23,6 +23,7 @@ import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
 import com.spirit.koil.api.chat.RichChatPrivateMessageBridge;
 import com.spirit.koil.api.chat.RichChatPreviewFormatter;
 import com.spirit.koil.api.chat.RichChatMessageStore;
+import com.spirit.koil.api.chat.ModelChatMessageBridge;
 import com.spirit.koil.api.chat.input.KoilCommandAnalysisService;
 import com.spirit.koil.api.chat.input.CommandSuggestionFuturePoller;
 import com.spirit.koil.api.chat.input.VanillaBackedChatInputController;
@@ -939,6 +940,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             koil$pmTargetMenu.render(context, mouseX, mouseY);
             koil$pmOptionMenu.render(context, mouseX, mouseY);
             RichChatAttachmentRenderer.renderChatHoverTooltip(context, mouseX, mouseY);
+            ModelChatMessageBridge.renderTraceTooltip(context, MinecraftClient.getInstance(), mouseX, mouseY);
             return;
         }
         koil$updateMultilineLayoutReservation();
@@ -1002,6 +1004,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         koil$pmTargetMenu.render(context, mouseX, mouseY);
         koil$pmOptionMenu.render(context, mouseX, mouseY);
         RichChatAttachmentRenderer.renderChatHoverTooltip(context, mouseX, mouseY);
+        ModelChatMessageBridge.renderTraceTooltip(context, MinecraftClient.getInstance(), mouseX, mouseY);
     }
 
     @Inject(method = "mouseClicked", at = @At("HEAD"), cancellable = true)

@@ -26,4 +26,8 @@ public record AutomationExecutionResult(
         startedAt = startedAt == null ? Instant.now() : startedAt;
         finishedAt = finishedAt == null ? Instant.now() : finishedAt;
     }
+
+    public AutomationStructuredResult structured() {
+        return AutomationStructuredResult.from(this);
+    }
 }

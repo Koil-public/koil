@@ -25,6 +25,7 @@ import com.spirit.client.gui.update.UpdateScreen;
 import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
+import com.spirit.koil.api.chat.ChatHudPanelStack;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
@@ -183,6 +184,10 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        if ((Object) this instanceof ChatScreen
+                && ChatHudPanelStack.mouseDragged(this.client, mouseX, mouseY, button, deltaX, deltaY)) {
+            return true;
+        }
         if (koil$activeAudioPopup.mouseDragged(mouseX, mouseY, button)) {
             return true;
         }
@@ -194,6 +199,10 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if ((Object) this instanceof ChatScreen
+                && ChatHudPanelStack.mouseReleased(this.client, mouseX, mouseY, button)) {
+            return true;
+        }
         if (koil$activeAudioPopup.mouseReleased(mouseX, mouseY, button)) {
             return true;
         }

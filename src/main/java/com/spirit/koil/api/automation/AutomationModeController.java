@@ -3,6 +3,7 @@ package com.spirit.koil.api.automation;
 import com.spirit.koil.api.automation.cli.AutomationChatHudState;
 import com.spirit.koil.api.automation.cli.AutomationPresenceState;
 import com.spirit.koil.api.automation.cli.AutomationStateColors;
+import com.spirit.koil.api.model.ModelExperimentalFeatures;
 
 public final class AutomationModeController {
     private static volatile boolean automationMode;
@@ -13,6 +14,7 @@ public final class AutomationModeController {
     private static volatile boolean planningModeEnabled;
     private static volatile boolean planningActive;
     private static volatile boolean experimentalCompactAgentEnabled;
+    private static volatile boolean verificationEnabled;
     private static volatile String detail = "";
 
     private AutomationModeController() {
@@ -31,14 +33,16 @@ public final class AutomationModeController {
             deepThinkingActive = false;
             planningModeEnabled = false;
             planningActive = false;
+            verificationEnabled = false;
             if (!enabled) {
                 experimentalCompactAgentEnabled = false;
             }
         }
         modeState = enabled ? ModeState.CONNECTING : ModeState.OFF;
         detail = enabled ? "connecting to local model" : "";
+        AutomationRuntimeStatus.idle(detail);
         AutomationPresenceState.updateLocalMode(enabled);
-        AutomationPresenceState.updateLocal(enabled ? "waiting" : "idle", detail);
+        AutomationPresenceState.updateLocal(enabled ? "starting" : "idle", detail);
         if (!enabled) {
             AutomationChatHudState.hide();
         }
@@ -49,26 +53,26 @@ public final class AutomationModeController {
      * this Automation Mode session. This does not expand the capability
      * registry or bypass Minecraft's player permissions.
      */
-    public static void enableYoloMode() {
-        setYoloModeEnabled(true);
+    public static void enableUnrestrictedMode() {
+        setUnrestrictedModeEnabled(true);
     }
 
-    public static void setYoloModeEnabled(boolean enabled) {
+    public static void setUnrestrictedModeEnabled(boolean enabled) {
         if (enabled && !automationMode) {
             setAutomationMode(true);
         }
-        approvalPolicy = enabled && automationMode ? ApprovalPolicy.YOLO : ApprovalPolicy.STANDARD;
-        detail = approvalPolicy == ApprovalPolicy.YOLO
-                ? "yolo: registered capabilities require no Koil approval"
+        approvalPolicy = enabled && automationMode ? ApprovalPolicy.UNRESTRICTED : ApprovalPolicy.STANDARD;
+        detail = approvalPolicy == ApprovalPolicy.UNRESTRICTED
+                ? "unrestricted: registered capabilities require no per-action Koil approval"
                 : automationMode ? "standard approvals enabled" : "";
         AutomationPresenceState.updateLocal(
-                approvalPolicy == ApprovalPolicy.YOLO ? "warning" : automationMode ? "idle" : "off",
+                approvalPolicy == ApprovalPolicy.UNRESTRICTED ? "warning" : automationMode ? "idle" : "off",
                 detail
         );
     }
 
-    public static boolean isYoloMode() {
-        return automationMode && approvalPolicy == ApprovalPolicy.YOLO;
+    public static boolean isUnrestrictedMode() {
+        return automationMode && approvalPolicy == ApprovalPolicy.UNRESTRICTED;
     }
 
     public static ApprovalPolicy approvalPolicy() {
@@ -121,6 +125,42 @@ public final class AutomationModeController {
         return experimentalCompactAgentEnabled;
     }
 
+    public static void setVerificationEnabled(boolean enabled) {
+        verificationEnabled = enabled;
+    }
+
+    public static boolean isVerificationEnabled() {
+        return verificationEnabled;
+    }
+
+    public static boolean hasExperimentalFeaturesEnabled() {
+        return experimentalCompactAgentEnabled || verificationEnabled || !persistentExperimentalFeatureNames().isEmpty();
+    }
+
+    public static java.util.List<String> enabledExperimentalFeatures() {
+        java.util.ArrayList<String> enabled = new java.util.ArrayList<>(8);
+        if (experimentalCompactAgentEnabled) {
+            enabled.add("Compact context agent");
+        }
+        if (verificationEnabled) {
+            enabled.add("Verification");
+        }
+        enabled.addAll(persistentExperimentalFeatureNames());
+        return java.util.List.copyOf(enabled);
+    }
+
+    private static java.util.List<String> persistentExperimentalFeatureNames() {
+        var settings = ModelExperimentalFeatures.snapshot();
+        java.util.ArrayList<String> names = new java.util.ArrayList<>(6);
+        if (settings.persistentConversationHistory()) names.add("Persistent Conversation History");
+        if (settings.persistentAssociativeMemory()) names.add("Persistent Associative Memory");
+        if (settings.gigatokenEnabled()) names.add("gigaToken");
+        if (settings.expertPrefetchEnabled()) names.add("Expert Prefetch");
+        if (settings.completionModeEnabled()) names.add("Completion Mode");
+        if (settings.noFailEnabled()) names.add("No-Fail");
+        return java.util.List.copyOf(names);
+    }
+
     public static void ready(String value) {
         if (automationMode) {
             modeState = ModeState.READY;
@@ -141,7 +181,7 @@ public final class AutomationModeController {
         if (automationMode) {
             modeState = ModeState.PAUSED;
             detail = value == null ? "" : value;
-            AutomationPresenceState.updateLocal("waiting", detail);
+            AutomationPresenceState.updateLocal("idle", detail);
         }
     }
 
@@ -155,6 +195,7 @@ public final class AutomationModeController {
         planningModeEnabled = false;
         planningActive = false;
         experimentalCompactAgentEnabled = false;
+        verificationEnabled = false;
         AutomationPresenceState.updateLocalMode(false);
         AutomationPresenceState.updateLocal("failed", detail);
         AutomationChatHudState.hide();
@@ -170,6 +211,7 @@ public final class AutomationModeController {
                 planningModeEnabled,
                 planningActive,
                 experimentalCompactAgentEnabled,
+                verificationEnabled,
                 detail
         );
     }
@@ -185,7 +227,7 @@ public final class AutomationModeController {
 
     public enum ApprovalPolicy {
         STANDARD,
-        YOLO
+        UNRESTRICTED
     }
 
     public record Snapshot(
@@ -197,7 +239,19 @@ public final class AutomationModeController {
             boolean planningModeEnabled,
             boolean planningActive,
             boolean experimentalCompactAgentEnabled,
+            boolean verificationEnabled,
             String detail
     ) {
+        public boolean experimentalFeaturesEnabled() {
+            return AutomationModeController.hasExperimentalFeaturesEnabled();
+        }
+
+        public java.util.List<String> enabledExperimentalFeatures() {
+            java.util.ArrayList<String> enabled = new java.util.ArrayList<>(8);
+            if (experimentalCompactAgentEnabled) enabled.add("Compact context agent");
+            if (verificationEnabled) enabled.add("Verification");
+            enabled.addAll(AutomationModeController.persistentExperimentalFeatureNames());
+            return java.util.List.copyOf(enabled);
+        }
     }
 }

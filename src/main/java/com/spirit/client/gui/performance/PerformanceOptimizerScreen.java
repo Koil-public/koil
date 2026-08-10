@@ -1,54 +1,50 @@
 package com.spirit.client.gui.performance;
 
 import com.spirit.Main;
-import com.spirit.client.gui.TopBarLayout;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
 import com.spirit.koil.api.performance.*;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.text.OrderedText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 
-import java.awt.*;
+import java.awt.Color;
+import java.lang.management.ManagementFactory;
+import java.nio.file.FileStore;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
-import static com.spirit.Main.LOGO_TEXTURE;
 import static com.spirit.koil.api.design.uiColorVal.*;
 
 @Environment(EnvType.CLIENT)
 public class PerformanceOptimizerScreen extends Screen {
-    private static final int HEADER_HEIGHT = 60;
-    private static final int CONTENT_TOP = 62;
-    private static final int PANEL_CONTENT_START = CONTENT_TOP + 20;
-    private static final int SIDE_WIDTH = 184;
-    private static final int ROW_HEIGHT = 18;
-    private static final int CHART_HEIGHT = 54;
-    private static final int CHART_GAP = 24;
-    private static final String TOP_BAR_BACK_LABEL = "<";
-    private static final String PANE_OVERVIEW_LABEL = "Overview";
-    private static final String PANE_RENDERING_LABEL = "Render";
-    private static final String PANE_PROCESSING_LABEL = "Process";
-    private static final String PANE_MEMORY_LABEL = "Memory";
-    private static final String PANE_SERVER_LABEL = "Server";
-    private static final String PANE_GAMEPLAY_LABEL = "Gameplay";
-    private static final String PANE_UI_LABEL = "UI";
-    private static final String PANE_WORLD_LABEL = "World";
-    private static final String PANE_MODS_LABEL = "Mods";
-    private static final String PANE_ALL_LABEL = "All";
+    private static final int HEADER_HEIGHT = 43;
+    private static final int FOOTER_HEIGHT = 60;
+    private static final int MARGIN = 10;
+    private static final int CONTROL_HEIGHT = 20;
+    private static final int CONTROL_GAP = 5;
+    private static final int TAB_HEIGHT = 18;
+    private static final int CHART_HEIGHT = 58;
+    private static final int LINE_HEIGHT = 10;
+    private static final int SCROLLBAR_WIDTH = 4;
     private static SessionState savedSession;
 
-    private int liveChartBottom = CONTENT_TOP + 230;
-
     private final Screen parent;
+    private final List<PaneHitbox> paneHitboxes = new ArrayList<>();
+    private final List<RecommendationHitbox> recommendationHitboxes = new ArrayList<>();
     private PerformanceProfileMode activeMode = PerformanceProfileMode.AUTO;
     private PerformanceHardwareProfile hardwareProfile;
     private PerformanceRuntimeContext runtimeContext;
@@ -58,12 +54,17 @@ public class PerformanceOptimizerScreen extends Screen {
     private List<PerformanceProviderApplyResult> lastProviderResults = new ArrayList<>();
     private List<PerformanceApplyEntryResult> lastApplyEntries = new ArrayList<>();
     private Map<String, String> appliedTargetsBySetting = new LinkedHashMap<>();
-    private TextFieldWidget searchField;
     private DiagnosticsPane activePane = DiagnosticsPane.OVERVIEW;
-    private String status = "Run benchmark first. The system will collect a live sample window before recommending changes.";
-    private int recommendationScroll;
-    private boolean benchmarkRunning;
-    private long benchmarkStartMillis;
+    private String status = "Run a benchmark for a clean world sample, or inspect the live measurements below.";
+    private TextFieldWidget searchField;
+    private ButtonWidget benchmarkButton;
+    private ButtonWidget applyButton;
+    private ButtonWidget reportButton;
+    private ButtonWidget revertButton;
+    private ButtonWidget doneButton;
+    private Rect profilePrevious = Rect.EMPTY;
+    private Rect profileNext = Rect.EMPTY;
+    private int controlsBottom = HEADER_HEIGHT + 60;
     private int mainScroll;
     private int mainContentHeight;
     private int mainViewportX;
@@ -73,6 +74,7 @@ public class PerformanceOptimizerScreen extends Screen {
     private boolean draggingMainScrollbar;
     private int mainScrollbarDragOffset;
     private long observedBenchmarkResultAtMillis;
+    private long runtimeContextAtMillis;
     private List<Text> hoverTooltipLines = List.of();
     private int hoverTooltipX;
     private int hoverTooltipY;
@@ -80,9 +82,6 @@ public class PerformanceOptimizerScreen extends Screen {
     private long chartCacheAtMillis;
     private int chartEntityMax = 1;
     private PerformanceSnapshot chartSnapshot;
-    private String chartWorldType = "unknown";
-    private String chartScreenName = "none";
-    private final List<RecommendationHitbox> recommendationHitboxes = new ArrayList<>();
 
     public PerformanceOptimizerScreen() {
         this(null);
@@ -100,30 +99,27 @@ public class PerformanceOptimizerScreen extends Screen {
 
     @Override
     protected void init() {
-        initTopBar();
         restoreSession();
-        int buttonY = this.height - 28;
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("Benchmark"), button -> runBenchmark())
-                .dimensions(SIDE_WIDTH + 24, buttonY, 88, 20)
-                .build());
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("Apply Supported"), button -> applySafe())
-                .dimensions(SIDE_WIDTH + 118, buttonY, 110, 20)
-                .build());
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("Revert Last"), button -> revertLast())
-                .dimensions(SIDE_WIDTH + 234, buttonY, 86, 20)
-                .build());
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("Report"), button -> writeReport())
-                .dimensions(SIDE_WIDTH + 326, buttonY, 62, 20)
-                .build());
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("Done"), button -> closeAndRemember())
-                .dimensions(this.width - 74, buttonY, 60, 20)
-                .build());
+        this.searchField = new TextFieldWidget(this.textRenderer, MARGIN, HEADER_HEIGHT + 30, 180, CONTROL_HEIGHT, Text.literal("performance-search"));
+        this.searchField.setMaxLength(256);
+        this.searchField.setPlaceholder(Text.literal("Search recommendations / provider settings"));
+        this.searchField.setChangedListener(value -> this.mainScroll = 0);
+        this.addDrawableChild(this.searchField);
+        restoreSearchText();
+        this.benchmarkButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("Benchmark"), button -> runBenchmark()).dimensions(0, 0, 80, 20).build());
+        this.applyButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("Apply Supported"), button -> applySafe()).dimensions(0, 0, 100, 20).build());
+        this.reportButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("Report"), button -> writeReport()).dimensions(0, 0, 70, 20).build());
+        this.revertButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("Revert Last"), button -> revertLast()).dimensions(0, 0, 90, 20).build());
+        this.doneButton = this.addDrawableChild(ButtonWidget.builder(Text.literal("Done"), button -> closeAndRemember()).dimensions(0, 0, 70, 20).build());
+        layoutControls();
+        MinecraftClient client = MinecraftClient.getInstance();
         if (this.hardwareProfile == null) {
-            this.hardwareProfile = PerformanceHardwareScanner.scan(MinecraftClient.getInstance());
+            this.hardwareProfile = PerformanceHardwareScanner.scan(client);
         }
-        this.runtimeContext = PerformanceRuntimeContextService.capture(MinecraftClient.getInstance());
+        this.runtimeContext = PerformanceRuntimeContextService.capture(client);
+        this.runtimeContextAtMillis = System.currentTimeMillis();
         if (this.recommendations.isEmpty()) {
-            this.recommendations = PerformanceRecommendationEngine.recommend(MinecraftClient.getInstance(), this.activeMode, PerformanceMonitor.freshSnapshot(MinecraftClient.getInstance()));
+            this.recommendations = PerformanceRecommendationEngine.recommend(client, this.activeMode, PerformanceMonitor.freshSnapshot(client));
         }
         refreshProviderSettings();
     }
@@ -142,447 +138,628 @@ public class PerformanceOptimizerScreen extends Screen {
         this.lastApplyEntries = new ArrayList<>(savedSession.lastApplyEntries());
         this.appliedTargetsBySetting = new LinkedHashMap<>(savedSession.appliedTargetsBySetting());
         this.observedBenchmarkResultAtMillis = savedSession.observedBenchmarkResultAtMillis();
-        if (this.searchField != null) {
+    }
+
+    private void restoreSearchText() {
+        if (savedSession != null && this.searchField != null) {
             this.searchField.setText(savedSession.searchText());
         }
     }
 
     private void saveSession() {
         savedSession = new SessionState(
-                this.activeMode,
-                this.activePane,
-                this.status,
-                this.mainScroll,
-                this.latestBenchmark,
-                List.copyOf(this.recommendations),
-                List.copyOf(this.lastProviderResults),
-                List.copyOf(this.lastApplyEntries),
-                Map.copyOf(this.appliedTargetsBySetting),
-                this.searchField == null ? "" : this.searchField.getText(),
-                this.observedBenchmarkResultAtMillis
+            this.activeMode,
+            this.activePane,
+            this.status,
+            this.mainScroll,
+            this.latestBenchmark,
+            List.copyOf(this.recommendations),
+            List.copyOf(this.lastProviderResults),
+            List.copyOf(this.lastApplyEntries),
+            Map.copyOf(this.appliedTargetsBySetting),
+            this.searchField == null ? "" : this.searchField.getText(),
+            this.observedBenchmarkResultAtMillis
         );
-    }
-
-    private void initTopBar() {
-        TopBarLayout layout = getTopBarLayout();
-        this.searchField = new TextFieldWidget(
-                this.textRenderer,
-                layout.searchFieldX(TOP_BAR_BACK_LABEL),
-                TopBarLayout.SEARCH_FIELD_Y,
-                topBarSearchWidth(),
-                TopBarLayout.SEARCH_FIELD_HEIGHT,
-                Text.literal("performance-search")
-        );
-        this.searchField.setMaxLength(256);
-        this.searchField.setPlaceholder(Text.literal("Filter providers, settings, recommendations"));
-        this.searchField.setChangedListener(value -> refreshProviderSettings());
-        this.addDrawableChild(this.searchField);
     }
 
     @Override
     public void tick() {
         syncOptimizationTestResult();
-        if (this.benchmarkRunning) {
-            long elapsed = System.currentTimeMillis() - this.benchmarkStartMillis;
-            if (elapsed >= 5000L) {
-                finishBenchmark();
-            } else {
-                this.status = "Benchmarking live frame, memory, entity, and chunk-pressure samples... " + Math.max(0, 5 - (elapsed / 1000L)) + "s";
-            }
-        }
         if (PerformanceOptimizationTestService.active()) {
             this.status = PerformanceOptimizationTestService.status();
         }
-        saveSession();
+        long now = System.currentTimeMillis();
+        if (this.runtimeContext == null || now - this.runtimeContextAtMillis > 2000L) {
+            this.runtimeContext = PerformanceRuntimeContextService.capture(MinecraftClient.getInstance());
+            this.runtimeContextAtMillis = now;
+        }
+        layoutControls();
         if (this.searchField != null) {
-            TopBarLayout layout = getTopBarLayout();
-            this.searchField.setX(layout.searchFieldX(TOP_BAR_BACK_LABEL));
-            this.searchField.setY(TopBarLayout.SEARCH_FIELD_Y);
-            this.searchField.setWidth(topBarSearchWidth());
             this.searchField.tick();
         }
+        saveSession();
         super.tick();
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        KoilScreenBackgrounds.render(context, client, this.width, this.height);
-        if (KoilScreenBackgrounds.canRender(client)) {
-            context.fill(0, 0, this.width, this.height, KoilScreenBackgrounds.overlayColor(client));
-        }
-        renderChrome(context);
-        renderSidePanel(context, mouseX, mouseY);
+        layoutControls();
+        renderBackgroundAndChrome(context);
         this.hoverTooltipLines = List.of();
         this.hoverTooltipX = mouseX;
         this.hoverTooltipY = mouseY;
         ensureChartCache();
+        renderControlBand(context, mouseX, mouseY);
         renderMainPanel(context, mouseX, mouseY);
         super.render(context, mouseX, mouseY, delta);
         renderHoverTooltip(context);
     }
 
-    private void renderChrome(DrawContext context) {
-        assert client != null;
-        int topBarBackground = withAlpha(uiColorContentBase, 176);
-        int topPanelBackground = withAlpha(uiColorContentBase, 196);
-        context.fill(0, 0, this.width, 40, topPanelBackground);
-        context.drawText(this.textRenderer, "Version - " + Main.version(), this.width - 100, 10, new Color(uiColorHeaderTitleText, true).getRGB(), true);
+    private void renderBackgroundAndChrome(DrawContext context) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        KoilScreenBackgrounds.render(context, client, this.width, this.height);
+        if (KoilScreenBackgrounds.canRender(client)) {
+            context.fill(0, 0, this.width, this.height, KoilScreenBackgrounds.overlayColor(client));
+        } else {
+            context.fill(0, 0, this.width, this.height, new Color(uiColorContentBase, true).getRGB());
+        }
+        context.fill(0, 0, this.width, HEADER_HEIGHT, new Color(uiColorHeader, true).getRGB());
+        context.fill(0, HEADER_HEIGHT - 4, this.width, HEADER_HEIGHT - 1, new Color(uiColorHeaderStripe, true).getRGB());
+        int footerY = Math.max(HEADER_HEIGHT, this.height - footerHeight());
+        context.fill(0, footerY, this.width, this.height, new Color(uiColorFooter, true).getRGB());
+        context.fill(0, footerY, this.width, footerY + 3, new Color(uiColorFooterStripe, true).getRGB());
+        context.drawBorder(0, 0, this.width, this.height, new Color(uiColorBackgroundBorder, true).getRGB());
         context.getMatrices().push();
-        context.getMatrices().scale(0.5f, 0.5f, 1.0F);
-        context.drawText(this.textRenderer, "By: SpiritXIV", (int) ((this.width - 100) / 0.5f), (int) (20 / 0.5f), new Color(uiColorHeaderSubTitleText, true).getRGB(), true);
+        context.getMatrices().scale(1.5F, 1.5F, 1.0F);
+        context.drawText(this.textRenderer, "Performance", 25, 6, new Color(uiColorHeaderTitleText, true).getRGB(), true);
         context.getMatrices().pop();
-        context.drawText(this.textRenderer, "Koil", 34, 6, new Color(uiColorHeaderTitleText, true).getRGB(), true);
-        context.drawTexture(LOGO_TEXTURE, 10, 5, 0, 0, 22, 22, 22, 22);
-        context.getMatrices().push();
-        context.getMatrices().scale(0.5F, 0.5F, 1.0F);
-        context.drawText(this.textRenderer, "Diagnostics - InDEV", 68, 35, new Color(uiColorHeaderSubTitleText, true).getRGB(), true);
-        context.getMatrices().pop();
-        context.drawBorder(0, 0, this.width, this.height,  new Color(uiColorBackgroundBorder, true).getRGB());
-        context.fill(0, 40, this.width, 68, new Color(uiColorHeader, true).getRGB());
-        context.fill(0, 40, this.width, 68, topBarBackground);
-        context.drawBorder(0, 40, this.width, 28,  new Color(uiColorBackgroundBorder, true).getRGB());
-        context.fill(172, 70, this.width, this.height, new Color(uiColorContentBase, true).getRGB());
-        context.drawBorder(172, 70, this.width, this.height,  new Color(uiColorBackgroundBorder, true).getRGB());
-        context.fill(0, 70, 170, this.height, new Color(uiColorContentBase, true).getRGB());
-        context.drawBorder(0, 70, 170, this.height,  new Color(uiColorBackgroundBorder, true).getRGB());
+        context.drawText(this.textRenderer, "-=- optimizer / diagnostics", 37, 23, new Color(uiColorHeaderSubTitleText, true).getRGB(), true);
+    }
 
-        renderTopBarButton(context, 10, TOP_BAR_BACK_LABEL);
-        for (int i = 0; i < getTopBarActionLabels().size(); i++) {
-            String label = getTopBarActionLabels().get(i);
-            renderTopBarButton(context, getTopBarButtonX(i), label, false);
+    private void layoutControls() {
+        int footerTop = Math.max(HEADER_HEIGHT + 20, this.height - footerHeight());
+        int innerWidth = Math.max(1, this.width - MARGIN * 2);
+        int y = HEADER_HEIGHT + 5;
+        boolean inlineSearch = this.width >= 260;
+        int searchWidth = Math.min(230, Math.max(96, innerWidth / 3));
+        if (this.searchField != null) {
+            if (inlineSearch) {
+                this.searchField.setX(this.width - MARGIN - searchWidth);
+                this.searchField.setY(y);
+                this.searchField.setWidth(searchWidth);
+            } else {
+                this.searchField.setX(MARGIN);
+                this.searchField.setY(y + CONTROL_HEIGHT + CONTROL_GAP);
+                this.searchField.setWidth(innerWidth);
+            }
+        }
+        int profileRight = inlineSearch ? this.width - MARGIN - searchWidth - CONTROL_GAP : this.width - MARGIN;
+        int profileLabelWidth = this.textRenderer == null ? 42 : this.textRenderer.getWidth("Profile") + 8;
+        int arrowWidth = 22;
+        int previousX = MARGIN + profileLabelWidth;
+        int nextX = Math.max(previousX + arrowWidth + 48, profileRight - arrowWidth);
+        this.profilePrevious = new Rect(previousX, y, arrowWidth, CONTROL_HEIGHT);
+        this.profileNext = new Rect(nextX, y, arrowWidth, CONTROL_HEIGHT);
+        int tabsY = inlineSearch ? y + CONTROL_HEIGHT + CONTROL_GAP : y + (CONTROL_HEIGHT + CONTROL_GAP) * 2;
+        this.paneHitboxes.clear();
+        int tabX = MARGIN;
+        int rowY = tabsY;
+        boolean compactTabs = this.width < 460;
+        for (DiagnosticsPane pane : DiagnosticsPane.values()) {
+            String tabLabel = pane.displayLabel(compactTabs);
+            int tabWidth = Math.max(compactTabs ? 30 : 40, this.textRenderer == null ? 48 : this.textRenderer.getWidth(tabLabel) + (compactTabs ? 8 : 12));
+            if (tabX > MARGIN && tabX + tabWidth > this.width - MARGIN) {
+                tabX = MARGIN;
+                rowY += TAB_HEIGHT + 3;
+            }
+            this.paneHitboxes.add(new PaneHitbox(pane, tabX, rowY, tabWidth, TAB_HEIGHT));
+            tabX += tabWidth + 4;
+        }
+        this.controlsBottom = Math.min(footerTop - 4, rowY + TAB_HEIGHT + 5);
+        layoutFooterButtons();
+    }
+
+    private void layoutFooterButtons() {
+        if (this.benchmarkButton == null) {
+            return;
+        }
+        int available = Math.max(1, this.width - MARGIN * 2);
+        if (compactFooter()) {
+            int gap = 4;
+            int buttonWidth = Math.max(1, (available - gap * 4) / 5);
+            int y = this.height - 28;
+            ButtonWidget[] buttons = {this.benchmarkButton, this.applyButton, this.reportButton, this.revertButton, this.doneButton};
+            String[] labels = {"Bench", "Apply", "Report", "Revert", "Done"};
+            int x = MARGIN;
+            for (int i = 0; i < buttons.length; i++) {
+                ButtonWidget button = buttons[i];
+                button.setX(x);
+                button.setY(y);
+                int width = i == buttons.length - 1 ? Math.max(1, this.width - MARGIN - x) : buttonWidth;
+                button.setWidth(width);
+                button.setMessage(Text.literal(labels[i]));
+                x += width + gap;
+            }
+            return;
+        }
+        int gap = 6;
+        int firstWidth = Math.max(1, (available - gap * 2) / 3);
+        int firstY = this.height - 52;
+        this.benchmarkButton.setX(MARGIN);
+        this.benchmarkButton.setY(firstY);
+        this.benchmarkButton.setWidth(firstWidth);
+        this.applyButton.setX(MARGIN + firstWidth + gap);
+        this.applyButton.setY(firstY);
+        this.applyButton.setWidth(firstWidth);
+        this.reportButton.setX(MARGIN + (firstWidth + gap) * 2);
+        this.reportButton.setY(firstY);
+        this.reportButton.setWidth(Math.max(1, this.width - MARGIN - this.reportButton.getX()));
+        int secondY = this.height - 28;
+        int secondWidth = Math.max(1, (available - gap) / 2);
+        this.revertButton.setX(MARGIN);
+        this.revertButton.setY(secondY);
+        this.revertButton.setWidth(secondWidth);
+        this.doneButton.setX(MARGIN + secondWidth + gap);
+        this.doneButton.setY(secondY);
+        this.doneButton.setWidth(Math.max(1, this.width - MARGIN - this.doneButton.getX()));
+        this.benchmarkButton.setMessage(Text.literal("Benchmark"));
+        this.applyButton.setMessage(Text.literal(this.width < 360 ? "Apply" : "Apply Supported"));
+        this.reportButton.setMessage(Text.literal("Report"));
+        this.revertButton.setMessage(Text.literal(this.width < 360 ? "Revert" : "Revert Last"));
+        this.doneButton.setMessage(Text.literal("Done"));
+    }
+
+    private boolean compactFooter() {
+        return this.height < 230 && this.width >= 260;
+    }
+
+    private int footerHeight() {
+        return compactFooter() ? 36 : FOOTER_HEIGHT;
+    }
+
+    private void renderControlBand(DrawContext context, int mouseX, int mouseY) {
+        int y = HEADER_HEIGHT + 5;
+        int labelColor = new Color(uiColorContentBaseDescriptionText, true).getRGB();
+        context.drawText(this.textRenderer, "Profile", MARGIN, y + 6, labelColor, false);
+        drawSquareControl(context, this.profilePrevious, "<", false, this.activeMode.color());
+        drawSquareControl(context, this.profileNext, ">", false, this.activeMode.color());
+        int selectedX = this.profilePrevious.right() + 3;
+        int selectedRight = this.profileNext.x() - 3;
+        int selectedWidth = Math.max(1, selectedRight - selectedX);
+        context.fill(selectedX, y, selectedRight, y + CONTROL_HEIGHT, withAlpha(uiColorContentBase, 208));
+        context.fill(selectedX, y, selectedX + 3, y + CONTROL_HEIGHT, withAlpha(this.activeMode.color(), 180));
+        context.drawBorder(selectedX, y, selectedWidth, CONTROL_HEIGHT, new Color(uiColorBackgroundBorder, true).getRGB());
+        String mode = trimToPixels(this.activeMode.label(), Math.max(10, selectedWidth - 12));
+        context.drawText(this.textRenderer, mode, selectedX + 7, y + 6, softText(this.activeMode.color()), false);
+        for (PaneHitbox tab : this.paneHitboxes) {
+            boolean selected = tab.pane() == this.activePane;
+            int fill = selected ? withAlpha(uiColorContentBase, 230) : withAlpha(0xFF000000, 42);
+            int border = selected ? shadedBorder(this.activeMode.color()) : new Color(uiColorBackgroundBorder, true).getRGB();
+            context.fill(tab.x(), tab.y(), tab.x() + tab.width(), tab.y() + tab.height(), fill);
+            if (selected) {
+                context.fill(tab.x(), tab.y() + tab.height() - 2, tab.x() + tab.width(), tab.y() + tab.height(), withAlpha(this.activeMode.color(), 180));
+            }
+            context.drawBorder(tab.x(), tab.y(), tab.width(), tab.height(), border);
+            String label = trimToPixels(tab.pane().displayLabel(this.width < 460), tab.width() - 8);
+            context.drawText(this.textRenderer, label, tab.x() + Math.max(4, (tab.width() - this.textRenderer.getWidth(label)) / 2), tab.y() + 5, selected ? new Color(uiColorContentBaseTitleText, true).getRGB() : new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
+        }
+        int suggestedY = this.controlsBottom - 1;
+        if (this.runtimeContext != null && suggestedY < this.height - footerHeight()) {
+            String suggested = "Suggested: " + this.runtimeContext.suggestedProfile().replace('_', ' ');
+            if (this.width >= 620) {
+                String display = trimToPixels(suggested, 180);
+                context.drawText(this.textRenderer, display, this.width - MARGIN - this.textRenderer.getWidth(display), suggestedY - 10, new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
+            }
         }
     }
 
-    private void renderSidePanel(DrawContext context, int mouseX, int mouseY) {
-        int x = 8;
-        int y = PANEL_CONTENT_START;
-        int rowRight = 166;
-        context.drawText(this.textRenderer, "Profiles", x, y, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-        y += 18;
-        for (PerformanceProfileMode mode : PerformanceProfileMode.values()) {
-            boolean selected = mode == this.activeMode;
-            context.fill(x, y, rowRight, y + 14, selected ? withAlpha(0xFFFFFFFF, 18) : withAlpha(0xFF000000, 35));
-            context.fill(x, y, x + 2, y + 14, selected ? withAlpha(mode.color(), 150) : muted(mode.color()));
-            context.drawBorder(x, y, rowRight - x, 14, new Color(uiColorBackgroundBorder, true).getRGB());
-            context.drawText(this.textRenderer, trim(mode.label(), 20), x + 7, y + 3, 0xFFE2E2E2, false);
-            y += 15;
-        }
-        y += 10;
-        PerformanceSnapshot snapshot = this.chartSnapshot == null ? PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance()) : this.chartSnapshot;
-        drawMetric(context, x, y, "State", snapshot.primaryBottleneck().label(), snapshot.primaryBottleneck().color());
-        drawMetric(context, x, y + 18, "FPS", String.valueOf(snapshot.fps()), fpsColor(snapshot.fps()));
-        drawMetric(context, x, y + 36, "Frame", snapshot.frameTimeMs() + " ms", snapshot.maxFrameTimeMs() > 75 ? 0xFFE06A21 : 0xFF2DA700);
-        drawMetric(context, x, y + 54, "Memory", snapshot.usedMemoryMb() + "/" + snapshot.maxMemoryMb() + " MB", memoryColor(snapshot.memoryPressure()));
-        String warning = PerformanceMonitor.latestWarning();
-        if (!warning.isBlank()) {
-            context.drawText(this.textRenderer, trim(warning, 32), x, y + 82, 0xFFE3B735, false);
-        }
+    private void drawSquareControl(DrawContext context, Rect rect, String label, boolean selected, int accent) {
+        context.fill(rect.x(), rect.y(), rect.right(), rect.bottom(), selected ? withAlpha(uiColorContentBase, 230) : withAlpha(0xFF000000, 42));
+        context.drawBorder(rect.x(), rect.y(), rect.width(), rect.height(), selected ? withAlpha(accent, 200) : new Color(uiColorBackgroundBorder, true).getRGB());
+        context.drawText(this.textRenderer, label, rect.x() + Math.max(4, (rect.width() - this.textRenderer.getWidth(label)) / 2), rect.y() + 6, softText(accent), false);
     }
 
     private void renderMainPanel(DrawContext context, int mouseX, int mouseY) {
-        int x = SIDE_WIDTH + 12;
-        int y = PANEL_CONTENT_START;
-        int right = this.width - 18;
-        int bottom = this.height - 38;
-        this.mainViewportX = x;
-        this.mainViewportY = y;
-        this.mainViewportWidth = Math.max(1, right - x - 8);
-        this.mainViewportHeight = Math.max(1, bottom - y);
-        int contentY = y - this.mainScroll;
-        int contentEndOffset;
-        context.enableScissor(Math.max(0, x - 18), y, Math.min(this.width, right + 28), bottom);
-        context.drawText(this.textRenderer, "Live analysis", x, contentY, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-        context.drawText(this.textRenderer, trim(systemVoice(this.status), Math.max(24, (right - x) / 6)), x, contentY + 12, new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
-        PerformanceSnapshot snapshot = PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance());
-        context.drawText(this.textRenderer, "Sources: Minecraft runtime/options, JVM memory/GC, Fabric Loader, GL strings, and editable config files. Pressure rows are estimates.", x, contentY + 25, 0xFF9FAFC2, false);
-        int cardY = contentY + 46;
-        drawInfoCard(context, x, cardY, 128, "Primary", snapshot.primaryBottleneck().label(), snapshot.primaryBottleneck().color());
-        drawInfoCard(context, x + 136, cardY, 128, "Average FPS", String.valueOf(snapshot.averageFps()), fpsColor((int) snapshot.averageFps()));
-        drawInfoCard(context, x + 272, cardY, 128, "1% Low", String.valueOf(snapshot.onePercentLowFps()), fpsColor((int) snapshot.onePercentLowFps()));
-        drawInfoCard(context, x + 408, cardY, 128, "Entities", String.valueOf(snapshot.entityCount()), snapshot.entityCount() > 180 ? 0xFFE6862C : 0xFF2DA700);
-        int hardwareY = cardY + 54;
-        int cursorY = hardwareY;
-        if (shows(DiagnosticsPane.OVERVIEW)) {
-            renderCausePanel(context, x, cursorY, right - x - 16, snapshot);
-            cursorY += 58;
+        int footerTop = Math.max(HEADER_HEIGHT, this.height - footerHeight());
+        this.mainViewportX = MARGIN;
+        this.mainViewportY = Math.min(footerTop - 2, this.controlsBottom + 2);
+        this.mainViewportWidth = Math.max(1, this.width - MARGIN * 2 - 9);
+        this.mainViewportHeight = Math.max(1, footerTop - this.mainViewportY - 3);
+        PerformanceSnapshot snapshot = this.chartSnapshot == null ? PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance()) : this.chartSnapshot;
+        int contentStartY = this.mainViewportY - this.mainScroll;
+        int y = contentStartY;
+        context.enableScissor(this.mainViewportX, this.mainViewportY, this.mainViewportX + this.mainViewportWidth, this.mainViewportY + this.mainViewportHeight);
+        y = renderLiveStatus(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
+        y += 6;
+        switch (this.activePane) {
+            case OVERVIEW -> y = renderOverview(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
+            case RENDERING -> y = renderRendering(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
+            case PROCESSING -> y = renderProcessing(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
+            case MEMORY -> y = renderMemory(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
+            case WORLD -> y = renderWorld(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
+            case MODS -> y = renderMods(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
+            case SERVER -> y = renderServer(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
+            case ALL -> y = renderAll(context, this.mainViewportX, y, this.mainViewportWidth, snapshot);
         }
-        if (shows(DiagnosticsPane.OVERVIEW) || shows(DiagnosticsPane.RENDERING)) {
-            renderRuntimeContext(context, x, cursorY, right - x - 16);
-            cursorY += 80;
-        }
-        if (shows(DiagnosticsPane.OVERVIEW) || shows(DiagnosticsPane.SERVER) || shows(DiagnosticsPane.GAMEPLAY) || shows(DiagnosticsPane.UI) || shows(DiagnosticsPane.WORLD)) {
-            renderDataResponsibilityPanel(context, x, cursorY, right - x - 16, snapshot);
-            cursorY += 116;
-        }
-        if (shows(DiagnosticsPane.OVERVIEW) || shows(DiagnosticsPane.MODS)) {
-            renderHardwareSummary(context, x, cursorY, right - x - 16);
-            cursorY += 92;
-        }
-        int chartY = cursorY;
-        int chartWidth = Math.max(120, (right - x - 28) / 2);
-        int chartRightX = x + chartWidth + 12;
-        int row = 0;
-        if (shows(DiagnosticsPane.OVERVIEW) || shows(DiagnosticsPane.RENDERING)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "FPS stability", ChartKind.FPS);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Frame time spikes", ChartKind.FRAME_TIME);
-            row++;
-        }
-        if (shows(DiagnosticsPane.MEMORY)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Memory pressure", ChartKind.MEMORY);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "GC activity", ChartKind.GC);
-            row++;
-        }
-        if (shows(DiagnosticsPane.PROCESSING)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Entity load", ChartKind.ENTITY);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Tick pressure", ChartKind.FAULT_PRESSURE);
-            row++;
-        }
-        if (shows(DiagnosticsPane.RENDERING)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Chunk stress", ChartKind.CHUNK);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Shader pressure", ChartKind.SHADER);
-            row++;
-        }
-        if (shows(DiagnosticsPane.MODS)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Modpack pressure", ChartKind.MOD_LOAD);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Resourcepack pressure", ChartKind.RESOURCEPACK);
-            row++;
-        }
-        if (shows(DiagnosticsPane.SERVER)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Server wait / network context", ChartKind.SERVER_WAIT);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Server-side load risk", ChartKind.SERVER_CONTEXT);
-            row++;
-        }
-        if (shows(DiagnosticsPane.GAMEPLAY)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Gameplay entity pressure", ChartKind.ENTITY);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "Input/update pressure", ChartKind.GAMEPLAY);
-            row++;
-        }
-        if (shows(DiagnosticsPane.UI)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "UI frame cost", ChartKind.UI_FRAME);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "UI memory pressure", ChartKind.UI_MEMORY);
-            row++;
-        }
-        if (shows(DiagnosticsPane.WORLD)) {
-            renderMiniChart(context, x, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "World/chunk streaming", ChartKind.CHUNK);
-            renderMiniChart(context, chartRightX, chartY + row * (CHART_HEIGHT + 12), chartWidth, CHART_HEIGHT, "World simulation load", ChartKind.WORLD_SIMULATION);
-            row++;
-        }
-        int faultY = chartY + Math.max(1, row) * (CHART_HEIGHT + 12) + 4;
-        if (shows(DiagnosticsPane.OVERVIEW) || shows(DiagnosticsPane.PROCESSING) || shows(DiagnosticsPane.MODS)) {
-            renderFaultDomainPanel(context, x, faultY, right - x - 16, snapshot);
-            faultY += 74;
-        }
-        renderAdvancedSignals(context, x, faultY, right - x - 16, snapshot);
-        int providerY = faultY + 170;
-        if (shows(DiagnosticsPane.MODS)) {
-            renderProviderSettings(context, x, providerY, right - x - 16);
-            providerY += 58 + Math.max(1, Math.min(12, filteredProviderSettings().size())) * 30;
-        }
-        int recY = providerY;
-        renderRecommendations(context, x, recY, right - x - 16);
-        contentEndOffset = (recY - contentY) + 54 + Math.max(1, visibleRecommendations().size()) * 36;
-        this.mainContentHeight = contentEndOffset;
-        this.liveChartBottom = chartY + CHART_HEIGHT;
+        y += 4;
+        y = renderRecommendations(context, this.mainViewportX, y, this.mainViewportWidth);
+        this.mainContentHeight = Math.max(1, y - contentStartY + 4);
         context.disableScissor();
         scrollMain(0);
-        renderMainScrollbar(context, mouseX, mouseY);
+        renderMainScrollbar(context);
     }
 
-    private void renderProviderSettings(DrawContext context, int x, int y, int width) {
-        List<PerformanceSettingDescriptor> settings = filteredProviderSettings();
-        context.drawText(this.textRenderer, "Optimization providers / live settings", x, y, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-        context.drawText(this.textRenderer, "Detected settings: " + this.providerSettings.size() + " | visible: " + settings.size() + " | last apply: " + lastApplySummary(), x, y + 12, new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
-        int rowY = y + 30;
-        if (settings.isEmpty()) {
-            context.drawText(this.textRenderer, "No provider settings match the current filter.", x + 8, rowY, 0xFF8D8D8D, false);
-            return;
-        }
-        int shown = 0;
-        for (PerformanceSettingDescriptor setting : settings) {
-            if (shown >= 12) {
-                context.drawText(this.textRenderer, "... " + (settings.size() - shown) + " more settings hidden by compact view", x + 8, rowY + 4, 0xFF8D8D8D, false);
-                break;
-            }
-            boolean needsChange = settingNeedsChange(setting);
-            boolean observationOnly = setting.observationOnly();
-            int accent = observationOnly ? 0xFF7C8288 : !needsChange ? new Color(uiColorSaveSuccessColor, true).getRGB() : setting.liveApplySupported() ? 0xFF2DA700 : 0xFFE3B735;
-            context.fill(x, rowY, x + width, rowY + 26, withAlpha(0xFF000000, 38));
-            context.fill(x, rowY, x + 3, rowY + 26, accent);
-            context.drawBorder(x, rowY, width, 26, shadedBorder(accent));
-            context.drawText(this.textRenderer, setting.providerId() + " | " + trim(setting.label(), 32), x + 9, rowY + 4, 0xFFFFFFFF, false);
-            String valueLine = observationOnly
-                    ? "Observed exactly: " + setting.currentValue() + " | manual review"
-                    : needsChange
-                    ? setting.currentValue() + " -> " + setting.recommendedValue() + " | " + (setting.requiresResourceReload() ? "reload requested" : "live")
-                    : "Already optimized: " + setting.currentValue();
-            context.drawText(this.textRenderer, trim(valueLine, Math.max(24, (width - 18) / 6)), x + 9, rowY + 15, observationOnly ? 0xFF9DA2A8 : needsChange ? 0xFFB8B8B8 : new Color(uiColorSaveSuccessColor, true).getRGB(), false);
-            rowY += 30;
-            shown++;
-        }
+    private int renderLiveStatus(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        int accent = snapshot.primaryBottleneck().color();
+        int textWidth = Math.max(20, width - 24);
+        List<OrderedText> statusLines = wrapped(this.status, textWidth);
+        List<OrderedText> causeLines = wrapped(snapshot.likelyCause(), textWidth);
+        int height = 30 + statusLines.size() * LINE_HEIGHT + causeLines.size() * LINE_HEIGHT;
+        context.fill(x, y, x + width, y + height, withAlpha(uiColorContentBase, 185));
+        context.fill(x, y, x + 3, y + height, withAlpha(accent, 190));
+        context.drawBorder(x, y, width, height, shadedBorder(accent));
+        String measured = snapshot.primaryBottleneck() == PerformanceBottleneck.UNKNOWN ? "unverified cause" : snapshot.primaryBottleneck() == PerformanceBottleneck.HEALTHY ? "stable sample" : "strongest signal";
+        int measuredWidth = this.textRenderer.getWidth(measured);
+        int labelMax = Math.max(12, width - measuredWidth - 30);
+        context.drawText(this.textRenderer, trimToPixels(snapshot.primaryBottleneck().label(), labelMax), x + 9, y + 7, softText(accent), false);
+        context.drawText(this.textRenderer, trimToPixels(measured, Math.max(12, width / 2)), x + width - 9 - Math.min(measuredWidth, this.textRenderer.getWidth(trimToPixels(measured, Math.max(12, width / 2)))), y + 7, new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
+        int lineY = y + 20;
+        lineY = drawWrapped(context, statusLines, x + 9, lineY, new Color(uiColorContentBaseTitleText, true).getRGB());
+        lineY = drawWrapped(context, causeLines, x + 9, lineY, new Color(uiColorContentBaseDescriptionText, true).getRGB());
+        return y + height;
     }
 
-    private void renderCausePanel(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
-        context.fill(x, y, x + width, y + 46, withAlpha(0xFF000000, 42));
-        context.fill(x, y, x + 3, y + 46, snapshot.primaryBottleneck().color());
-        context.drawBorder(x, y, width, 46, shadedBorder(snapshot.primaryBottleneck().color()));
-        context.drawText(this.textRenderer, snapshot.primaryBottleneck().label() + " diagnosis", x + 10, y + 7, softText(snapshot.primaryBottleneck().color()), false);
-        context.drawText(this.textRenderer, trim(snapshot.likelyCause(), Math.max(30, (width - 20) / 6)), x + 10, y + 22, 0xFFE2E2E2, false);
+    private int renderOverview(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        y = sectionHeader(context, x, y, width, "Live snapshot");
+        y = renderInfoRows(context, x, y, width, List.of(
+            exact("Current FPS", snapshot.fps() + " fps", fpsColor(snapshot.fps())),
+            exact("Average FPS", format1(snapshot.averageFps()) + " fps", fpsColor((int) Math.round(snapshot.averageFps()))),
+            exact("1% low", format1(snapshot.onePercentLowFps()) + " fps", fpsColor((int) Math.round(snapshot.onePercentLowFps()))),
+            exact("Frame time", format1(snapshot.frameTimeMs()) + " ms now | " + format1(snapshot.maxFrameTimeMs()) + " ms sampled max", pressureColor(Math.min(1.0D, snapshot.maxFrameTimeMs() / 120.0D))),
+            exact("JVM heap", snapshot.usedMemoryMb() + " / " + snapshot.maxMemoryMb() + " MB | " + percentText(snapshot.memoryPressure()), memoryColor(snapshot.memoryPressure())),
+            exact("Loaded entities", worldActive(snapshot) ? snapshot.entityCount() + " client-side entities" : "no world loaded", worldActive(snapshot) ? pressureColor(Math.min(1.0D, snapshot.entityCount() / 220.0D)) : 0xFF8D8D8D)
+        ));
+        y += 6;
+        y = sectionHeader(context, x, y, width, "Current game settings");
+        List<InfoLine> settings = new ArrayList<>();
+        settings.add(exact("Render distance", snapshot.renderDistance() + " chunks", 0xFFE2E2E2));
+        if ("server".equals(snapshot.worldType())) {
+            settings.add(exact("Simulation distance", snapshot.simulationDistance() + " chunks in local options; the remote server controls its own simulation distance", new Color(uiColorToolTipWarning, true).getRGB()));
+        } else {
+            settings.add(exact("Simulation distance", snapshot.simulationDistance() + " chunks", 0xFFE2E2E2));
+        }
+        settings.add(exact("Graphics", snapshot.graphicsMode() + " | clouds " + snapshot.cloudsMode() + " | particles " + snapshot.particlesMode(), 0xFFE2E2E2));
+        settings.add(exact("Frame pacing", maxFpsLabel(snapshot.maxFps()) + " | VSync " + (snapshot.vsync() ? "on" : "off"), 0xFFE2E2E2));
+        settings.add(exact("Texture / effects", "mipmaps " + snapshot.mipmapLevels() + " | biome blend " + snapshot.biomeBlend() + " | entity shadows " + (snapshot.entityShadows() ? "on" : "off"), 0xFFE2E2E2));
+        y = renderInfoRows(context, x, y, width, settings);
+        y += 6;
+        y = renderHardwareSummary(context, x, y, width, snapshot, true);
+        y += 6;
+        y = renderChartGroup(context, x, y, width, List.of(
+            new ChartSpec("FPS history", ChartKind.FPS),
+            new ChartSpec("Frame-time history", ChartKind.FRAME_TIME)
+        ));
+        if (this.latestBenchmark != null) {
+            y += 6;
+            y = renderBenchmarkPhases(context, x, y, width);
+        }
+        y += 6;
+        return renderPressureSignals(context, x, y, width, snapshot, true);
     }
 
-    private void renderRuntimeContext(DrawContext context, int x, int y, int width) {
-        if (this.runtimeContext == null || System.currentTimeMillis() - this.runtimeContext.capturedAtMillis() > 5000L) {
-            this.runtimeContext = PerformanceRuntimeContextService.capture(MinecraftClient.getInstance());
+    private int renderRendering(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        y = sectionHeader(context, x, y, width, "Renderer and display");
+        List<InfoLine> rows = new ArrayList<>();
+        if (this.hardwareProfile != null) {
+            rows.add(exact("GPU renderer", safe(this.hardwareProfile.gpuRenderer()), 0xFFE2E2E2));
+            rows.add(exact("GPU vendor", safe(this.hardwareProfile.gpuVendor()), 0xFFE2E2E2));
+            rows.add(exact("OpenGL", safe(this.hardwareProfile.gpuVersion()), 0xFFE2E2E2));
+            rows.add(exact("Display mode", displayModeText(this.hardwareProfile), 0xFFE2E2E2));
+            rows.add(exact("VRAM telemetry", "Unavailable from the current cross-platform OpenGL probe; Koil will not invent a VRAM value", 0xFF8D8D8D));
         }
-        context.drawText(this.textRenderer, "World / profile context", x, y, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
+        rows.add(exact("Game render size", windowRenderSize(), 0xFFE2E2E2));
+        rows.add(exact("Shader state", this.runtimeContext == null ? "unknown" : this.runtimeContext.shaderState(), PerformanceRuntimeContextService.shaderPipelineActive() ? 0xFF8B39DD : 0xFF8D8D8D));
+        y = renderInfoRows(context, x, y, width, rows);
+        y += 6;
+        y = sectionHeader(context, x, y, width, "Render settings");
+        y = renderInfoRows(context, x, y, width, List.of(
+            exact("Graphics mode", snapshot.graphicsMode(), 0xFFE2E2E2),
+            exact("Render distance", snapshot.renderDistance() + " chunks", 0xFFE2E2E2),
+            exact("Clouds", snapshot.cloudsMode(), 0xFFE2E2E2),
+            exact("Particles", snapshot.particlesMode(), 0xFFE2E2E2),
+            exact("Mipmaps", String.valueOf(snapshot.mipmapLevels()), 0xFFE2E2E2),
+            exact("Entity distance", format2(snapshot.entityDistanceScale()), 0xFFE2E2E2),
+            exact("Biome blend", String.valueOf(snapshot.biomeBlend()), 0xFFE2E2E2),
+            exact("Smooth lighting", String.valueOf(snapshot.smoothLighting()), 0xFFE2E2E2),
+            exact("Entity shadows", String.valueOf(snapshot.entityShadows()), 0xFFE2E2E2)
+        ));
+        y += 6;
+        y = renderChartGroup(context, x, y, width, List.of(
+            new ChartSpec("FPS history", ChartKind.FPS),
+            new ChartSpec("Frame-time history", ChartKind.FRAME_TIME),
+            new ChartSpec("Chunk-load estimate", ChartKind.CHUNK),
+            new ChartSpec("Shader pressure estimate", ChartKind.SHADER)
+        ));
+        y += 6;
+        return renderPressureSignals(context, x, y, width, snapshot, false);
+    }
+
+    private int renderProcessing(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        y = sectionHeader(context, x, y, width, "CPU and simulation context");
+        double processCpu = PerformanceMonitor.processCpuLoad();
+        double systemCpu = PerformanceMonitor.systemCpuLoad();
+        List<InfoLine> rows = new ArrayList<>();
+        rows.add(exact("Minecraft JVM CPU", loadText(processCpu), loadColor(processCpu)));
+        rows.add(exact("Whole-system CPU", loadText(systemCpu), loadColor(systemCpu)));
+        if (this.hardwareProfile != null) {
+            rows.add(exact("Logical processors", String.valueOf(this.hardwareProfile.cpuThreads()), 0xFFE2E2E2));
+        }
+        rows.add(exact("JVM live threads", String.valueOf(ManagementFactory.getThreadMXBean().getThreadCount()), 0xFFE2E2E2));
+        rows.add(exact("Loaded entities", worldActive(snapshot) ? String.valueOf(snapshot.entityCount()) : "inactive outside a world", worldActive(snapshot) ? 0xFFE2E2E2 : 0xFF8D8D8D));
+        if ("server".equals(snapshot.worldType())) {
+            rows.add(exact("Simulation distance", "Remote server controlled. The local option is not treated as a server performance fix.", new Color(uiColorToolTipWarning, true).getRGB()));
+        } else {
+            rows.add(exact("Simulation distance", snapshot.simulationDistance() + " chunks", 0xFFE2E2E2));
+        }
+        rows.add(estimate("Tick / simulation pressure", gameplayPressureLabel(snapshot), pressureColor(Math.min(1.0D, snapshot.entityCount() / 220.0D))));
+        rows.add(exact("Frame time", format1(snapshot.frameTimeMs()) + " ms now | " + format1(snapshot.maxFrameTimeMs()) + " ms sampled max", pressureColor(Math.min(1.0D, snapshot.maxFrameTimeMs() / 120.0D))));
+        y = renderInfoRows(context, x, y, width, rows);
+        y += 6;
+        y = renderChartGroup(context, x, y, width, List.of(
+            new ChartSpec("Entity count", ChartKind.ENTITY),
+            new ChartSpec("Strongest pressure estimate", ChartKind.FAULT_PRESSURE),
+            new ChartSpec("Frame-time history", ChartKind.FRAME_TIME)
+        ));
+        y += 6;
+        y = sectionHeader(context, x, y, width, "Interpretation");
+        return renderInfoRows(context, x, y, width, List.of(
+            exact("CPU telemetry scope", "Process and system CPU load are measured. Minecraft main-thread saturation is not directly exposed here, so Koil does not present an invented per-thread bottleneck percentage.", new Color(uiColorContentBaseDescriptionText, true).getRGB()),
+            estimate("Entity/tick signal", "Uses client entity count plus frame behavior as a workload signal. It is not server MSPT or TPS.", new Color(uiColorContentBaseDescriptionText, true).getRGB())
+        ));
+    }
+
+    private int renderMemory(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        y = sectionHeader(context, x, y, width, "Memory");
+        long freeSystem = PerformanceMonitor.freeSystemMemoryMb();
+        List<InfoLine> rows = new ArrayList<>();
+        rows.add(exact("JVM heap used", snapshot.usedMemoryMb() + " MB", memoryColor(snapshot.memoryPressure())));
+        rows.add(exact("JVM heap limit", snapshot.maxMemoryMb() + " MB", 0xFFE2E2E2));
+        rows.add(exact("JVM heap pressure", percentText(snapshot.memoryPressure()), memoryColor(snapshot.memoryPressure())));
+        if (this.hardwareProfile != null) {
+            rows.add(exact("System RAM total", memoryText(this.hardwareProfile.systemMemoryMb()), 0xFFE2E2E2));
+        }
+        rows.add(exact("System RAM free", freeSystem >= 0 ? freeSystem + " MB" : "unavailable", freeSystem >= 0 ? 0xFFE2E2E2 : 0xFF8D8D8D));
+        rows.add(estimate("GC pressure", percentText(snapshot.gcPressure()) + " from garbage-collector time in the sample window", pressureColor(snapshot.gcPressure())));
+        rows.add(exact("Resource packs", snapshot.resourcePackCount() + " enabled", 0xFFE2E2E2));
+        rows.add(exact("VRAM", "Not reported because the current cross-platform probe cannot verify dedicated graphics memory reliably", 0xFF8D8D8D));
+        y = renderInfoRows(context, x, y, width, rows);
+        y += 6;
+        y = renderChartGroup(context, x, y, width, List.of(
+            new ChartSpec("Heap pressure", ChartKind.MEMORY),
+            new ChartSpec("GC activity", ChartKind.GC),
+            new ChartSpec("Resource-pack stack estimate", ChartKind.RESOURCEPACK)
+        ));
+        return y;
+    }
+
+    private int renderWorld(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        y = sectionHeader(context, x, y, width, "World context");
+        List<InfoLine> rows = new ArrayList<>();
         if (this.runtimeContext != null) {
-            context.drawText(this.textRenderer, "Target: " + runtimeContext.worldType() + " | " + trim(runtimeContext.profileKey(), 56), x, y + 14, 0xFFE2E2E2, false);
-            context.drawText(this.textRenderer, "Suggested profile: " + runtimeContext.suggestedProfile() + " | Dimension: " + runtimeContext.dimension(), x, y + 28, 0xFF00A8D8, false);
-            context.drawText(this.textRenderer, "Resourcepacks: " + runtimeContext.resourcePackCount() + " | Shader: " + runtimeContext.shaderState(), x, y + 42, 0xFFE2E2E2, false);
-            String mods = runtimeContext.optimizationModConfigs().isEmpty() ? "No optimization config files detected" : String.join(", ", runtimeContext.optimizationModConfigs());
-            context.drawText(this.textRenderer, trim(mods, Math.max(36, width / 6)), x, y + 56, runtimeContext.optimizationModConfigs().isEmpty() ? 0xFF8D8D8D : 0xFF2DA700, false);
+            rows.add(exact("Context", this.runtimeContext.worldType(), 0xFFE2E2E2));
+            rows.add(exact("World", safe(this.runtimeContext.worldName()), 0xFFE2E2E2));
+            rows.add(exact("Dimension", safe(this.runtimeContext.dimension()), 0xFFE2E2E2));
         }
+        rows.add(exact("Render distance", snapshot.renderDistance() + " chunks", 0xFFE2E2E2));
+        if ("server".equals(snapshot.worldType())) {
+            rows.add(exact("Simulation distance", snapshot.simulationDistance() + " in local options; remote server simulation is not changed by Koil", new Color(uiColorToolTipWarning, true).getRGB()));
+        } else {
+            rows.add(exact("Simulation distance", snapshot.simulationDistance() + " chunks", 0xFFE2E2E2));
+        }
+        rows.add(exact("Client entities", worldActive(snapshot) ? String.valueOf(snapshot.entityCount()) : "inactive", worldActive(snapshot) ? 0xFFE2E2E2 : 0xFF8D8D8D));
+        rows.add(estimate("Chunk-load pressure", worldActive(snapshot) ? percentText(snapshot.chunkStress()) + " inferred from frame spikes and render-distance context" : "inactive outside a world", worldActive(snapshot) ? pressureColor(snapshot.chunkStress()) : 0xFF8D8D8D));
+        y = renderInfoRows(context, x, y, width, rows);
+        y += 6;
+        y = renderChartGroup(context, x, y, width, List.of(
+            new ChartSpec("Chunk-load estimate", ChartKind.CHUNK),
+            new ChartSpec("World-load estimate", ChartKind.WORLD_SIMULATION),
+            new ChartSpec("Entity count", ChartKind.ENTITY)
+        ));
+        return y;
     }
 
-    private void renderDataResponsibilityPanel(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
-        if (this.runtimeContext == null || System.currentTimeMillis() - this.runtimeContext.capturedAtMillis() > 5000L) {
-            this.runtimeContext = PerformanceRuntimeContextService.capture(MinecraftClient.getInstance());
+    private int renderMods(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        y = sectionHeader(context, x, y, width, "Mods, packs, and optimization providers");
+        List<InfoLine> rows = new ArrayList<>();
+        rows.add(exact("Loaded mods", String.valueOf(snapshot.loadedModCount()), 0xFFE2E2E2));
+        if (this.hardwareProfile != null) {
+            rows.add(exact("Optimization mods", this.hardwareProfile.optimizationMods().isEmpty() ? "none detected" : String.join(", ", this.hardwareProfile.optimizationMods()), this.hardwareProfile.optimizationMods().isEmpty() ? 0xFF8D8D8D : new Color(uiColorSaveSuccessColor, true).getRGB()));
         }
-        context.drawText(this.textRenderer, "Performance responsibility map", x, y, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-        int cellWidth = Math.max(130, (width - 14) / 3);
-        int rowY = y + 16;
-        drawResponsibilityCell(context, x, rowY, cellWidth, "Client", "Render/UI/Input", "Screen: " + currentScreenName(), 0xFF0085A4);
-        drawResponsibilityCell(context, x + cellWidth + 7, rowY, cellWidth, "World", "Chunks/Entities/Ticks", "Dim: " + snapshot.worldType() + " | RD " + snapshot.renderDistance() + " SD " + snapshot.simulationDistance(), 0xFFE3B735);
-        drawResponsibilityCell(context, x + (cellWidth + 7) * 2, rowY, cellWidth, "Server", serverTitle(), serverDetail(), 0xFF6F89A8);
-        rowY += 43;
-        drawResponsibilityCell(context, x, rowY, cellWidth, "Gameplay", "Entities/Input/Effects", snapshot.entityCount() + " entities | " + gameplayPressureLabel(snapshot), 0xFFE6862C);
-        drawResponsibilityCell(context, x + cellWidth + 7, rowY, cellWidth, "Render", "Chunks/Shaders/Textures", renderPressureLabel(snapshot), 0xFF7400A4);
-        drawResponsibilityCell(context, x + (cellWidth + 7) * 2, rowY, cellWidth, "Modpack", "Mods/Packs/Configs", snapshot.loadedModCount() + " mods | " + snapshot.resourcePackCount() + " packs | " + snapshot.optimizationModCount() + " configs", 0xFFC32222);
+        if (this.runtimeContext != null) {
+            rows.add(exact("Optimization configs", this.runtimeContext.optimizationModConfigs().isEmpty() ? "none detected" : String.join(", ", this.runtimeContext.optimizationModConfigs()), this.runtimeContext.optimizationModConfigs().isEmpty() ? 0xFF8D8D8D : 0xFFE2E2E2));
+            rows.add(exact("Resource packs", this.runtimeContext.resourcePacks().isEmpty() ? "none enabled" : String.join(", ", this.runtimeContext.resourcePacks()), 0xFFE2E2E2));
+            rows.add(exact("Shader state", this.runtimeContext.shaderState(), PerformanceRuntimeContextService.shaderPipelineActive() ? 0xFF8B39DD : 0xFF8D8D8D));
+        }
+        rows.add(estimate("Modpack size signal", percentText(snapshot.modLoadPressure()) + " from loaded-mod count normalization", pressureColor(snapshot.modLoadPressure())));
+        rows.add(estimate("Resource-pack size signal", percentText(snapshot.resourcePackPressure()) + " from enabled-pack count normalization", pressureColor(snapshot.resourcePackPressure())));
+        y = renderInfoRows(context, x, y, width, rows);
+        y += 6;
+        y = renderChartGroup(context, x, y, width, List.of(
+            new ChartSpec("Modpack size estimate", ChartKind.MOD_LOAD),
+            new ChartSpec("Resource-pack stack estimate", ChartKind.RESOURCEPACK)
+        ));
+        y += 6;
+        return renderProviderSettings(context, x, y, width);
     }
 
-    private void drawResponsibilityCell(DrawContext context, int x, int y, int width, String label, String owner, String detail, int color) {
-        context.fill(x, y, x + width, y + 36, withAlpha(0xFF000000, 40));
-        context.fill(x, y, x + width, y + 2, withAlpha(color, 135));
-        context.drawBorder(x, y, width, 36, shadedBorder(color));
-        context.drawText(this.textRenderer, label + " | " + owner, x + 7, y + 5, softText(color), false);
-        context.drawText(this.textRenderer, trim(detail, Math.max(14, (width - 14) / 6)), x + 7, y + 19, 0xFFD7D7D7, false);
+    private int renderServer(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        y = sectionHeader(context, x, y, width, "Server / connection context");
+        List<InfoLine> rows = new ArrayList<>();
+        if (this.runtimeContext == null || "menu".equals(this.runtimeContext.worldType())) {
+            rows.add(exact("Connection", "No active world or server", 0xFF8D8D8D));
+        } else if ("server".equals(this.runtimeContext.worldType())) {
+            rows.add(exact("Connection", "Remote multiplayer server", 0xFFE2E2E2));
+            rows.add(exact("Address", safe(this.runtimeContext.serverAddress()), 0xFFE2E2E2));
+            int latency = currentLatencyMs();
+            rows.add(exact("Player latency", latency >= 0 ? latency + " ms" : "unavailable", latencyColor(latency)));
+            rows.add(exact("Server TPS / MSPT", "Not exposed reliably to a vanilla client. Koil does not estimate server TPS from client FPS.", 0xFF8D8D8D));
+            rows.add(exact("Simulation distance", "Controlled by the server. Local simulation-distance recommendations are suppressed in this context.", new Color(uiColorToolTipWarning, true).getRGB()));
+        } else {
+            rows.add(exact("Connection", "Integrated singleplayer server", 0xFFE2E2E2));
+            rows.add(exact("World", safe(this.runtimeContext.worldName()), 0xFFE2E2E2));
+            rows.add(exact("Server tick work", "Runs in the same Minecraft process; client CPU and world simulation can compete for frame time", 0xFFE2E2E2));
+        }
+        rows.add(exact("Client render distance", snapshot.renderDistance() + " chunks", 0xFFE2E2E2));
+        rows.add(exact("Client entities", worldActive(snapshot) ? String.valueOf(snapshot.entityCount()) : "inactive", 0xFFE2E2E2));
+        y = renderInfoRows(context, x, y, width, rows);
+        y += 6;
+        return renderChartGroup(context, x, y, width, List.of(
+            new ChartSpec("Client frame-time history", ChartKind.FRAME_TIME),
+            new ChartSpec("Client world-load estimate", ChartKind.CHUNK)
+        ));
     }
 
-    private String currentScreenName() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.currentScreen == null) {
-            return "none";
-        }
-        return client.currentScreen.getClass().getSimpleName();
+    private int renderAll(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
+        y = renderHardwareSummary(context, x, y, width, snapshot, false);
+        y += 6;
+        y = renderRendering(context, x, y, width, snapshot);
+        y += 6;
+        y = renderProcessing(context, x, y, width, snapshot);
+        y += 6;
+        y = renderMemory(context, x, y, width, snapshot);
+        y += 6;
+        y = renderWorld(context, x, y, width, snapshot);
+        y += 6;
+        y = renderServer(context, x, y, width, snapshot);
+        y += 6;
+        return renderMods(context, x, y, width, snapshot);
     }
 
-    private String serverTitle() {
-        if (this.runtimeContext == null) {
-            return "Unknown";
+    private int renderHardwareSummary(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot, boolean compact) {
+        y = sectionHeader(context, x, y, width, compact ? "System summary" : "System and runtime");
+        List<InfoLine> rows = new ArrayList<>();
+        if (this.hardwareProfile != null) {
+            rows.add(exact("Operating system", safe(this.hardwareProfile.operatingSystem()) + " | " + safe(this.hardwareProfile.architecture()), 0xFFE2E2E2));
+            rows.add(exact("CPU", this.hardwareProfile.cpuThreads() + " logical processors | JVM CPU " + loadText(PerformanceMonitor.processCpuLoad()), loadColor(PerformanceMonitor.processCpuLoad())));
+            rows.add(exact("System RAM", memoryText(this.hardwareProfile.systemMemoryMb()) + " total | " + memoryText(PerformanceMonitor.freeSystemMemoryMb()) + " free", 0xFFE2E2E2));
+            rows.add(exact("GPU", safe(this.hardwareProfile.gpuRenderer()), 0xFFE2E2E2));
+            rows.add(exact("Display", displayModeText(this.hardwareProfile), 0xFFE2E2E2));
+            rows.add(exact("Game render size", windowRenderSize(), 0xFFE2E2E2));
+            if (!compact) {
+                rows.add(exact("OpenGL", safe(this.hardwareProfile.gpuVersion()), 0xFFE2E2E2));
+                rows.add(exact("Java", System.getProperty("java.version", "unknown") + " | " + System.getProperty("java.vendor", "unknown"), 0xFFE2E2E2));
+                rows.add(exact("Minecraft", safe(this.hardwareProfile.minecraftVersion()), 0xFFE2E2E2));
+                rows.add(estimate("Game-directory I/O probe", storageProbeText(this.hardwareProfile.storageProbeMbPerSecond()), this.hardwareProfile.storageProbeMbPerSecond() > 0.0D ? 0xFFE2E2E2 : 0xFF8D8D8D));
+                rows.add(exact("Game drive", storageCapacityText(), 0xFFE2E2E2));
+            }
         }
-        return "server".equals(this.runtimeContext.worldType()) ? "Remote server data" : "singleplayer".equals(this.runtimeContext.worldType()) ? "Integrated server data" : "No active server";
+        rows.add(exact("JVM heap", snapshot.usedMemoryMb() + " / " + snapshot.maxMemoryMb() + " MB", memoryColor(snapshot.memoryPressure())));
+        return renderInfoRows(context, x, y, width, rows);
     }
 
-    private String serverDetail() {
-        if (this.runtimeContext == null) {
-            return "No runtime context";
+    private int renderBenchmarkPhases(DrawContext context, int x, int y, int width) {
+        y = sectionHeader(context, x, y, width, "Latest benchmark phases");
+        if (this.latestBenchmark == null || this.latestBenchmark.phaseResults().isEmpty()) {
+            return renderInfoRows(context, x, y, width, List.of(exact("Benchmark", "No phase data yet", 0xFF8D8D8D)));
         }
-        if ("server".equals(this.runtimeContext.worldType())) {
-            return trim(this.runtimeContext.serverAddress(), 36) + " | client can only infer server pressure";
+        for (PerformanceBenchmarkPhaseResult phase : this.latestBenchmark.phaseResults()) {
+            PerformanceSnapshot phaseSnapshot = phase.snapshot();
+            String value = phaseSnapshot == null
+                ? phase.note()
+                : format1(phaseSnapshot.averageFps()) + " avg fps | " + format1(phaseSnapshot.onePercentLowFps()) + " 1% low | " + format1(phaseSnapshot.maxFrameTimeMs()) + " ms max | " + phase.dominantPressure().label();
+            y = renderInfoRow(context, x, y, width, new InfoLine(phase.label(), value, phase.dominantPressure().color(), false));
+            if (phase.note() != null && !phase.note().isBlank()) {
+                y = renderInfoRow(context, x, y, width, exact("Phase note", phase.note(), new Color(uiColorContentBaseDescriptionText, true).getRGB()));
+            }
         }
-        if ("singleplayer".equals(this.runtimeContext.worldType())) {
-            return trim(this.runtimeContext.worldName(), 30) + " | local ticks share CPU with client";
+        for (String note : this.latestBenchmark.testNotes()) {
+            y = renderInfoRow(context, x, y, width, exact("Test note", note, new Color(uiColorContentBaseDescriptionText, true).getRGB()));
         }
-        return "menu context";
+        return y;
     }
 
-    private String gameplayPressureLabel(PerformanceSnapshot snapshot) {
-        if (snapshot.primaryBottleneck() == PerformanceBottleneck.ENTITY_TICK) {
-            return "entity/tick bound";
+    private int renderProviderSettings(DrawContext context, int x, int y, int width) {
+        y = sectionHeader(context, x, y, width, "Verified provider settings");
+        List<PerformanceSettingDescriptor> settings = filteredProviderSettings();
+        y = renderInfoRow(context, x, y, width, exact("Provider scan", this.providerSettings.size() + " verified settings | " + settings.size() + " visible | last apply " + lastApplySummary(), new Color(uiColorContentBaseDescriptionText, true).getRGB()));
+        if (settings.isEmpty()) {
+            return renderInfoRow(context, x, y, width, exact("Filter", "No verified provider settings match the current search.", 0xFF8D8D8D));
         }
-        if (snapshot.entityCount() > 180) {
-            return "high entity density";
+        for (PerformanceSettingDescriptor setting : settings) {
+            boolean observationOnly = setting.observationOnly();
+            boolean needsChange = settingNeedsChange(setting);
+            int accent = observationOnly ? 0xFF7C8288 : !needsChange ? new Color(uiColorSaveSuccessColor, true).getRGB() : setting.liveApplySupported() ? 0xFF2DA700 : 0xFFE3B735;
+            String current = setting.currentValue() == null ? "unavailable" : setting.currentValue();
+            String target = setting.recommendedValue() == null ? "review" : setting.recommendedValue();
+            String value = observationOnly
+                ? current + " | observation only"
+                : needsChange ? current + " -> " + target + (setting.requiresResourceReload() ? " | resource reload" : " | live") : current + " | already at target";
+            String title = setting.providerId() + " / " + setting.label();
+            y = renderInfoRow(context, x, y, width, new InfoLine(title, value + " | " + setting.description(), accent, false));
         }
-        return "stable";
+        return y;
     }
 
-    private String renderPressureLabel(PerformanceSnapshot snapshot) {
-        if (snapshot.primaryBottleneck() == PerformanceBottleneck.SHADER_RENDER) {
-            return "shader bound";
+    private int renderPressureSignals(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot, boolean includeLegend) {
+        y = sectionHeader(context, x, y, width, "Pressure signals");
+        if (includeLegend) {
+            y = renderInfoRow(context, x, y, width, exact("Legend", "Rows prefixed with ~ are inferred signals, not hardware utilization measurements.", new Color(uiColorContentBaseDescriptionText, true).getRGB()));
         }
-        if (snapshot.primaryBottleneck() == PerformanceBottleneck.GPU) {
-            return "GPU bound";
-        }
-        if (snapshot.chunkStress() > 0.65D) {
-            return "chunk/render distance pressure";
-        }
-        return "stable";
+        boolean world = worldActive(snapshot);
+        double fpsTarget = configuredFpsTarget(snapshot);
+        y = drawSignalBar(context, x, y, width, "~ FPS target gap", snapshot.fps() <= 0 || fpsTarget <= 0.0D ? -1.0D : Math.max(0.0D, (fpsTarget - snapshot.averageFps()) / fpsTarget), 0xFFE06A21);
+        y = drawSignalBar(context, x, y, width, "~ Frame-spike pressure", Math.min(1.0D, snapshot.maxFrameTimeMs() / 140.0D), 0xFFE06A21);
+        y = drawSignalBar(context, x, y, width, "Heap pressure", snapshot.memoryPressure(), 0xFFA7003A);
+        y = drawSignalBar(context, x, y, width, "~ GC pressure", snapshot.gcPressure(), 0xFFFF597D);
+        y = drawSignalBar(context, x, y, width, "~ Chunk-load pressure", world ? snapshot.chunkStress() : -1.0D, 0xFFE3B735);
+        y = drawSignalBar(context, x, y, width, "~ Entity workload", world ? Math.min(1.0D, snapshot.entityCount() / 220.0D) : -1.0D, 0xFFE6862C);
+        y = drawSignalBar(context, x, y, width, "~ Shader pressure", PerformanceRuntimeContextService.shaderPipelineActive() ? snapshot.shaderPressure() : -1.0D, 0xFF7400A4);
+        y = drawSignalBar(context, x, y, width, "~ Resource-pack size", snapshot.resourcePackPressure(), 0xFFB0199E);
+        y = drawSignalBar(context, x, y, width, "~ Modpack size", snapshot.modLoadPressure(), 0xFFC32222);
+        y = drawSignalBar(context, x, y, width, "~ Screen-open frame pressure", snapshot.uiFramePressure(), 0xFF0085A4);
+        return y;
     }
 
-    private void renderRecommendations(DrawContext context, int x, int y, int width) {
-        this.recommendationHitboxes.clear();
-        List<PerformanceRecommendation> visibleRecommendations = visibleRecommendations();
-        int height = 46 + Math.max(1, visibleRecommendations.size()) * 36;
-        context.drawText(this.textRenderer, "Recommended changes", x, y - 12, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-        context.fill(x, y, x + width, y + height, withAlpha(uiColorContentBase, 130));
+    private int drawSignalBar(DrawContext context, int x, int y, int width, String label, double value, int color) {
+        int height = 20;
+        boolean inactive = value < 0.0D;
+        double clamped = inactive ? 0.0D : Math.max(0.0D, Math.min(1.0D, value));
+        int visibleColor = inactive ? 0xFF777777 : color;
+        context.fill(x, y, x + width, y + height, withAlpha(0xFF000000, 32));
         context.drawBorder(x, y, width, height, new Color(uiColorBackgroundBorder, true).getRGB());
-        int rowY = y + 8;
-        if (visibleRecommendations.isEmpty()) {
-            context.drawText(this.textRenderer, "No pending changes. Current values already match the active targets.", x + 12, rowY + 8, new Color(uiColorSaveSuccessColor, true).getRGB(), false);
-            return;
+        String valueText = inactive ? "inactive" : (int) Math.round(clamped * 100.0D) + "%";
+        String labelText = trimToPixels(label, Math.max(20, width - this.textRenderer.getWidth(valueText) - 24));
+        context.drawText(this.textRenderer, labelText, x + 7, y + 4, inactive ? 0xFF777777 : new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
+        context.drawText(this.textRenderer, valueText, x + width - 7 - this.textRenderer.getWidth(valueText), y + 4, inactive ? 0xFF8D8D8D : softText(color), false);
+        int barX = x + 7;
+        int barY = y + 14;
+        int barWidth = Math.max(1, width - 14);
+        context.fill(barX, barY, barX + barWidth, barY + 3, withAlpha(0xFF000000, 100));
+        context.fill(barX, barY, barX + (int) Math.round(barWidth * clamped), barY + 3, withAlpha(visibleColor, inactive ? 55 : 180));
+        if (isOver(this.hoverTooltipX, this.hoverTooltipY, x, y, width, height)) {
+            this.hoverTooltipLines = signalTooltip(label, valueText, inactive);
         }
-        for (PerformanceRecommendation recommendation : visibleRecommendations) {
-            this.recommendationHitboxes.add(new RecommendationHitbox(x + 6, rowY, width - 14, 32, recommendation));
-            context.fill(x + 6, rowY, x + width - 8, rowY + 32, withAlpha(0xFF000000, 42));
-            context.fill(x + 6, rowY, x + 9, rowY + 32, recommendation.severity().color());
-            context.drawBorder(x + 6, rowY, width - 14, 32, shadedBorder(recommendation.bottleneck().color()));
-            context.drawText(this.textRenderer, recommendation.severity().label(), x + 14, rowY + 4, softText(recommendation.severity().color()), false);
-            String applyState = recommendationApplyState(recommendation);
-            int stateWidth = applyState.isBlank() ? 0 : this.textRenderer.getWidth(applyState) + 10;
-            context.drawText(this.textRenderer, trimToPixels(recommendation.title(), Math.max(40, width - 92 - stateWidth)), x + 74, rowY + 4, 0xFFFFFFFF, false);
-            if (!applyState.isBlank()) {
-                context.drawText(this.textRenderer, applyState, x + width - 16 - this.textRenderer.getWidth(applyState), rowY + 4, applyStateColor(applyState), false);
-            }
-            String valueText = displayBeforeValue(recommendation) + " -> " + recommendation.afterValue() + " | " + trim(systemVoice(recommendation.reason()), Math.max(18, (width - 120) / 6));
-            context.drawText(this.textRenderer, trim(valueText, Math.max(30, (width - 28) / 6)), x + 14, rowY + 17, 0xFFD7D7D7, false);
-            if (isOver(this.hoverTooltipX, this.hoverTooltipY, x + 6, rowY, width - 14, 32)) {
-                this.hoverTooltipLines = recommendationTooltip(recommendation);
-            }
-            rowY += 36;
-        }
+        return y + height + 2;
     }
 
-    private String recommendationApplyState(PerformanceRecommendation recommendation) {
-        String appliedTarget = this.appliedTargetsBySetting.get(normalizeSettingKey(recommendation.settingKey()));
-        if (appliedTarget != null && sameSettingValue(appliedTarget, recommendation.afterValue())) {
-            return "Applied";
+    private int renderChartGroup(DrawContext context, int x, int y, int width, List<ChartSpec> charts) {
+        if (charts.isEmpty()) {
+            return y;
         }
-        for (PerformanceApplyEntryResult entry : this.lastApplyEntries) {
-            if (entry.recommendationId().equals(recommendation.id())) {
-                return switch (entry.status()) {
-                    case "applied" -> "Applied";
-                    case "failed" -> "Failed";
-                    case "skipped" -> "Review";
-                    case "provider-or-unsupported" -> "";
-                    default -> entry.status();
-                };
+        int columns = width >= 520 ? 2 : 1;
+        int gap = 8;
+        int chartWidth = columns == 2 ? Math.max(80, (width - gap) / 2) : width;
+        int index = 0;
+        while (index < charts.size()) {
+            ChartSpec left = charts.get(index++);
+            renderMiniChart(context, x, y, chartWidth, CHART_HEIGHT, left.title(), left.kind());
+            if (columns == 2 && index < charts.size()) {
+                ChartSpec right = charts.get(index++);
+                renderMiniChart(context, x + chartWidth + gap, y, chartWidth, CHART_HEIGHT, right.title(), right.kind());
             }
+            y += CHART_HEIGHT + 8;
         }
-        for (PerformanceProviderApplyResult result : this.lastProviderResults) {
-            if (matchesSettingKey(result.settingId(), recommendation.settingKey())) {
-                return result.changed() ? "Applied" : "No change";
-            }
-        }
-        return "";
-    }
-
-    private int applyStateColor(String state) {
-        return switch (state) {
-            case "Applied" -> new Color(uiColorSaveSuccessColor, true).getRGB();
-            case "Review" -> new Color(uiColorToolTipWarning, true).getRGB();
-            case "Failed" -> new Color(uiColorToolTipError, true).getRGB();
-            default -> new Color(uiColorToolTipSecondary, true).getRGB();
-        };
+        return y;
     }
 
     private void renderMiniChart(DrawContext context, int x, int y, int width, int height, String title, ChartKind kind) {
@@ -590,89 +767,64 @@ public class PerformanceOptimizerScreen extends Screen {
             return;
         }
         int accent = chartAccent(kind);
-        context.fill(x, y, x + width, y + height, withAlpha(0xFF000000, 72));
+        context.fill(x, y, x + width, y + height, withAlpha(0xFF000000, 58));
+        context.fill(x, y, x + 3, y + height, withAlpha(accent, 155));
         context.drawBorder(x, y, width, height, shadedBorder(accent));
-        context.fill(x, y, x + 3, y + height, withAlpha(accent, 150));
-        context.drawHorizontalLine(x + 4, x + width - 5, y + height / 2, withAlpha(0xFFFFFFFF, 34));
-        if (kind == ChartKind.FPS) {
-            int targetY = y + height - 8 - Math.min(height - 24, Math.max(1, 60 * (height - 24) / 120));
-            drawDashedHorizontal(context, x + 8, x + width - 7, targetY, withAlpha(0xFFFFFFFF, 70));
-        }
+        String valueLabel = trimToPixels(chartValueLabel(kind), Math.max(10, width / 2));
+        int valueWidth = this.textRenderer.getWidth(valueLabel);
+        int titleMax = Math.max(10, width - valueWidth - 24);
+        context.drawText(this.textRenderer, trimToPixels(title, titleMax), x + 8, y + 5, softText(accent), false);
+        context.drawText(this.textRenderer, valueLabel, x + width - 8 - valueWidth, y + 5, chartValueColor(kind), false);
+        int graphLeft = x + 7;
+        int graphRight = x + width - 8;
+        int graphTop = y + 18;
+        int graphBottom = y + height - 8;
+        context.drawHorizontalLine(graphLeft, graphRight, graphTop + (graphBottom - graphTop) / 2, withAlpha(0xFFFFFFFF, 30));
         List<PerformanceMonitor.Sample> samples = this.chartSamples;
         if (samples.size() < 2) {
-            context.drawText(this.textRenderer, "Waiting for live samples...", x + 8, y + 22, 0xFF8D8D8D, false);
-            return;
-        }
-        int graphLeft = x + 6;
-        int graphRight = x + width - 8;
-        int graphTop = y + 17;
-        int graphBottom = y + height - 8;
-        int graphWidth = Math.max(1, graphRight - graphLeft);
-        int count = Math.min(samples.size(), Math.max(2, Math.min(graphWidth, 72)));
-        int entityMax = this.chartEntityMax;
-        int sampleStart = Math.max(0, samples.size() - count);
-        for (int i = 1; i < count; i++) {
-            PerformanceMonitor.Sample prev = samples.get(sampleStart + i - 1);
-            PerformanceMonitor.Sample current = samples.get(sampleStart + i);
-            int x1 = graphLeft + (i - 1) * graphWidth / Math.max(1, count - 1);
-            int x2 = graphLeft + i * graphWidth / Math.max(1, count - 1);
-            int y1 = chartY(prev, kind, graphTop, graphBottom, entityMax);
-            int y2 = chartY(current, kind, graphTop, graphBottom, entityMax);
-            int lineColor = chartSampleColor(kind, current);
-            drawSmallLine(context, x1, y1, x2, y2, lineColor);
-            if ((kind == ChartKind.FRAME_TIME && current.frameTimeMs() > 75.0D) || (kind == ChartKind.GC && current.gcTimeMs() > 0)) {
-                context.drawVerticalLine(x2, graphTop, graphBottom, withAlpha(kind == ChartKind.GC ? 0xFFA7003A : 0xFFE06A21, 175));
+            context.drawText(this.textRenderer, "Waiting for samples...", x + 8, y + 28, 0xFF8D8D8D, false);
+        } else {
+            int graphWidth = Math.max(1, graphRight - graphLeft);
+            int count = Math.min(samples.size(), Math.max(2, Math.min(graphWidth, 72)));
+            int sampleStart = Math.max(0, samples.size() - count);
+            for (int i = 1; i < count; i++) {
+                PerformanceMonitor.Sample previous = samples.get(sampleStart + i - 1);
+                PerformanceMonitor.Sample current = samples.get(sampleStart + i);
+                int x1 = graphLeft + (i - 1) * graphWidth / Math.max(1, count - 1);
+                int x2 = graphLeft + i * graphWidth / Math.max(1, count - 1);
+                int y1 = chartY(previous, kind, graphTop, graphBottom, this.chartEntityMax);
+                int y2 = chartY(current, kind, graphTop, graphBottom, this.chartEntityMax);
+                drawSmallLine(context, x1, y1, x2, y2, chartSampleColor(kind, current));
+                if ((kind == ChartKind.FRAME_TIME && current.frameTimeMs() > 75.0D) || (kind == ChartKind.GC && current.gcTimeMs() > 0L)) {
+                    context.drawVerticalLine(x2, graphTop, graphBottom, withAlpha(kind == ChartKind.GC ? 0xFFA7003A : 0xFFE06A21, 145));
+                }
             }
         }
-        String valueLabel = chartValueLabel(kind);
-        int valueWidth = this.textRenderer.getWidth(valueLabel);
-        int valueX = Math.max(x + 8, x + width - 8 - valueWidth);
-        int titleMaxPx = Math.max(20, valueX - (x + 12) - 4);
-        context.drawText(this.textRenderer, trimToPixels(title, titleMaxPx), x + 8, y + 4, softText(accent), false);
-        context.drawText(this.textRenderer, trimToPixels(valueLabel, width - 16), valueX, y + 4, chartValueColor(kind), false);
         if (isOver(this.hoverTooltipX, this.hoverTooltipY, x, y, width, height)) {
             this.hoverTooltipLines = chartTooltip(kind);
-        }
-        if (this.benchmarkRunning) {
-            int progress = (int) Math.min(width - 12, ((System.currentTimeMillis() - this.benchmarkStartMillis) / 5000.0D) * (width - 12));
-            context.fill(x + 6, y + height - 4, x + 6 + progress, y + height - 2, 0xFF00A8D8);
         }
     }
 
     private int chartY(PerformanceMonitor.Sample sample, ChartKind kind, int graphTop, int graphBottom, int maxEntity) {
-        double normalized;
-        normalized = switch (kind) {
+        double normalized = switch (kind) {
             case FPS -> Math.min(1.0D, sample.fps() / 120.0D);
             case FRAME_TIME -> Math.min(1.0D, sample.frameTimeMs() / 120.0D);
-            case MEMORY -> sample.maxMemoryMb() <= 0 ? 0.0D : sample.usedMemoryMb() / (double) sample.maxMemoryMb();
+            case MEMORY -> sample.maxMemoryMb() <= 0L ? 0.0D : sample.usedMemoryMb() / (double) sample.maxMemoryMb();
             case GC -> Math.min(1.0D, sample.gcTimeMs() / 75.0D);
-            case ENTITY -> sample.entityCount() / (double) maxEntity;
+            case ENTITY -> sample.entityCount() / (double) Math.max(1, maxEntity);
             case CHUNK -> sample.chunkStress();
             case SHADER -> sample.shaderPressure();
             case MOD_LOAD -> sample.modLoadPressure();
             case RESOURCEPACK -> sample.resourcePackPressure();
-            case SERVER_WAIT -> "server".equals(this.chartWorldType) ? Math.max(sample.chunkStress(), Math.min(1.0D, sample.frameTimeMs() / 140.0D)) : 0.05D;
-            case SERVER_CONTEXT -> {
-                double entity = sample.entityCount() / (double) maxEntity;
-                double world = Math.max(sample.chunkStress(), entity);
-                yield "server".equals(this.chartWorldType) || "singleplayer".equals(this.chartWorldType) ? world : 0.0D;
-            }
-            case GAMEPLAY -> Math.max(sample.entityCount() / (double) maxEntity, Math.min(1.0D, sample.frameTimeMs() / 130.0D) * 0.65D);
-            case UI_FRAME -> sample.uiFramePressure();
-            case UI_MEMORY -> this.chartScreenName.equals("none") ? 0.0D : (sample.maxMemoryMb() <= 0 ? 0.0D : sample.usedMemoryMb() / (double) sample.maxMemoryMb());
-            case WORLD_SIMULATION -> ("server".equals(sample.worldType()) || "singleplayer".equals(sample.worldType())) ? Math.max(sample.chunkStress(), sample.entityCount() / (double) maxEntity) : 0.0D;
+            case WORLD_SIMULATION -> worldActive(sample.worldType()) ? Math.max(sample.chunkStress(), sample.entityCount() / (double) Math.max(1, maxEntity)) : 0.0D;
             case FAULT_PRESSURE -> {
-                double memory = sample.maxMemoryMb() <= 0 ? 0.0D : sample.usedMemoryMb() / (double) sample.maxMemoryMb();
+                double memory = sample.maxMemoryMb() <= 0L ? 0.0D : sample.usedMemoryMb() / (double) sample.maxMemoryMb();
                 double frame = Math.min(1.0D, sample.frameTimeMs() / 120.0D);
-                double entity = sample.entityCount() / (double) maxEntity;
+                double entity = sample.entityCount() / (double) Math.max(1, maxEntity);
                 yield Math.max(Math.max(memory, frame), Math.max(entity, Math.max(sample.chunkStress(), Math.max(sample.shaderPressure(), sample.modLoadPressure()))));
             }
         };
-        return graphBottom - (int) Math.min(graphBottom - graphTop, Math.max(1, normalized * (graphBottom - graphTop)));
-    }
-
-    private int maxEntity(List<PerformanceMonitor.Sample> samples) {
-        return Math.max(1, samples.stream().mapToInt(PerformanceMonitor.Sample::entityCount).max().orElse(1));
+        return graphBottom - (int) Math.min(graphBottom - graphTop, Math.max(1.0D, normalized * (graphBottom - graphTop)));
     }
 
     private int chartAccent(ChartKind kind) {
@@ -686,12 +838,7 @@ public class PerformanceOptimizerScreen extends Screen {
             case SHADER -> 0xFF7400A4;
             case MOD_LOAD -> 0xFFC32222;
             case RESOURCEPACK -> 0xFFB0199E;
-            case SERVER_WAIT -> 0xFF6F89A8;
-            case SERVER_CONTEXT -> 0xFF4E6C8A;
-            case GAMEPLAY -> 0xFFE6862C;
-            case UI_FRAME -> 0xFF0085A4;
-            case UI_MEMORY -> 0xFFA7003A;
-            case WORLD_SIMULATION -> 0xFFE3B735;
+            case WORLD_SIMULATION -> 0xFF6F89A8;
             case FAULT_PRESSURE -> 0xFF0085A4;
         };
     }
@@ -700,70 +847,46 @@ public class PerformanceOptimizerScreen extends Screen {
         return switch (kind) {
             case FPS -> fpsColor(sample.fps());
             case FRAME_TIME -> pressureColor(Math.min(1.0D, sample.frameTimeMs() / 120.0D));
-            case MEMORY -> pressureColor(sample.maxMemoryMb() <= 0 ? 0.0D : sample.usedMemoryMb() / (double) sample.maxMemoryMb());
+            case MEMORY -> pressureColor(sample.maxMemoryMb() <= 0L ? 0.0D : sample.usedMemoryMb() / (double) sample.maxMemoryMb());
             case GC -> pressureColor(Math.min(1.0D, sample.gcTimeMs() / 75.0D));
             case ENTITY -> pressureColor(Math.min(1.0D, sample.entityCount() / 220.0D));
             case CHUNK -> pressureColor(sample.chunkStress());
             case SHADER -> shaderColor(sample.shaderPressure());
             case MOD_LOAD -> pressureColor(sample.modLoadPressure());
             case RESOURCEPACK -> pressureColor(sample.resourcePackPressure());
-            case UI_FRAME, UI_MEMORY -> uiColor(sample);
-            default -> pressureColor(Math.max(sample.chunkStress(), Math.max(sample.shaderPressure(), sample.modLoadPressure())));
+            case WORLD_SIMULATION, FAULT_PRESSURE -> pressureColor(Math.max(sample.chunkStress(), Math.max(sample.shaderPressure(), sample.modLoadPressure())));
         };
     }
 
     private int chartValueColor(ChartKind kind) {
-        PerformanceSnapshot snapshot = PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance());
+        PerformanceSnapshot snapshot = this.chartSnapshot == null ? PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance()) : this.chartSnapshot;
         return switch (kind) {
             case FPS -> fpsColor(snapshot.fps());
             case FRAME_TIME -> pressureColor(Math.min(1.0D, snapshot.frameTimeMs() / 120.0D));
-            case MEMORY, UI_MEMORY -> memoryColor(snapshot.memoryPressure());
+            case MEMORY -> memoryColor(snapshot.memoryPressure());
             case GC -> pressureColor(snapshot.gcPressure());
-            case ENTITY, GAMEPLAY -> pressureColor(Math.min(1.0D, snapshot.entityCount() / 220.0D));
-            case CHUNK, WORLD_SIMULATION -> ("singleplayer".equals(snapshot.worldType()) || "server".equals(snapshot.worldType())) ? pressureColor(snapshot.chunkStress()) : 0xFF8D8D8D;
-            case SHADER -> shaderColor(snapshot.shaderPressure());
+            case ENTITY -> pressureColor(Math.min(1.0D, snapshot.entityCount() / 220.0D));
+            case CHUNK, WORLD_SIMULATION -> worldActive(snapshot) ? pressureColor(snapshot.chunkStress()) : 0xFF8D8D8D;
+            case SHADER -> PerformanceRuntimeContextService.shaderPipelineActive() ? shaderColor(snapshot.shaderPressure()) : 0xFF8D8D8D;
             case MOD_LOAD -> pressureColor(snapshot.modLoadPressure());
-            case RESOURCEPACK -> pressureColor(Math.min(1.0D, snapshot.resourcePackCount() / 12.0D));
-            case UI_FRAME -> pressureColor(snapshot.uiFramePressure());
-            default -> softText(chartAccent(kind));
+            case RESOURCEPACK -> pressureColor(snapshot.resourcePackPressure());
+            case FAULT_PRESSURE -> softText(snapshot.primaryBottleneck().color());
         };
-    }
-
-    private int pressureColor(double value) {
-        if (value >= 0.85D) return 0xFFA7003A;
-        if (value >= 0.65D) return 0xFFE06A21;
-        if (value >= 0.38D) return 0xFFE3B735;
-        return 0xFF2DA700;
-    }
-
-    private int shaderColor(double value) {
-        if (value >= 0.70D) return 0xFFB0199E;
-        if (value >= 0.40D) return 0xFF8B39DD;
-        return 0xFF5D54D8;
-    }
-
-    private int uiColor(PerformanceMonitor.Sample sample) {
-        return this.chartScreenName.equals("none") ? 0xFF8D8D8D : pressureColor(sample.uiFramePressure());
     }
 
     private String chartValueLabel(ChartKind kind) {
         PerformanceSnapshot snapshot = this.chartSnapshot == null ? PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance()) : this.chartSnapshot;
         return switch (kind) {
             case FPS -> snapshot.fps() + " fps";
-            case FRAME_TIME -> snapshot.frameTimeMs() + " ms";
-            case MEMORY -> (int) Math.round(snapshot.memoryPressure() * 100.0D) + "%";
-            case GC -> (int) Math.round(snapshot.gcPressure() * 100.0D) + "%";
+            case FRAME_TIME -> format1(snapshot.frameTimeMs()) + " ms";
+            case MEMORY -> percentText(snapshot.memoryPressure());
+            case GC -> percentText(snapshot.gcPressure());
             case ENTITY -> snapshot.entityCount() + " ent";
-            case CHUNK -> (int) Math.round(snapshot.chunkStress() * 100.0D) + "%";
-            case SHADER -> (int) Math.round(snapshot.shaderPressure() * 100.0D) + "%";
-            case MOD_LOAD -> (int) Math.round(snapshot.modLoadPressure() * 100.0D) + "%";
+            case CHUNK -> worldActive(snapshot) ? percentText(snapshot.chunkStress()) : "inactive";
+            case SHADER -> PerformanceRuntimeContextService.shaderPipelineActive() ? percentText(snapshot.shaderPressure()) : "inactive";
+            case MOD_LOAD -> snapshot.loadedModCount() + " mods";
             case RESOURCEPACK -> snapshot.resourcePackCount() + " packs";
-            case SERVER_WAIT -> "server".equals(this.chartWorldType) ? "remote" : this.chartWorldType;
-            case SERVER_CONTEXT -> serverTitle();
-            case GAMEPLAY -> snapshot.entityCount() + " ent";
-            case UI_FRAME -> this.chartScreenName;
-            case UI_MEMORY -> (int) Math.round(snapshot.memoryPressure() * 100.0D) + "% mem";
-            case WORLD_SIMULATION -> snapshot.renderDistance() + "/" + snapshot.simulationDistance();
+            case WORLD_SIMULATION -> worldActive(snapshot) ? snapshot.renderDistance() + "/" + snapshot.simulationDistance() : "inactive";
             case FAULT_PRESSURE -> snapshot.primaryBottleneck().label();
         };
     }
@@ -771,21 +894,17 @@ public class PerformanceOptimizerScreen extends Screen {
     private List<Text> chartTooltip(ChartKind kind) {
         PerformanceSnapshot snapshot = this.chartSnapshot == null ? PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance()) : this.chartSnapshot;
         return switch (kind) {
-            case FPS -> diagnosticTooltip("FPS", "Current " + snapshot.fps() + " | Avg " + snapshot.averageFps() + " | 1% low " + snapshot.onePercentLowFps(), fpsAdvice(snapshot));
-            case FRAME_TIME -> diagnosticTooltip("Frame Time", "Now " + snapshot.frameTimeMs() + " ms | Spike " + snapshot.maxFrameTimeMs() + " ms", snapshot.maxFrameTimeMs() > 75.0D ? "Spikes are high. Apply frame-pacing/render recommendations first." : "Frame pacing is inside the normal range.");
-            case MEMORY -> diagnosticTooltip("Memory", snapshot.usedMemoryMb() + "/" + snapshot.maxMemoryMb() + " MB | " + percentText(snapshot.memoryPressure()), snapshot.memoryPressure() > 0.85D ? "Memory pressure is high. Prefer texture/mipmap/resource changes over adding RAM blindly." : "Memory has enough headroom for current settings.");
-            case GC -> diagnosticTooltip("Garbage Collection", percentText(snapshot.gcPressure()) + " GC pressure", snapshot.gcPressure() > 0.50D ? "GC churn is visible. Lower texture/update pressure before raising allocation." : "GC is not currently a major limiter.");
-            case ENTITY -> diagnosticTooltip("Entities", snapshot.entityCount() + " sampled", snapshot.entityCount() > 180 ? "Entity density is high. Entity distance and culling are relevant." : "Entity pressure is low.");
-            case CHUNK -> diagnosticTooltip("Chunks", worldActive(snapshot) ? percentText(snapshot.chunkStress()) + " chunk stress | RD " + snapshot.renderDistance() : "Inactive outside world/server", worldActive(snapshot) ? "Chunk settings affect render distance, meshing, and streaming." : "No world is loaded, so chunk pressure is not measured.");
-            case SHADER -> diagnosticTooltip("Shader / Render", percentText(snapshot.shaderPressure()) + " shader pressure", snapshot.shaderPressure() > 0.45D ? "Shader/render cost is active. Shadow/render provider settings matter." : "Shader pressure is low or inactive.");
-            case MOD_LOAD -> diagnosticTooltip("Modpack", snapshot.loadedModCount() + " mods | " + snapshot.optimizationModCount() + " optimization configs", snapshot.modLoadPressure() > 0.80D ? "Large modpack pressure is visible. Config/provider changes are safer than disabling mods automatically." : "Mod count is not currently the strongest limiter.");
-            case RESOURCEPACK -> diagnosticTooltip("Resourcepacks", snapshot.resourcePackCount() + " enabled", snapshot.resourcePackPressure() > 0.70D ? "Resourcepack stack may affect texture memory/reload cost." : "Resourcepack pressure is low.");
-            case SERVER_WAIT, SERVER_CONTEXT -> diagnosticTooltip("Server Context", this.chartWorldType, "Remote server tick time cannot be directly changed by local graphics settings.");
-            case GAMEPLAY -> diagnosticTooltip("Gameplay", snapshot.entityCount() + " entities | " + snapshot.particlesMode() + " particles", "Gameplay pressure maps to entity distance, particles, and culling.");
-            case UI_FRAME -> diagnosticTooltip("UI Render", percentText(snapshot.uiFramePressure()) + " UI frame pressure", snapshot.uiFramePressure() > 0.55D ? "This screen is adding measurable frame cost. Keep graph sampling compact." : "UI cost is not a major limiter.");
-            case UI_MEMORY -> diagnosticTooltip("UI Memory", percentText(snapshot.memoryPressure()) + " heap pressure", "Shows memory pressure while a screen is open.");
-            case WORLD_SIMULATION -> diagnosticTooltip("World Simulation", worldActive(snapshot) ? "RD " + snapshot.renderDistance() + " | SD " + snapshot.simulationDistance() : "Inactive outside world/server", worldActive(snapshot) ? "Simulation distance and entity density affect CPU/tick pressure." : "No active world simulation to measure.");
-            case FAULT_PRESSURE -> diagnosticTooltip("Strongest Fault", snapshot.primaryBottleneck().label(), snapshot.likelyCause());
+            case FPS -> diagnosticTooltip("FPS", "Current " + snapshot.fps() + " | Avg " + format1(snapshot.averageFps()) + " | 1% low " + format1(snapshot.onePercentLowFps()), fpsAdvice(snapshot));
+            case FRAME_TIME -> diagnosticTooltip("Frame Time", "Now " + format1(snapshot.frameTimeMs()) + " ms | sampled max " + format1(snapshot.maxFrameTimeMs()) + " ms", snapshot.maxFrameTimeMs() > 75.0D ? "Frame spikes are elevated. Compare the benchmark phases before assigning a cause." : "Frame pacing is currently within a moderate range.");
+            case MEMORY -> diagnosticTooltip("Memory", snapshot.usedMemoryMb() + "/" + snapshot.maxMemoryMb() + " MB | " + percentText(snapshot.memoryPressure()), snapshot.memoryPressure() > 0.85D ? "Heap pressure is high. Reduce texture/resource pressure before blindly increasing allocation." : "The JVM heap has usable headroom in the current sample.");
+            case GC -> diagnosticTooltip("Garbage Collection", percentText(snapshot.gcPressure()) + " sample-window estimate", snapshot.gcPressure() > 0.50D ? "Garbage-collector time is elevated in the sample window." : "Garbage collection is not currently the strongest signal.");
+            case ENTITY -> diagnosticTooltip("Entities", snapshot.entityCount() + " client-side entities", snapshot.entityCount() > 180 ? "Entity density is high enough to review entity distance and culling." : "Entity count is not currently extreme.");
+            case CHUNK -> diagnosticTooltip("Chunk Load", worldActive(snapshot) ? percentText(snapshot.chunkStress()) + " inferred pressure" : "inactive", "This is inferred from frame spikes, world context, and render distance. It is not direct disk or chunk-thread utilization.");
+            case SHADER -> diagnosticTooltip("Shader", PerformanceRuntimeContextService.shaderPipelineActive() ? percentText(snapshot.shaderPressure()) + " inferred pressure" : "inactive", "Shader pressure is only estimated when an active shader pack is verified. GPU utilization is not available here.");
+            case MOD_LOAD -> diagnosticTooltip("Modpack Size", snapshot.loadedModCount() + " loaded mods | " + percentText(snapshot.modLoadPressure()), "This is a normalized workload-size signal. It does not prove that a specific mod is slow.");
+            case RESOURCEPACK -> diagnosticTooltip("Resource Packs", snapshot.resourcePackCount() + " enabled | " + percentText(snapshot.resourcePackPressure()), "This is a pack-count signal, not measured VRAM usage.");
+            case WORLD_SIMULATION -> diagnosticTooltip("World Load", worldActive(snapshot) ? "RD " + snapshot.renderDistance() + " | SD " + snapshot.simulationDistance() : "inactive", "Combines chunk-load and entity signals. Remote server simulation is not measured.");
+            case FAULT_PRESSURE -> diagnosticTooltip("Strongest Signal", snapshot.primaryBottleneck().label(), snapshot.likelyCause());
         };
     }
 
@@ -795,153 +914,116 @@ public class PerformanceOptimizerScreen extends Screen {
             return;
         }
         this.chartSamples = new ArrayList<>(PerformanceMonitor.samples());
-        this.chartEntityMax = maxEntity(this.chartSamples);
+        this.chartEntityMax = Math.max(1, this.chartSamples.stream().mapToInt(PerformanceMonitor.Sample::entityCount).max().orElse(1));
         this.chartSnapshot = PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance());
-        this.chartWorldType = this.chartSnapshot == null ? currentWorldType() : this.chartSnapshot.worldType();
-        this.chartScreenName = currentScreenName();
         this.chartCacheAtMillis = now;
     }
 
-    private String currentWorldType() {
-        if (this.runtimeContext == null || System.currentTimeMillis() - this.runtimeContext.capturedAtMillis() > 5000L) {
-            this.runtimeContext = PerformanceRuntimeContextService.capture(MinecraftClient.getInstance());
+    private int sectionHeader(DrawContext context, int x, int y, int width, String title) {
+        int color = new Color(uiColorContentBaseTitleText, true).getRGB();
+        String display = trimToPixels(title, Math.max(20, width - 14));
+        context.drawText(this.textRenderer, display, x, y + 2, color, false);
+        int lineX = x + this.textRenderer.getWidth(display) + 7;
+        if (lineX < x + width) {
+            context.drawHorizontalLine(lineX, x + width, y + 6, withAlpha(uiColorBackgroundBorder, 150));
         }
-        return this.runtimeContext == null ? "unknown" : this.runtimeContext.worldType();
+        return y + 15;
     }
 
-    private void renderHardwareSummary(DrawContext context, int x, int y, int width) {
-        context.drawText(this.textRenderer, "Hardware and loaded systems", x, y, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-        if (hardwareProfile != null) {
-            context.drawText(this.textRenderer, "CPU threads: " + hardwareProfile.cpuThreads() + " | RAM: " + hardwareProfile.systemMemoryMb() + " MB | Display: " + hardwareProfile.monitorWidth() + "x" + hardwareProfile.monitorHeight() + "@" + hardwareProfile.refreshRate() + "hz", x, y + 14, 0xFFE2E2E2, false);
-            context.drawText(this.textRenderer, "GPU: " + trim(hardwareProfile.gpuRenderer(), Math.max(24, width / 6)), x, y + 28, 0xFFE2E2E2, false);
-            context.drawText(this.textRenderer, "Optimization mods: " + (hardwareProfile.optimizationMods().isEmpty() ? "none detected" : String.join(", ", hardwareProfile.optimizationMods())), x, y + 42, hardwareProfile.optimizationMods().isEmpty() ? 0xFF8D8D8D : 0xFF2DA700, false);
+    private int renderInfoRows(DrawContext context, int x, int y, int width, List<InfoLine> rows) {
+        for (InfoLine row : rows) {
+            y = renderInfoRow(context, x, y, width, row);
         }
+        return y;
     }
 
-    private void renderFaultDomainPanel(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
-        context.drawText(this.textRenderer, "Developer fault domains", x, y, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-        int cellWidth = Math.max(90, (width - 18) / 4);
-        drawFaultCell(context, x, y + 16, cellWidth, "Client", snapshot.primaryBottleneck() == PerformanceBottleneck.GPU || snapshot.primaryBottleneck() == PerformanceBottleneck.SHADER_RENDER ? "render pressure" : "normal", snapshot.primaryBottleneck() == PerformanceBottleneck.GPU ? 0xFF7400A4 : 0xFF2DA700);
-        drawFaultCell(context, x + cellWidth + 6, y + 16, cellWidth, "World", snapshot.primaryBottleneck() == PerformanceBottleneck.ENTITY_TICK || snapshot.primaryBottleneck() == PerformanceBottleneck.CHUNK_STORAGE ? "world load" : snapshot.worldType(), snapshot.primaryBottleneck() == PerformanceBottleneck.CHUNK_STORAGE ? 0xFFE3B735 : 0xFF0085A4);
-        drawFaultCell(context, x + (cellWidth + 6) * 2, y + 16, cellWidth, "Modpack", snapshot.modLoadPressure() > 0.80D ? "review mods" : snapshot.loadedModCount() + " mods", snapshot.modLoadPressure() > 0.80D ? 0xFFC32222 : 0xFF8D8D8D);
-        drawFaultCell(context, x + (cellWidth + 6) * 3, y + 16, cellWidth, "Memory", snapshot.gcPressure() > 0.50D ? "GC active" : snapshot.usedMemoryMb() + " MB", memoryColor(snapshot.memoryPressure()));
+    private int renderInfoRow(DrawContext context, int x, int y, int width, InfoLine row) {
+        int padding = 7;
+        int labelMax = Math.max(54, Math.min(132, width / 3));
+        String label = (row.estimated() ? "~ " : "") + safe(row.label());
+        boolean stacked = width < 360 || this.textRenderer.getWidth(label) > labelMax - 8;
+        int valueWidth = stacked ? Math.max(20, width - padding * 2) : Math.max(20, width - padding * 3 - labelMax);
+        List<OrderedText> valueLines = wrapped(row.value(), valueWidth);
+        int height = stacked ? 17 + valueLines.size() * LINE_HEIGHT : Math.max(18, 8 + valueLines.size() * LINE_HEIGHT);
+        context.fill(x, y, x + width, y + height, withAlpha(0xFF000000, 30));
+        context.fill(x, y, x + 2, y + height, withAlpha(row.color(), 125));
+        context.drawBorder(x, y, width, height, new Color(uiColorBackgroundBorder, true).getRGB());
+        context.drawText(this.textRenderer, trimToPixels(label, stacked ? width - padding * 2 : labelMax - 8), x + padding, y + 5, new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
+        int valueX = stacked ? x + padding : x + padding + labelMax;
+        int valueY = stacked ? y + 15 : y + 5;
+        drawWrapped(context, valueLines, valueX, valueY, row.color());
+        return y + height + 2;
     }
 
-    private void drawFaultCell(DrawContext context, int x, int y, int width, String label, String value, int color) {
-        context.fill(x, y, x + width, y + 38, withAlpha(0xFF000000, 42));
-        context.fill(x, y, x + width, y + 2, withAlpha(color, 160));
-        context.drawBorder(x, y, width, 38, shadedBorder(color));
-        context.drawText(this.textRenderer, label, x + 7, y + 6, 0xFFB8B8B8, false);
-        context.drawText(this.textRenderer, trim(value, Math.max(8, (width - 14) / 6)), x + 7, y + 21, softText(color), false);
+    private List<OrderedText> wrapped(String value, int width) {
+        String safeValue = safe(value);
+        List<OrderedText> lines = this.textRenderer.wrapLines(Text.literal(safeValue), Math.max(1, width));
+        return lines.isEmpty() ? List.of(Text.literal("").asOrderedText()) : lines;
     }
 
-    private void renderAdvancedSignals(DrawContext context, int x, int y, int width, PerformanceSnapshot snapshot) {
-        context.drawText(this.textRenderer, "Pressure breakdown", x, y, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-        boolean worldActive = "singleplayer".equals(snapshot.worldType()) || "server".equals(snapshot.worldType());
-        drawSignalBar(context, x, y + 16, width, "FPS loss", snapshot.fps() <= 0 ? 0.0D : Math.max(0.0D, (60.0D - snapshot.averageFps()) / 60.0D), 0xFFE06A21);
-        drawSignalBar(context, x, y + 30, width, "Frame spike", Math.min(1.0D, snapshot.maxFrameTimeMs() / 140.0D), 0xFFE06A21);
-        drawSignalBar(context, x, y + 44, width, "Memory", snapshot.memoryPressure(), 0xFFA7003A);
-        drawSignalBar(context, x, y + 58, width, "GC", snapshot.gcPressure(), 0xFFFF597D);
-        drawSignalBar(context, x, y + 72, width, "Chunk", worldActive ? snapshot.chunkStress() : -1.0D, 0xFFE3B735);
-        drawSignalBar(context, x, y + 86, width, "Entity/tick", worldActive ? Math.min(1.0D, snapshot.entityCount() / 220.0D) : -1.0D, 0xFFE6862C);
-        drawSignalBar(context, x, y + 100, width, "Shader", snapshot.shaderPressure(), 0xFF7400A4);
-        drawSignalBar(context, x, y + 114, width, "Resource", Math.min(1.0D, snapshot.resourcePackCount() / 12.0D), 0xFFB0199E);
-        drawSignalBar(context, x, y + 128, width, "Mod load", snapshot.modLoadPressure(), 0xFFC32222);
-        drawSignalBar(context, x, y + 142, width, "UI render", snapshot.uiFramePressure(), 0xFF0085A4);
-    }
-
-    private void drawSignalBar(DrawContext context, int x, int y, int width, String label, double value, int color) {
-        int labelWidth = 58;
-        int barWidth = Math.max(1, width - labelWidth - 42);
-        boolean inactive = value < 0.0D;
-        double clamped = inactive ? 0.0D : Math.max(0.0D, Math.min(1.0D, value));
-        int visibleColor = inactive ? 0xFF777777 : color;
-        context.drawText(this.textRenderer, label, x, y, inactive ? 0xFF777777 : 0xFFB8B8B8, false);
-        context.fill(x + labelWidth, y + 2, x + labelWidth + barWidth, y + 8, withAlpha(0xFF000000, 95));
-        context.fill(x + labelWidth, y + 2, x + labelWidth + (int) (barWidth * clamped), y + 8, withAlpha(visibleColor, inactive ? 75 : 185));
-        String valueText = inactive ? "inactive" : (int) Math.round(clamped * 100.0D) + "%";
-        context.drawText(this.textRenderer, valueText, x + labelWidth + barWidth + 6, y, inactive ? 0xFF8D8D8D : softText(color), false);
-        if (isOver(this.hoverTooltipX, this.hoverTooltipY, x, y, width, 11)) {
-            this.hoverTooltipLines = signalTooltip(label, valueText, inactive);
+    private int drawWrapped(DrawContext context, List<OrderedText> lines, int x, int y, int color) {
+        for (OrderedText line : lines) {
+            context.drawText(this.textRenderer, line, x, y, color, false);
+            y += LINE_HEIGHT;
         }
+        return y;
     }
 
-    private void renderMainScrollbar(DrawContext context, int mouseX, int mouseY) {
+    private void renderMainScrollbar(DrawContext context) {
         if (this.mainContentHeight <= this.mainViewportHeight) {
             this.mainScroll = 0;
             return;
         }
-        int trackX = this.mainViewportX + this.mainViewportWidth + 5;
+        int trackX = this.mainViewportX + this.mainViewportWidth + 4;
         int trackY = this.mainViewportY;
         int trackHeight = this.mainViewportHeight;
-        int thumbHeight = Math.max(24, (int) (trackHeight * (this.mainViewportHeight / (double) this.mainContentHeight)));
+        int thumbHeight = Math.max(20, (int) (trackHeight * (this.mainViewportHeight / (double) this.mainContentHeight)));
         int maxScroll = Math.max(1, this.mainContentHeight - this.mainViewportHeight);
         int thumbY = trackY + (int) ((trackHeight - thumbHeight) * (this.mainScroll / (double) maxScroll));
-        context.fill(trackX, trackY, trackX + 4, trackY + trackHeight, withAlpha(0xFF000000, 90));
-        context.fill(trackX, thumbY, trackX + 4, thumbY + thumbHeight, withAlpha(0xFFE2E2E2, 125));
-    }
-
-    private void drawMetric(DrawContext context, int x, int y, String label, String value, int color) {
-        context.drawText(this.textRenderer, label, x, y, 0xFFB8B8B8, false);
-        context.drawText(this.textRenderer, value, x + 70, y, color, false);
-    }
-
-    private void drawInfoCard(DrawContext context, int x, int y, int width, String label, String value, int color) {
-        context.fill(x, y, x + width, y + 44, withAlpha(0xFF000000, 42));
-        context.fill(x, y, x + width, y + 2, withAlpha(color, 180));
-        context.drawBorder(x, y, width, 44, shadedBorder(color));
-        context.drawText(this.textRenderer, label, x + 8, y + 7, 0xFFB8B8B8, false);
-        context.drawText(this.textRenderer, trim(value, 16), x + 8, y + 23, softText(color), false);
+        context.fill(trackX, trackY, trackX + SCROLLBAR_WIDTH, trackY + trackHeight, withAlpha(0xFF000000, 90));
+        context.fill(trackX, thumbY, trackX + SCROLLBAR_WIDTH, thumbY + thumbHeight, withAlpha(uiColorContentBaseTitleText, 125));
     }
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        int x = 8;
-        int y = PANEL_CONTENT_START + 18;
-        int rowRight = 166;
-        for (PerformanceProfileMode mode : PerformanceProfileMode.values()) {
-            if (mouseX >= x && mouseX <= rowRight && mouseY >= y && mouseY <= y + 14) {
-                this.activeMode = mode;
-                this.recommendations = PerformanceRecommendationEngine.recommend(MinecraftClient.getInstance(), this.activeMode, PerformanceMonitor.freshSnapshot(MinecraftClient.getInstance()));
-                this.status = "Profile selected: " + mode.label() + ". Review recommendations before applying.";
-                saveSession();
+        if (button == 0) {
+            if (this.profilePrevious.contains(mouseX, mouseY)) {
+                cycleProfile(-1);
                 return true;
             }
-            y += 15;
-        }
-        if (isTopBarButtonClicked(mouseX, mouseY, 10, getTopBarButtonWidth(TOP_BAR_BACK_LABEL))) {
-            closeAndRemember();
-            return true;
-        }
-        for (int i = 0; i < getTopBarActionLabels().size(); i++) {
-            String label = getTopBarActionLabels().get(i);
-            if (isTopBarButtonClicked(mouseX, mouseY, getTopBarButtonX(i), getTopBarButtonWidth(label))) {
-                DiagnosticsPane selectedPane = DiagnosticsPane.fromLabel(label);
-                if (selectedPane != this.activePane) {
-                    this.activePane = selectedPane;
-                    this.mainScroll = 0;
-                }
+            if (this.profileNext.contains(mouseX, mouseY)) {
+                cycleProfile(1);
                 return true;
             }
-        }
-        if (button == 0 && isOver((int) mouseX, (int) mouseY, this.mainViewportX, this.mainViewportY, this.mainViewportWidth, this.mainViewportHeight)) {
-            for (RecommendationHitbox hitbox : this.recommendationHitboxes) {
-                if (isOver((int) mouseX, (int) mouseY, hitbox.x(), hitbox.y(), hitbox.width(), hitbox.height())) {
-                    applySelectedRecommendation(hitbox.recommendation());
+            for (PaneHitbox tab : this.paneHitboxes) {
+                if (tab.contains(mouseX, mouseY)) {
+                    if (this.activePane != tab.pane()) {
+                        this.activePane = tab.pane();
+                        this.mainScroll = 0;
+                    }
+                    saveSession();
                     return true;
                 }
             }
-        }
-        if (this.mainContentHeight > this.mainViewportHeight) {
-            int trackX = this.mainViewportX + this.mainViewportWidth + 5;
-            int trackHeight = this.mainViewportHeight;
-            int thumbHeight = Math.max(24, (int) (trackHeight * (this.mainViewportHeight / (double) this.mainContentHeight)));
-            int maxScroll = Math.max(1, this.mainContentHeight - this.mainViewportHeight);
-            int thumbY = this.mainViewportY + (int) ((trackHeight - thumbHeight) * (this.mainScroll / (double) maxScroll));
-            if (isOver((int) mouseX, (int) mouseY, trackX - 2, thumbY, 8, thumbHeight)) {
-                this.draggingMainScrollbar = true;
-                this.mainScrollbarDragOffset = (int) mouseY - thumbY;
-                return true;
+            if (isOver((int) mouseX, (int) mouseY, this.mainViewportX, this.mainViewportY, this.mainViewportWidth, this.mainViewportHeight)) {
+                for (RecommendationHitbox hitbox : this.recommendationHitboxes) {
+                    if (hitbox.contains(mouseX, mouseY)) {
+                        applySelectedRecommendation(hitbox.recommendation());
+                        return true;
+                    }
+                }
+            }
+            if (this.mainContentHeight > this.mainViewportHeight) {
+                int trackX = this.mainViewportX + this.mainViewportWidth + 2;
+                int trackHeight = this.mainViewportHeight;
+                int thumbHeight = Math.max(20, (int) (trackHeight * (this.mainViewportHeight / (double) this.mainContentHeight)));
+                int maxScroll = Math.max(1, this.mainContentHeight - this.mainViewportHeight);
+                int thumbY = this.mainViewportY + (int) ((trackHeight - thumbHeight) * (this.mainScroll / (double) maxScroll));
+                if (isOver((int) mouseX, (int) mouseY, trackX, thumbY, 8, thumbHeight)) {
+                    this.draggingMainScrollbar = true;
+                    this.mainScrollbarDragOffset = (int) mouseY - thumbY;
+                    return true;
+                }
             }
         }
         return super.mouseClicked(mouseX, mouseY, button);
@@ -950,7 +1032,7 @@ public class PerformanceOptimizerScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double amount) {
         if (isOver((int) mouseX, (int) mouseY, this.mainViewportX, this.mainViewportY, this.mainViewportWidth + 12, this.mainViewportHeight)) {
-            scrollMain((int) (-amount * 24));
+            scrollMain((int) (-amount * 26));
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, amount);
@@ -971,35 +1053,36 @@ public class PerformanceOptimizerScreen extends Screen {
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
+    private void cycleProfile(int direction) {
+        PerformanceProfileMode[] modes = PerformanceProfileMode.values();
+        int next = Math.floorMod(this.activeMode.ordinal() + direction, modes.length);
+        this.activeMode = modes[next];
+        this.recommendations = PerformanceRecommendationEngine.recommend(MinecraftClient.getInstance(), this.activeMode, PerformanceMonitor.freshSnapshot(MinecraftClient.getInstance()));
+        this.status = "Profile selected: " + this.activeMode.label() + ". Recommendations were recalculated from the current measurements.";
+        this.mainScroll = 0;
+        saveSession();
+    }
+
     private void runBenchmark() {
         this.hardwareProfile = PerformanceHardwareScanner.scan(MinecraftClient.getInstance());
         this.runtimeContext = PerformanceRuntimeContextService.capture(MinecraftClient.getInstance());
-        this.benchmarkRunning = false;
         boolean started = PerformanceOptimizationTestService.start(MinecraftClient.getInstance(), this.activeMode, this);
         this.status = started ? PerformanceOptimizationTestService.status() : "Benchmark is already running.";
-    }
-
-    private void finishBenchmark() {
-        this.benchmarkRunning = false;
-        this.latestBenchmark = PerformanceBenchmarkRunner.finishBenchmark(MinecraftClient.getInstance(), this.activeMode, this.benchmarkStartMillis);
-        this.recommendations = latestBenchmark.recommendations();
-        PerformanceProfileManager.saveProfileSuggestion(MinecraftClient.getInstance(), this.activeMode, latestBenchmark.snapshot());
-        this.status = latestBenchmark.summary();
     }
 
     private void applySafe() {
         PerformanceSnapshot before = PerformanceMonitor.freshSnapshot(MinecraftClient.getInstance());
         refreshProviderSettings();
-        List<PerformanceRecommendation> actionableRecommendations = visibleRecommendations();
-        PerformanceConfigApplier.ApplyResult result = PerformanceConfigApplier.applySafe(MinecraftClient.getInstance(), actionableRecommendations);
-        List<PerformanceProviderApplyResult> providerResults = PerformanceLiveApplyService.applyRecommendations(MinecraftClient.getInstance(), this.providerSettings, actionableRecommendations);
+        List<PerformanceRecommendation> actionable = actionableRecommendations();
+        PerformanceConfigApplier.ApplyResult result = PerformanceConfigApplier.applySafe(MinecraftClient.getInstance(), actionable);
+        List<PerformanceProviderApplyResult> providerResults = PerformanceLiveApplyService.applyRecommendations(MinecraftClient.getInstance(), this.providerSettings, actionable);
         PerformanceMonitor.freshSnapshot(MinecraftClient.getInstance());
         this.lastProviderResults = providerResults;
         this.lastApplyEntries = result.entryResults();
-        rememberAppliedTargets(actionableRecommendations, result, providerResults);
+        rememberAppliedTargets(actionable, result, providerResults);
         long changed = providerResults.stream().filter(PerformanceProviderApplyResult::changed).count();
         this.status = result.message() + (providerResults.isEmpty() ? "" : " Provider configs: " + changed + "/" + providerResults.size() + " changed; reload requested where needed.");
-        PerformanceLearningService.recordApply(MinecraftClient.getInstance(), before, actionableRecommendations, result, providerResults);
+        PerformanceLearningService.recordApply(MinecraftClient.getInstance(), before, actionable, result, providerResults);
         refreshProviderSettings();
         this.recommendations = refreshedRecommendationsAfterApply();
         saveSession();
@@ -1021,10 +1104,9 @@ public class PerformanceOptimizerScreen extends Screen {
         this.lastApplyEntries = result.entryResults();
         rememberAppliedTargets(selectedList, result, providerResults);
         long changed = providerResults.stream().filter(PerformanceProviderApplyResult::changed).count();
-        boolean vanillaChanged = result.changed();
         this.status = "Applied selected target: " + recommendation.title()
-                + (vanillaChanged ? " | vanilla changed" : "")
-                + (providerResults.isEmpty() ? "" : " | providers " + changed + "/" + providerResults.size() + " changed");
+            + (result.changed() ? " | vanilla changed" : "")
+            + (providerResults.isEmpty() ? "" : " | providers " + changed + "/" + providerResults.size() + " changed");
         PerformanceLearningService.recordApply(MinecraftClient.getInstance(), before, selectedList, result, providerResults);
         refreshProviderSettings();
         this.recommendations = refreshedRecommendationsAfterApply();
@@ -1034,12 +1116,7 @@ public class PerformanceOptimizerScreen extends Screen {
     private List<PerformanceRecommendation> refreshedRecommendationsAfterApply() {
         PerformanceSnapshot fresh = PerformanceMonitor.freshSnapshot(MinecraftClient.getInstance());
         if (this.latestBenchmark != null && this.latestBenchmark.requestedMode() == this.activeMode) {
-            return PerformanceRecommendationEngine.recommendFromBenchmark(
-                    MinecraftClient.getInstance(),
-                    this.activeMode,
-                    fresh,
-                    this.latestBenchmark.phaseResults()
-            );
+            return PerformanceRecommendationEngine.recommendFromBenchmark(MinecraftClient.getInstance(), this.activeMode, fresh, this.latestBenchmark.phaseResults());
         }
         return PerformanceRecommendationEngine.recommend(MinecraftClient.getInstance(), this.activeMode, fresh);
     }
@@ -1049,20 +1126,21 @@ public class PerformanceOptimizerScreen extends Screen {
             return recommendation;
         }
         return new PerformanceRecommendation(
-                recommendation.id(),
-                recommendation.title(),
-                recommendation.reason(),
-                recommendation.bottleneck(),
-                recommendation.severity(),
-                true,
-                recommendation.settingKey(),
-                recommendation.beforeValue(),
-                recommendation.afterValue()
+            recommendation.id(),
+            recommendation.title(),
+            recommendation.reason(),
+            recommendation.bottleneck(),
+            recommendation.severity(),
+            true,
+            recommendation.settingKey(),
+            recommendation.beforeValue(),
+            recommendation.afterValue()
         );
     }
 
     private void revertLast() {
-        this.status = PerformanceConfigApplier.revertLastBackup(MinecraftClient.getInstance()) ? "Reverted last optimization backup." : "No optimization backup found.";
+        boolean reverted = PerformanceConfigApplier.revertLastBackup(MinecraftClient.getInstance());
+        this.status = reverted ? "Reverted the latest vanilla options backup and reloaded GameOptions." : "No optimization backup found.";
         PerformanceMonitor.freshSnapshot(MinecraftClient.getInstance());
         refreshProviderSettings();
         this.recommendations = refreshedRecommendationsAfterApply();
@@ -1100,10 +1178,8 @@ public class PerformanceOptimizerScreen extends Screen {
             if (recommendation == null || recommendation.settingKey() == null || recommendation.settingKey().isBlank()) {
                 continue;
             }
-            boolean vanillaApplied = result.entryResults().stream()
-                    .anyMatch(entry -> entry.recommendationId().equals(recommendation.id()) && "applied".equals(entry.status()));
-            boolean providerApplied = providerResults.stream()
-                    .anyMatch(providerResult -> matchesSettingKey(providerResult.settingId(), recommendation.settingKey()) && providerResult.changed());
+            boolean vanillaApplied = result.entryResults().stream().anyMatch(entry -> entry.recommendationId().equals(recommendation.id()) && "applied".equals(entry.status()));
+            boolean providerApplied = providerResults.stream().anyMatch(providerResult -> matchesSettingKey(providerResult.settingId(), recommendation.settingKey()) && providerResult.changed());
             if (vanillaApplied || providerApplied || sameSettingValue(currentValueForRecommendation(recommendation), recommendation.afterValue())) {
                 this.appliedTargetsBySetting.put(normalizeSettingKey(recommendation.settingKey()), recommendation.afterValue());
             }
@@ -1111,22 +1187,36 @@ public class PerformanceOptimizerScreen extends Screen {
     }
 
     private List<PerformanceSettingDescriptor> filteredProviderSettings() {
-        String query = this.searchField == null ? "" : this.searchField.getText().trim().toLowerCase(java.util.Locale.ROOT);
+        String query = searchQuery();
         if (query.isEmpty()) {
             return this.providerSettings;
         }
         return this.providerSettings.stream()
-                .filter(setting -> setting.providerId().toLowerCase(java.util.Locale.ROOT).contains(query)
-                        || setting.label().toLowerCase(java.util.Locale.ROOT).contains(query)
-                        || setting.category().toLowerCase(java.util.Locale.ROOT).contains(query)
-                        || setting.description().toLowerCase(java.util.Locale.ROOT).contains(query))
-                .toList();
+            .filter(setting -> contains(setting.providerId(), query)
+                || contains(setting.label(), query)
+                || contains(setting.category(), query)
+                || contains(setting.description(), query)
+                || contains(setting.currentValue(), query)
+                || contains(setting.recommendedValue(), query))
+            .toList();
+    }
+
+    private List<PerformanceRecommendation> actionableRecommendations() {
+        return this.recommendations.stream()
+            .filter(this::recommendationNeedsChange)
+            .toList();
     }
 
     private List<PerformanceRecommendation> visibleRecommendations() {
+        String query = searchQuery();
         return this.recommendations.stream()
-                .filter(recommendation -> recommendationNeedsChange(recommendation) || isAppliedTarget(recommendation))
-                .toList();
+            .filter(recommendation -> recommendationNeedsChange(recommendation) || isAppliedTarget(recommendation))
+            .filter(recommendation -> query.isEmpty()
+                || contains(recommendation.title(), query)
+                || contains(recommendation.reason(), query)
+                || contains(recommendation.settingKey(), query)
+                || contains(recommendation.severity().label(), query))
+            .toList();
     }
 
     private boolean isAppliedTarget(PerformanceRecommendation recommendation) {
@@ -1144,8 +1234,8 @@ public class PerformanceOptimizerScreen extends Screen {
         if ("No change".equals(recommendationApplyState(recommendation))) {
             return false;
         }
-        String before = recommendation.beforeValue() == null ? "" : recommendation.beforeValue().trim();
-        String after = recommendation.afterValue() == null ? "" : recommendation.afterValue().trim();
+        String before = safe(recommendation.beforeValue()).trim();
+        String after = safe(recommendation.afterValue()).trim();
         if (sameSettingValue(before, after)) {
             return false;
         }
@@ -1154,19 +1244,19 @@ public class PerformanceOptimizerScreen extends Screen {
     }
 
     private String currentValueForRecommendation(PerformanceRecommendation recommendation) {
-        String key = recommendation.settingKey() == null ? "" : recommendation.settingKey();
+        String key = safe(recommendation.settingKey());
         for (PerformanceSettingDescriptor setting : this.providerSettings) {
             if (matchesSettingKey(setting.settingId(), key)) {
-                return setting.currentValue() == null ? "" : setting.currentValue();
+                return safe(setting.currentValue());
             }
         }
         PerformanceSnapshot snapshot = PerformanceMonitor.freshSnapshot(MinecraftClient.getInstance());
-        return switch (key.toLowerCase(java.util.Locale.ROOT).replace('-', '_')) {
+        return switch (key.toLowerCase(Locale.ROOT).replace('-', '_')) {
             case "render_distance" -> String.valueOf(snapshot.renderDistance());
             case "simulation_distance" -> String.valueOf(snapshot.simulationDistance());
             case "max_fps" -> String.valueOf(snapshot.maxFps());
             case "clouds" -> snapshot.cloudsMode();
-            case "entity_distance" -> String.format(java.util.Locale.ROOT, "%.2f", snapshot.entityDistanceScale());
+            case "entity_distance" -> format2(snapshot.entityDistanceScale());
             case "mipmaps" -> String.valueOf(snapshot.mipmapLevels());
             case "particles" -> snapshot.particlesMode();
             case "graphics_mode" -> snapshot.graphicsMode();
@@ -1180,16 +1270,16 @@ public class PerformanceOptimizerScreen extends Screen {
 
     private String displayBeforeValue(PerformanceRecommendation recommendation) {
         String current = currentValueForRecommendation(recommendation);
-        return current.isBlank() ? recommendation.beforeValue() : current;
+        return current.isBlank() ? safe(recommendation.beforeValue()) : current;
     }
 
     private String normalizeSettingKey(String key) {
-        return key == null ? "" : key.toLowerCase(java.util.Locale.ROOT).replace('-', '_').replace('.', '_');
+        return safe(key).toLowerCase(Locale.ROOT).replace('-', '_').replace('.', '_');
     }
 
     private boolean sameSettingValue(String left, String right) {
-        String a = left == null ? "" : left.trim();
-        String b = right == null ? "" : right.trim();
+        String a = safe(left).trim();
+        String b = safe(right).trim();
         if (a.equalsIgnoreCase(b)) {
             return true;
         }
@@ -1204,16 +1294,7 @@ public class PerformanceOptimizerScreen extends Screen {
         if (setting == null) {
             return false;
         }
-        String current = setting.currentValue() == null ? "" : setting.currentValue().trim();
-        String recommended = setting.recommendedValue() == null ? "" : setting.recommendedValue().trim();
-        return !current.equalsIgnoreCase(recommended);
-    }
-
-    private void applyProviderSettings() {
-        this.lastProviderResults = PerformanceLiveApplyService.applyAllSupported(MinecraftClient.getInstance(), this.providerSettings, this.searchField == null ? "" : this.searchField.getText());
-        long changed = this.lastProviderResults.stream().filter(PerformanceProviderApplyResult::changed).count();
-        this.status = "Provider apply complete: " + changed + "/" + this.lastProviderResults.size() + " setting(s) changed live or reload-requested.";
-        refreshProviderSettings();
+        return !safe(setting.currentValue()).trim().equalsIgnoreCase(safe(setting.recommendedValue()).trim());
     }
 
     private String lastApplySummary() {
@@ -1225,41 +1306,7 @@ public class PerformanceOptimizerScreen extends Screen {
     }
 
     private boolean matchesSettingKey(String settingId, String recommendationKey) {
-        return com.spirit.koil.api.performance.PerformanceSettingKeyMatcher.matches(settingId, recommendationKey);
-    }
-
-    private List<String> getTopBarActionLabels() {
-        return List.of(PANE_OVERVIEW_LABEL, PANE_RENDERING_LABEL, PANE_PROCESSING_LABEL, PANE_MEMORY_LABEL, PANE_SERVER_LABEL, PANE_GAMEPLAY_LABEL, PANE_UI_LABEL, PANE_WORLD_LABEL, PANE_MODS_LABEL, PANE_ALL_LABEL);
-    }
-
-    private TopBarLayout getTopBarLayout() {
-        return new TopBarLayout(this.textRenderer, this.width);
-    }
-
-    private int getTopBarButtonX(int index) {
-        List<String> labels = getTopBarActionLabels();
-        int x = this.width - TopBarLayout.RIGHT_MARGIN;
-        for (int i = labels.size() - 1; i >= index; i--) {
-            x -= getTopBarButtonWidth(labels.get(i));
-            if (i > index) {
-                x -= TopBarLayout.BUTTON_GAP;
-            }
-        }
-        return x;
-    }
-
-    private int getTopBarButtonWidth(String label) {
-        if (TOP_BAR_BACK_LABEL.equals(label)) {
-            return getTopBarLayout().buttonWidth(label);
-        }
-        return Math.max(30, this.textRenderer.getWidth(label) + 10);
-    }
-
-    private int topBarSearchWidth() {
-        TopBarLayout layout = getTopBarLayout();
-        int searchX = layout.searchFieldX(TOP_BAR_BACK_LABEL);
-        int actionsLeft = getTopBarButtonX(0);
-        return Math.max(80, actionsLeft - searchX - 8);
+        return PerformanceSettingKeyMatcher.matches(settingId, recommendationKey);
     }
 
     private void syncOptimizationTestResult() {
@@ -1274,25 +1321,80 @@ public class PerformanceOptimizerScreen extends Screen {
         this.observedBenchmarkResultAtMillis = resultAt;
         this.latestBenchmark = result;
         this.recommendations = result.recommendations();
-        this.status = result.summary() + result.testNotes().stream().findFirst().map(note -> " " + note).orElse("");
+        this.status = result.summary();
         this.runtimeContext = PerformanceRuntimeContextService.capture(MinecraftClient.getInstance());
+        this.runtimeContextAtMillis = System.currentTimeMillis();
+        PerformanceProfileManager.saveProfileSuggestion(MinecraftClient.getInstance(), this.activeMode, result.snapshot());
         refreshProviderSettings();
+        this.mainScroll = 0;
     }
 
-    private void renderTopBarButton(DrawContext context, int x, String label) {
-        renderTopBarButton(context, x, label, false);
+    private int renderRecommendations(DrawContext context, int x, int y, int width) {
+        this.recommendationHitboxes.clear();
+        y = sectionHeader(context, x, y, width, "Recommended changes");
+        List<PerformanceRecommendation> visible = visibleRecommendations();
+        if (visible.isEmpty()) {
+            return renderInfoRow(context, x, y, width, exact("State", searchQuery().isEmpty() ? "No pending changes. Current verified values already match the active targets." : "No recommendations match the current search.", new Color(uiColorSaveSuccessColor, true).getRGB()));
+        }
+        for (PerformanceRecommendation recommendation : visible) {
+            int accent = severityDisplayColor(recommendation.severity());
+            String state = recommendationApplyState(recommendation);
+            String title = recommendation.severity().label() + " | " + recommendation.title();
+            String change = displayBeforeValue(recommendation) + " -> " + safe(recommendation.afterValue());
+            if (!state.isBlank()) {
+                change += " | " + state;
+            }
+            List<OrderedText> reasonLines = wrapped(systemVoice(recommendation.reason()), Math.max(20, width - 20));
+            List<OrderedText> changeLines = wrapped(change, Math.max(20, width - 20));
+            int rowHeight = 28 + reasonLines.size() * LINE_HEIGHT + changeLines.size() * LINE_HEIGHT;
+            this.recommendationHitboxes.add(new RecommendationHitbox(x, y, width, rowHeight, recommendation));
+            context.fill(x, y, x + width, y + rowHeight, withAlpha(0xFF000000, 38));
+            context.fill(x, y, x + 3, y + rowHeight, withAlpha(accent, 190));
+            context.drawBorder(x, y, width, rowHeight, shadedBorder(recommendation.bottleneck().color()));
+            String titleDisplay = trimToPixels(title, Math.max(20, width - 16));
+            context.drawText(this.textRenderer, titleDisplay, x + 8, y + 5, accent, false);
+            int lineY = y + 16;
+            lineY = drawWrapped(context, changeLines, x + 8, lineY, state.isBlank() ? 0xFFD7D7D7 : applyStateColor(state));
+            drawWrapped(context, reasonLines, x + 8, lineY, new Color(uiColorContentBaseDescriptionText, true).getRGB());
+            if (isOver(this.hoverTooltipX, this.hoverTooltipY, x, y, width, rowHeight)) {
+                this.hoverTooltipLines = recommendationTooltip(recommendation);
+            }
+            y += rowHeight + 4;
+        }
+        return y;
     }
 
-    private void renderTopBarButton(DrawContext context, int x, String label, boolean selected) {
-        int buttonWidth = getTopBarButtonWidth(label);
-        context.fill(x, TopBarLayout.BUTTON_Y, x + buttonWidth, TopBarLayout.BUTTON_Y + TopBarLayout.BUTTON_HEIGHT, withAlpha(uiColorContentBase, 176));
-        context.drawBorder(x, TopBarLayout.BUTTON_Y, buttonWidth, TopBarLayout.BUTTON_HEIGHT, new Color(uiColorBackgroundBorder, true).getRGB());
-        int textX = x + Math.max(4, (buttonWidth - this.textRenderer.getWidth(label)) / 2);
-        context.drawText(this.textRenderer, label, textX, TopBarLayout.BUTTON_Y + 7, new Color(uiColorContentBaseTitleText, true).getRGB(), false);
+    private String recommendationApplyState(PerformanceRecommendation recommendation) {
+        String appliedTarget = this.appliedTargetsBySetting.get(normalizeSettingKey(recommendation.settingKey()));
+        if (appliedTarget != null && sameSettingValue(appliedTarget, recommendation.afterValue())) {
+            return "Applied";
+        }
+        for (PerformanceApplyEntryResult entry : this.lastApplyEntries) {
+            if (entry.recommendationId().equals(recommendation.id())) {
+                return switch (entry.status()) {
+                    case "applied" -> "Applied";
+                    case "failed" -> "Failed";
+                    case "skipped" -> "Review";
+                    case "provider-or-unsupported" -> "";
+                    default -> entry.status();
+                };
+            }
+        }
+        for (PerformanceProviderApplyResult result : this.lastProviderResults) {
+            if (matchesSettingKey(result.settingId(), recommendation.settingKey())) {
+                return result.changed() ? "Applied" : "No change";
+            }
+        }
+        return "";
     }
 
-    private boolean isTopBarButtonClicked(double mouseX, double mouseY, int x, int width) {
-        return mouseX >= x && mouseX <= x + width && mouseY >= TopBarLayout.BUTTON_Y && mouseY <= TopBarLayout.BUTTON_Y + TopBarLayout.BUTTON_HEIGHT;
+    private int applyStateColor(String state) {
+        return switch (state) {
+            case "Applied" -> new Color(uiColorSaveSuccessColor, true).getRGB();
+            case "Review" -> new Color(uiColorToolTipWarning, true).getRGB();
+            case "Failed" -> new Color(uiColorToolTipError, true).getRGB();
+            default -> new Color(uiColorToolTipSecondary, true).getRGB();
+        };
     }
 
     private void scrollMain(int amount) {
@@ -1302,7 +1404,7 @@ public class PerformanceOptimizerScreen extends Screen {
 
     private void dragMainScrollbar(int mouseY) {
         int trackHeight = this.mainViewportHeight;
-        int thumbHeight = Math.max(24, (int) (trackHeight * (this.mainViewportHeight / (double) Math.max(1, this.mainContentHeight))));
+        int thumbHeight = Math.max(20, (int) (trackHeight * (this.mainViewportHeight / (double) Math.max(1, this.mainContentHeight))));
         int maxThumbTravel = Math.max(1, trackHeight - thumbHeight);
         int thumbY = Math.max(this.mainViewportY, Math.min(this.mainViewportY + maxThumbTravel, mouseY - this.mainScrollbarDragOffset));
         int maxScroll = Math.max(0, this.mainContentHeight - this.mainViewportHeight);
@@ -1318,10 +1420,27 @@ public class PerformanceOptimizerScreen extends Screen {
     }
 
     private int memoryColor(double pressure) {
-        if (pressure < 0.70D) return 0xFF2DA700;
-        if (pressure < 0.85D) return 0xFFE3B735;
-        if (pressure < 0.93D) return 0xFFE06A21;
-        return 0xFFA7003A;
+        if (pressure >= 0.90D) return 0xFFA7003A;
+        if (pressure >= 0.80D) return 0xFFE06A21;
+        if (pressure >= 0.68D) return 0xFFE3B735;
+        return 0xFF2DA700;
+    }
+
+    private int pressureColor(double value) {
+        if (value >= 0.85D) return 0xFFA7003A;
+        if (value >= 0.65D) return 0xFFE06A21;
+        if (value >= 0.38D) return 0xFFE3B735;
+        return 0xFF2DA700;
+    }
+
+    private int shaderColor(double value) {
+        if (value >= 0.70D) return 0xFFB0199E;
+        if (value >= 0.40D) return 0xFF8B39DD;
+        return 0xFF5D54D8;
+    }
+
+    private int loadColor(double load) {
+        return load < 0.0D ? 0xFF8D8D8D : pressureColor(load);
     }
 
     private int withAlpha(int color, int alpha) {
@@ -1329,23 +1448,22 @@ public class PerformanceOptimizerScreen extends Screen {
     }
 
     private int shadedBorder(int color) {
-        int r = ((color >> 16) & 255);
-        int g = ((color >> 8) & 255);
-        int b = (color & 255);
-        r = (r + 55) / 3;
-        g = (g + 55) / 3;
-        b = (b + 55) / 3;
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+        r = (int) (r * 0.70D);
+        g = (int) (g * 0.70D);
+        b = (int) (b * 0.70D);
         return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
-    private int muted(int color) {
-        return withAlpha(color, 90);
-    }
-
     private int softText(int color) {
-        int r = Math.min(255, (((color >> 16) & 255) + 255) / 2);
-        int g = Math.min(255, (((color >> 8) & 255) + 255) / 2);
-        int b = Math.min(255, ((color & 255) + 255) / 2);
+        int r = (color >> 16) & 0xFF;
+        int g = (color >> 8) & 0xFF;
+        int b = color & 0xFF;
+        r = Math.min(255, (int) (r * 0.65D + 90));
+        g = Math.min(255, (int) (g * 0.65D + 90));
+        b = Math.min(255, (int) (b * 0.65D + 90));
         return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
@@ -1362,7 +1480,7 @@ public class PerformanceOptimizerScreen extends Screen {
             if (x == x2 && y == y2) {
                 break;
             }
-            int e2 = 2 * error;
+            int e2 = error * 2;
             if (e2 > -dy) {
                 error -= dy;
                 x += sx;
@@ -1374,35 +1492,23 @@ public class PerformanceOptimizerScreen extends Screen {
         }
     }
 
-    private void drawDashedHorizontal(DrawContext context, int x1, int x2, int y, int color) {
-        for (int x = x1; x <= x2; x += 6) {
-            context.drawHorizontalLine(x, Math.min(x + 3, x2), y, color);
-        }
-    }
-
-    private String trim(String value, int max) {
-        if (value == null) {
-            return "";
-        }
-        if (value.length() <= max) {
-            return value;
-        }
-        return value.substring(0, Math.max(0, max - 3)) + "...";
-    }
-
     private String trimToPixels(String value, int maxPixels) {
-        if (value == null || maxPixels <= 0) {
+        String safeValue = safe(value);
+        if (maxPixels <= 0) {
             return "";
         }
-        if (this.textRenderer.getWidth(value) <= maxPixels) {
-            return value;
+        if (this.textRenderer.getWidth(safeValue) <= maxPixels) {
+            return safeValue;
         }
         String ellipsis = "...";
-        int end = value.length();
-        while (end > 0 && this.textRenderer.getWidth(value.substring(0, end) + ellipsis) > maxPixels) {
+        int end = safeValue.length();
+        while (end > 0 && this.textRenderer.getWidth(safeValue.substring(0, end) + ellipsis) > maxPixels) {
             end--;
         }
-        return end <= 0 ? ellipsis : value.substring(0, end) + ellipsis;
+        if (end <= 0) {
+            return this.textRenderer.getWidth(ellipsis) <= maxPixels ? ellipsis : "";
+        }
+        return safeValue.substring(0, end) + ellipsis;
     }
 
     private void renderHoverTooltip(DrawContext context) {
@@ -1420,42 +1526,37 @@ public class PerformanceOptimizerScreen extends Screen {
         int primaryColor = new Color(uiColorToolTipPrimary, true).getRGB();
         int secondaryColor = new Color(uiColorToolTipSecondary, true).getRGB();
         int ideaColor = new Color(uiColorToolTipIdea, true).getRGB();
-        int valueColor = recommendation.severity() == PerformanceRecommendation.Severity.MANUAL_REVIEW
-                ? new Color(uiColorToolTipWarning, true).getRGB()
-                : severityColor;
         List<Text> lines = new ArrayList<>();
         lines.add(Text.literal(recommendation.severity().label()).setStyle(Style.EMPTY.withColor(severityColor).withBold(true))
-                .append(Text.literal("  " + recommendation.title()).setStyle(Style.EMPTY.withColor(primaryColor))));
+            .append(Text.literal("  " + recommendation.title()).setStyle(Style.EMPTY.withColor(primaryColor))));
         lines.add(Text.literal("Setting: ").setStyle(Style.EMPTY.withColor(labelColor))
-                .append(Text.literal(recommendation.settingKey()).setStyle(Style.EMPTY.withColor(primaryColor))));
+            .append(Text.literal(safe(recommendation.settingKey())).setStyle(Style.EMPTY.withColor(primaryColor))));
         lines.add(Text.literal("Change: ").setStyle(Style.EMPTY.withColor(labelColor))
-                .append(Text.literal(recommendation.beforeValue()).setStyle(Style.EMPTY.withColor(secondaryColor)))
-                .append(Text.literal(" -> ").setStyle(Style.EMPTY.withColor(labelColor)))
-                .append(Text.literal(recommendation.afterValue()).setStyle(Style.EMPTY.withColor(valueColor).withBold(true))));
+            .append(Text.literal(displayBeforeValue(recommendation)).setStyle(Style.EMPTY.withColor(secondaryColor)))
+            .append(Text.literal(" -> ").setStyle(Style.EMPTY.withColor(labelColor)))
+            .append(Text.literal(safe(recommendation.afterValue())).setStyle(Style.EMPTY.withColor(severityColor).withBold(true))));
         String applyState = recommendationApplyState(recommendation);
         if (!applyState.isBlank()) {
             lines.add(Text.literal("State: ").setStyle(Style.EMPTY.withColor(labelColor))
-                    .append(Text.literal(applyState).setStyle(Style.EMPTY.withColor(applyStateColor(applyState)).withBold(true))));
+                .append(Text.literal(applyState).setStyle(Style.EMPTY.withColor(applyStateColor(applyState)).withBold(true))));
         }
         lines.add(Text.literal("Reason:").setStyle(Style.EMPTY.withColor(ideaColor).withBold(true)));
         for (String line : wrapTooltipText(systemVoice(recommendation.reason()), 72)) {
             lines.add(Text.literal("  " + line).setStyle(Style.EMPTY.withColor(secondaryColor)));
         }
         lines.add(Text.literal("Source: ").setStyle(Style.EMPTY.withColor(labelColor))
-                .append(Text.literal(recommendationSource(recommendation)).setStyle(Style.EMPTY.withColor(primaryColor))));
+            .append(Text.literal(recommendationSource(recommendation)).setStyle(Style.EMPTY.withColor(primaryColor))));
         return lines;
     }
 
     private List<Text> signalTooltip(String label, String valueText, boolean inactive) {
         int stateColor = inactive ? 0xFF8D8D8D : signalValueColor(label, valueText);
         return List.of(
-                Text.literal(label).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipPrimary, true).getRGB()).withBold(true)),
-                Text.literal("State: ").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipLabel, true).getRGB()))
-                        .append(Text.literal(inactive ? "Inactive" : valueText).setStyle(Style.EMPTY.withColor(stateColor).withBold(!inactive))),
-                Text.literal("Context: ").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipLabel, true).getRGB()))
-                        .append(Text.literal(this.chartSnapshot == null ? "unknown" : this.chartSnapshot.worldType()).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipSecondary, true).getRGB()))),
-                Text.literal("Source: ").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipLabel, true).getRGB()))
-                        .append(Text.literal(signalSource(label)).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipPrimary, true).getRGB())))
+            Text.literal(label).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipPrimary, true).getRGB()).withBold(true)),
+            Text.literal("State: ").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipLabel, true).getRGB()))
+                .append(Text.literal(inactive ? "Inactive" : valueText).setStyle(Style.EMPTY.withColor(stateColor).withBold(!inactive))),
+            Text.literal("Source: ").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipLabel, true).getRGB()))
+                .append(Text.literal(signalSource(label)).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipPrimary, true).getRGB())))
         );
     }
 
@@ -1463,13 +1564,14 @@ public class PerformanceOptimizerScreen extends Screen {
         int valueColor = diagnosticValueColor(title);
         List<Text> lines = new ArrayList<>();
         lines.add(Text.literal(title).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipPrimary, true).getRGB()).withBold(true)));
-        lines.add(valueLine("Value: ", value, valueColor));
-        lines.add(Text.literal("Action:").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipIdea, true).getRGB()).withBold(true)));
+        lines.add(Text.literal("Value: ").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipLabel, true).getRGB()))
+            .append(Text.literal(value).setStyle(Style.EMPTY.withColor(valueColor))));
+        lines.add(Text.literal("Interpretation:").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipIdea, true).getRGB()).withBold(true)));
         for (String line : wrapTooltipText(systemVoice(action), 72)) {
             lines.add(Text.literal("  " + line).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipSecondary, true).getRGB())));
         }
         lines.add(Text.literal("Source: ").setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipLabel, true).getRGB()))
-                .append(Text.literal(diagnosticSource(title)).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipPrimary, true).getRGB()))));
+            .append(Text.literal(diagnosticSource(title)).setStyle(Style.EMPTY.withColor(new Color(uiColorToolTipPrimary, true).getRGB()))));
         return lines;
     }
 
@@ -1485,105 +1587,59 @@ public class PerformanceOptimizerScreen extends Screen {
 
     private int diagnosticValueColor(String title) {
         PerformanceSnapshot snapshot = this.chartSnapshot == null ? PerformanceMonitor.latestSnapshot(MinecraftClient.getInstance()) : this.chartSnapshot;
-        String lower = title == null ? "" : title.toLowerCase(java.util.Locale.ROOT);
+        String lower = safe(title).toLowerCase(Locale.ROOT);
         if (lower.contains("fps")) return fpsColor(snapshot.fps());
         if (lower.contains("frame")) return pressureColor(Math.min(1.0D, snapshot.frameTimeMs() / 120.0D));
         if (lower.contains("memory")) return memoryColor(snapshot.memoryPressure());
         if (lower.contains("garbage")) return pressureColor(snapshot.gcPressure());
-        if (lower.contains("entity") || lower.contains("gameplay")) return pressureColor(Math.min(1.0D, snapshot.entityCount() / 220.0D));
+        if (lower.contains("entity")) return pressureColor(Math.min(1.0D, snapshot.entityCount() / 220.0D));
         if (lower.contains("chunk") || lower.contains("world")) return worldActive(snapshot) ? pressureColor(snapshot.chunkStress()) : 0xFF8D8D8D;
         if (lower.contains("shader")) return shaderColor(snapshot.shaderPressure());
         if (lower.contains("modpack")) return pressureColor(snapshot.modLoadPressure());
         if (lower.contains("resource")) return pressureColor(snapshot.resourcePackPressure());
-        if (lower.contains("ui")) return pressureColor(snapshot.uiFramePressure());
         return new Color(uiColorToolTipPrimary, true).getRGB();
     }
 
-    private Text valueLine(String label, String value, int valueColor) {
-        int labelColor = new Color(uiColorToolTipLabel, true).getRGB();
-        int secondaryColor = new Color(uiColorToolTipSecondary, true).getRGB();
-        Text line = Text.literal(label).setStyle(Style.EMPTY.withColor(labelColor));
-        for (String token : value.split("(?<=\\s)|(?=\\s)|(?=\\|)|(?<=\\|)")) {
-            if (token.isBlank() || "|".equals(token)) {
-                line = line.copy().append(Text.literal(token).setStyle(Style.EMPTY.withColor(labelColor)));
-            } else if (isValueToken(token)) {
-                line = line.copy().append(Text.literal(token).setStyle(Style.EMPTY.withColor(valueColor).withBold(true)));
-            } else {
-                line = line.copy().append(Text.literal(token).setStyle(Style.EMPTY.withColor(secondaryColor)));
-            }
-        }
-        return line;
-    }
-
-    private String systemVoice(String text) {
-        if (text == null) {
-            return "";
-        }
-        return text
-                .replace("Koil's", "the system's")
-                .replace("Koil ", "The system ")
-                .replace(" Koil", " the system")
-                .replace("koil ", "the system ");
-    }
-
-    private boolean isValueToken(String token) {
-        String cleaned = token.replace(",", "").replace("%", "").replace("ms", "").replace("MB", "").replace("/", "").trim();
-        if (cleaned.isEmpty()) {
-            return false;
-        }
-        try {
-            Double.parseDouble(cleaned);
-            return true;
-        } catch (NumberFormatException ignored) {
-            return "inactive".equalsIgnoreCase(token)
-                    || "remote".equalsIgnoreCase(token)
-                    || "server".equalsIgnoreCase(token)
-                    || "singleplayer".equalsIgnoreCase(token)
-                    || token.toLowerCase(java.util.Locale.ROOT).contains("bound");
-        }
-    }
-
     private String recommendationSource(PerformanceRecommendation recommendation) {
-        String key = recommendation.settingKey() == null ? "" : recommendation.settingKey();
+        String key = safe(recommendation.settingKey());
         if (key.contains(".") || key.contains("::")) {
-            return "editable optimization/shader config provider";
+            return "verified optimization/shader config provider";
         }
         if ("loaded_mods".equals(key) || "resourcepacks".equals(key)) {
-            return "Fabric Loader and Minecraft resource pack manager";
+            return "Fabric Loader and Minecraft resource-pack manager";
         }
         if ("memory_allocation".equals(key)) {
-            return "JVM Runtime memory counters";
+            return "JVM runtime memory counters";
         }
-        return "Minecraft GameOptions plus live benchmark snapshot";
+        return "Minecraft GameOptions plus sampled performance signals";
     }
 
     private String diagnosticSource(String title) {
-        String lower = title == null ? "" : title.toLowerCase(java.util.Locale.ROOT);
-        if (lower.contains("fps")) return "MinecraftClient current FPS and rolling samples";
-        if (lower.contains("frame")) return "client tick/frame sample timing";
-        if (lower.contains("memory")) return "JVM Runtime used/max memory";
+        String lower = safe(title).toLowerCase(Locale.ROOT);
+        if (lower.contains("fps")) return "Minecraft frame metrics and rolling samples";
+        if (lower.contains("frame")) return "Minecraft frame-time samples";
+        if (lower.contains("memory")) return "JVM runtime used/max memory";
         if (lower.contains("garbage")) return "GarbageCollectorMXBean deltas";
-        if (lower.contains("entity")) return "current client world entity iteration";
-        if (lower.contains("chunk") || lower.contains("world")) return "world context, frame spikes, and render distance estimate";
-        if (lower.contains("shader")) return "shader mod/config detection plus FPS pressure estimate";
-        if (lower.contains("modpack")) return "Fabric Loader loaded mod count";
-        if (lower.contains("resource")) return "Minecraft enabled resource pack count";
-        if (lower.contains("ui")) return "screen-open frame pressure estimate";
+        if (lower.contains("entity")) return "client-world entity iteration";
+        if (lower.contains("chunk") || lower.contains("world")) return "frame spikes plus world/render-distance inference";
+        if (lower.contains("shader")) return "verified active shader state plus frame-performance inference";
+        if (lower.contains("modpack")) return "Fabric Loader loaded-mod count normalization";
+        if (lower.contains("resource")) return "enabled resource-pack count normalization";
         return "latest performance snapshot";
     }
 
     private String signalSource(String label) {
-        String lower = label == null ? "" : label.toLowerCase(java.util.Locale.ROOT);
+        String lower = safe(label).toLowerCase(Locale.ROOT);
         if (lower.contains("fps")) return "rolling FPS samples";
         if (lower.contains("frame")) return "rolling frame-time samples";
-        if (lower.contains("memory")) return "JVM Runtime memory";
-        if (lower.contains("gc")) return "GarbageCollectorMXBean";
-        if (lower.contains("chunk")) return "world + render distance + frame spike estimate";
-        if (lower.contains("entity")) return "client world entity count";
-        if (lower.contains("shader")) return "shader pipeline estimate";
-        if (lower.contains("resource")) return "enabled resource packs";
-        if (lower.contains("mod")) return "Fabric Loader mod count";
-        if (lower.contains("ui")) return "screen-open frame cost estimate";
+        if (lower.contains("heap")) return "JVM runtime heap usage";
+        if (lower.contains("gc")) return "GarbageCollectorMXBean sample-window deltas";
+        if (lower.contains("chunk")) return "world context, render distance, and frame-spike inference";
+        if (lower.contains("entity")) return "client-world entity count normalization";
+        if (lower.contains("shader")) return "active shader detection plus frame-performance inference";
+        if (lower.contains("resource")) return "enabled resource-pack count normalization";
+        if (lower.contains("mod")) return "Fabric Loader loaded-mod count normalization";
+        if (lower.contains("screen")) return "frame pressure observed while a screen is open";
         return "latest performance snapshot";
     }
 
@@ -1591,16 +1647,15 @@ public class PerformanceOptimizerScreen extends Screen {
         if (valueText == null || valueText.equals("inactive")) {
             return 0xFF8D8D8D;
         }
-        String number = valueText.replace("%", "").trim();
         double value;
         try {
-            value = Double.parseDouble(number) / 100.0D;
+            value = Double.parseDouble(valueText.replace("%", "").trim()) / 100.0D;
         } catch (NumberFormatException ignored) {
             value = 0.0D;
         }
-        String lower = label == null ? "" : label.toLowerCase(java.util.Locale.ROOT);
+        String lower = safe(label).toLowerCase(Locale.ROOT);
         if (lower.contains("shader")) return shaderColor(value);
-        if (lower.contains("memory")) return memoryColor(value);
+        if (lower.contains("heap")) return memoryColor(value);
         return pressureColor(value);
     }
 
@@ -1626,26 +1681,168 @@ public class PerformanceOptimizerScreen extends Screen {
         return lines;
     }
 
+    private double configuredFpsTarget(PerformanceSnapshot snapshot) {
+        if (snapshot == null) {
+            return 60.0D;
+        }
+        if (snapshot.vsync() && this.hardwareProfile != null && this.hardwareProfile.refreshRate() > 0) {
+            return this.hardwareProfile.refreshRate();
+        }
+        if (snapshot.maxFps() >= 260 || snapshot.maxFps() <= 0) {
+            return 60.0D;
+        }
+        return Math.max(10.0D, snapshot.maxFps());
+    }
+
     private String fpsAdvice(PerformanceSnapshot snapshot) {
-        if (snapshot.averageFps() >= 75.0D && snapshot.onePercentLowFps() >= 45.0D) {
-            return "Benchmark has headroom. Quality settings can stay higher.";
+        double target = configuredFpsTarget(snapshot);
+        if (snapshot.averageFps() >= target * 0.95D && snapshot.onePercentLowFps() >= target * 0.65D) {
+            return "The sample is close to the configured frame-rate target and the one-percent low is proportionally stable.";
         }
-        if (snapshot.onePercentLowFps() < 30.0D) {
-            return "1% low FPS is weak. Apply pacing/render recommendations.";
+        if (snapshot.onePercentLowFps() < target * 0.50D) {
+            return "The slowest one percent of sampled frames are weak relative to the configured target. Compare frame time, chunk, entity, and shader signals before applying changes.";
         }
-        return "FPS is usable but can be tuned from benchmark results.";
+        return "Average FPS is below the configured target, but benchmark phases are needed to identify which workload changes the pressure.";
+    }
+
+    private String gameplayPressureLabel(PerformanceSnapshot snapshot) {
+        if (!worldActive(snapshot)) {
+            return "inactive outside a world";
+        }
+        if (snapshot.primaryBottleneck() == PerformanceBottleneck.ENTITY_TICK) {
+            return "entity/tick signal is strongest";
+        }
+        if (snapshot.entityCount() > 180) {
+            return "high client entity density";
+        }
+        return "no strong entity signal";
     }
 
     private boolean worldActive(PerformanceSnapshot snapshot) {
-        return "singleplayer".equals(snapshot.worldType()) || "server".equals(snapshot.worldType());
+        return snapshot != null && worldActive(snapshot.worldType());
+    }
+
+    private boolean worldActive(String worldType) {
+        return "singleplayer".equals(worldType) || "server".equals(worldType);
     }
 
     private String percentText(double value) {
         return (int) Math.round(Math.max(0.0D, Math.min(1.0D, value)) * 100.0D) + "%";
     }
 
+    private String format1(double value) {
+        return String.format(Locale.ROOT, "%.1f", value);
+    }
+
+    private String format2(double value) {
+        return String.format(Locale.ROOT, "%.2f", value);
+    }
+
+    private String maxFpsLabel(int maxFps) {
+        return maxFps >= 260 ? "unlimited FPS" : maxFps + " FPS cap";
+    }
+
+    private String displayModeText(PerformanceHardwareProfile profile) {
+        if (profile == null || profile.monitorWidth() <= 0 || profile.monitorHeight() <= 0) {
+            return "unavailable";
+        }
+        return profile.monitorWidth() + "x" + profile.monitorHeight() + (profile.refreshRate() > 0 ? " @ " + profile.refreshRate() + " Hz" : "");
+    }
+
+    private String windowRenderSize() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        try {
+            int windowWidth = client.getWindow().getWidth();
+            int windowHeight = client.getWindow().getHeight();
+            int framebufferWidth = client.getWindow().getFramebufferWidth();
+            int framebufferHeight = client.getWindow().getFramebufferHeight();
+            double scale = client.getWindow().getScaleFactor();
+            return windowWidth + "x" + windowHeight + " window | " + framebufferWidth + "x" + framebufferHeight + " framebuffer | GUI scale " + format2(scale) + "x";
+        } catch (Throwable ignored) {
+            return "unavailable";
+        }
+    }
+
+    private String loadText(double load) {
+        return load < 0.0D ? "unavailable" : percentText(load);
+    }
+
+    private String memoryText(long mb) {
+        return mb < 0L ? "unavailable" : mb == 0L ? "unknown" : mb + " MB";
+    }
+
+    private String storageProbeText(double value) {
+        return value <= 0.0D ? "unavailable" : format1(value) + " MiB/s combined forced-write + read quick probe; useful only as a rough local I/O signal";
+    }
+
+    private String storageCapacityText() {
+        try {
+            Path gameDir = FabricLoader.getInstance().getGameDir();
+            FileStore store = Files.getFileStore(gameDir);
+            return formatGiB(store.getUsableSpace()) + " free / " + formatGiB(store.getTotalSpace()) + " total";
+        } catch (Exception ignored) {
+            return "unavailable";
+        }
+    }
+
+    private String formatGiB(long bytes) {
+        return String.format(Locale.ROOT, "%.1f GiB", bytes / 1024.0D / 1024.0D / 1024.0D);
+    }
+
+    private int currentLatencyMs() {
+        try {
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client.player == null || client.getNetworkHandler() == null) {
+                return -1;
+            }
+            var entry = client.getNetworkHandler().getPlayerListEntry(client.player.getUuid());
+            return entry == null ? -1 : entry.getLatency();
+        } catch (Throwable ignored) {
+            return -1;
+        }
+    }
+
+    private int latencyColor(int latency) {
+        if (latency < 0) return 0xFF8D8D8D;
+        if (latency <= 70) return 0xFF2DA700;
+        if (latency <= 140) return 0xFFE3B735;
+        if (latency <= 250) return 0xFFE06A21;
+        return 0xFFA7003A;
+    }
+
+    private String searchQuery() {
+        return this.searchField == null ? "" : this.searchField.getText().trim().toLowerCase(Locale.ROOT);
+    }
+
+    private boolean contains(String value, String query) {
+        return safe(value).toLowerCase(Locale.ROOT).contains(query);
+    }
+
+    private String systemVoice(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text
+            .replace("Koil's", "the optimizer's")
+            .replace("Koil ", "The optimizer ")
+            .replace(" Koil", " the optimizer")
+            .replace("koil ", "the optimizer ");
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
+    }
+
     private boolean isOver(int mouseX, int mouseY, int x, int y, int width, int height) {
         return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
+    }
+
+    private InfoLine exact(String label, String value, int color) {
+        return new InfoLine(label, value, color, false);
+    }
+
+    private InfoLine estimate(String label, String value, int color) {
+        return new InfoLine(label, value, color, true);
     }
 
     private enum ChartKind {
@@ -1658,62 +1855,83 @@ public class PerformanceOptimizerScreen extends Screen {
         SHADER,
         MOD_LOAD,
         RESOURCEPACK,
-        SERVER_WAIT,
-        SERVER_CONTEXT,
-        GAMEPLAY,
-        UI_FRAME,
-        UI_MEMORY,
         WORLD_SIMULATION,
         FAULT_PRESSURE
     }
 
+    private enum DiagnosticsPane {
+        OVERVIEW("Overview", "Ovr"),
+        RENDERING("Render", "GPU"),
+        PROCESSING("CPU / Tick", "CPU"),
+        MEMORY("Memory", "Mem"),
+        WORLD("World", "Wld"),
+        MODS("Mods", "Mod"),
+        SERVER("Server", "Net"),
+        ALL("All", "All");
+
+        private final String label;
+        private final String compactLabel;
+
+        DiagnosticsPane(String label, String compactLabel) {
+            this.label = label;
+            this.compactLabel = compactLabel;
+        }
+
+        private String label() {
+            return this.label;
+        }
+
+        private String displayLabel(boolean compact) {
+            return compact ? this.compactLabel : this.label;
+        }
+    }
+
+    private record InfoLine(String label, String value, int color, boolean estimated) {
+    }
+
+    private record ChartSpec(String title, ChartKind kind) {
+    }
+
+    private record PaneHitbox(DiagnosticsPane pane, int x, int y, int width, int height) {
+        private boolean contains(double mouseX, double mouseY) {
+            return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
+        }
+    }
+
     private record RecommendationHitbox(int x, int y, int width, int height, PerformanceRecommendation recommendation) {
+        private boolean contains(double mouseX, double mouseY) {
+            return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
+        }
+    }
+
+    private record Rect(int x, int y, int width, int height) {
+        private static final Rect EMPTY = new Rect(0, 0, 0, 0);
+
+        private int right() {
+            return x + width;
+        }
+
+        private int bottom() {
+            return y + height;
+        }
+
+        private boolean contains(double mouseX, double mouseY) {
+            return mouseX >= x && mouseX <= right() && mouseY >= y && mouseY <= bottom();
+        }
     }
 
     private record SessionState(
-            PerformanceProfileMode activeMode,
-            DiagnosticsPane activePane,
-            String status,
-            int mainScroll,
-            PerformanceBenchmarkResult latestBenchmark,
-            List<PerformanceRecommendation> recommendations,
-            List<PerformanceProviderApplyResult> lastProviderResults,
-            List<PerformanceApplyEntryResult> lastApplyEntries,
-            Map<String, String> appliedTargetsBySetting,
-            String searchText,
-            long observedBenchmarkResultAtMillis
+        PerformanceProfileMode activeMode,
+        DiagnosticsPane activePane,
+        String status,
+        int mainScroll,
+        PerformanceBenchmarkResult latestBenchmark,
+        List<PerformanceRecommendation> recommendations,
+        List<PerformanceProviderApplyResult> lastProviderResults,
+        List<PerformanceApplyEntryResult> lastApplyEntries,
+        Map<String, String> appliedTargetsBySetting,
+        String searchText,
+        long observedBenchmarkResultAtMillis
     ) {
-    }
-
-    private boolean shows(DiagnosticsPane pane) {
-        return this.activePane == DiagnosticsPane.ALL || this.activePane == pane;
-    }
-
-    private enum DiagnosticsPane {
-        OVERVIEW(PANE_OVERVIEW_LABEL),
-        RENDERING(PANE_RENDERING_LABEL),
-        PROCESSING(PANE_PROCESSING_LABEL),
-        MEMORY(PANE_MEMORY_LABEL),
-        SERVER(PANE_SERVER_LABEL),
-        GAMEPLAY(PANE_GAMEPLAY_LABEL),
-        UI(PANE_UI_LABEL),
-        WORLD(PANE_WORLD_LABEL),
-        MODS(PANE_MODS_LABEL),
-        ALL(PANE_ALL_LABEL);
-
-        private final String label;
-
-        DiagnosticsPane(String label) {
-            this.label = label;
-        }
-
-        private static DiagnosticsPane fromLabel(String label) {
-            for (DiagnosticsPane pane : values()) {
-                if (pane.label.equals(label)) {
-                    return pane;
-                }
-            }
-            return OVERVIEW;
-        }
     }
 }

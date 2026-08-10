@@ -1,0 +1,24 @@
+version: 2
+kind: task_template
+id: template.movement_recovery_stuck_knowledge
+template_id: movement/recovery/stuck
+semantic_operation: sem.task.recover_stuck
+params: []
+metadata:
+  semantic_operations: [sem.task.recover_stuck]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [movement, recovery, failure-knowledge]
+  description: Apply the registered movement.stuck corrective task
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 360
+  failure_policy: fail
+steps:
+  - type: delegate
+    delegate: movement/recovery/recover_stuck.ktl
+  - type: return
+    label: recovered

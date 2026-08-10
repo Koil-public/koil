@@ -54,7 +54,7 @@ public final class PerformanceRecommendationEngine {
                 "Koil audited the installed Sodium Extra config and found a visual/update setting that can be reduced without disabling the optimization mod.");
         addChangedProviderRecommendations(recommendations, providerSettings, "entityculling", PerformanceBottleneck.ENTITY_TICK,
                 "Koil audited EntityCulling with direction-aware rules so culling stays enabled instead of flipping skip flags incorrectly.");
-        if (snapshot.shaderModInstalled() || providerSettings.stream().anyMatch(setting -> "shaderpack".equals(setting.providerId()))) {
+        if (PerformanceRuntimeContextService.shaderPipelineActive() || providerSettings.stream().anyMatch(setting -> "shaderpack".equals(setting.providerId()))) {
             addChangedProviderRecommendations(recommendations, providerSettings, "shaderpack", PerformanceBottleneck.SHADER_RENDER,
                     "Koil found shaderpack option-file values that are expensive when maxed out, such as shadow distance, shadow resolution, reflections, clouds, or water effects.");
         }
@@ -218,7 +218,7 @@ public final class PerformanceRecommendationEngine {
                 || snapshot.onePercentLowFps() < 24.0D
                 || snapshot.maxFrameTimeMs() > 110.0D
                 || snapshot.shaderPressure() > 0.70D;
-        if (snapshot.primaryBottleneck() == PerformanceBottleneck.SHADER_RENDER || snapshot.primaryBottleneck() == PerformanceBottleneck.GPU || snapshot.shaderPressure() > 0.45D || snapshot.uiFramePressure() > 0.70D) {
+        if (snapshot.primaryBottleneck() == PerformanceBottleneck.SHADER_RENDER || snapshot.primaryBottleneck() == PerformanceBottleneck.GPU || snapshot.shaderPressure() > 0.45D) {
             recommendations.add(new PerformanceRecommendation(
                     "lower-render-distance",
                     "Lower render distance",
@@ -312,11 +312,11 @@ public final class PerformanceRecommendationEngine {
                         "false"
                 ));
             }
-            if (snapshot.shaderModInstalled()) {
+            if (PerformanceRuntimeContextService.shaderPipelineActive()) {
                 recommendations.add(new PerformanceRecommendation(
                         "shader-friendly-profile",
                         "Use Shader Friendly profile",
-                        "A shader pipeline is installed and render pressure is visible. Shader Friendly keeps visual quality while targeting chunk distance, clouds, and FPS pacing first.",
+                        "An active shader pipeline is verified and render pressure is visible. Shader Friendly keeps visual quality while targeting chunk distance, clouds, and FPS pacing first.",
                         PerformanceBottleneck.SHADER_RENDER,
                         PerformanceRecommendation.Severity.OPTIONAL,
                         false,
@@ -427,7 +427,7 @@ public final class PerformanceRecommendationEngine {
             );
         }
 
-        if (snapshot.averageFps() < 45.0D && renderDistance > 10 && recommendations.stream().noneMatch(recommendation -> "render_distance".equals(recommendation.settingKey()))) {
+        if (fpsBelowConfiguredTarget(snapshot, 45.0D) && renderDistance > 10 && recommendations.stream().noneMatch(recommendation -> "render_distance".equals(recommendation.settingKey()))) {
             recommendations.add(new PerformanceRecommendation(
                     "low-fps-render-distance-step",
                     "Lower render distance one safe step",
@@ -497,20 +497,6 @@ public final class PerformanceRecommendationEngine {
             ));
         }
 
-        if (snapshot.maxFrameTimeMs() > 75.0D && snapshot.averageFps() > 90.0D) {
-            recommendations.add(new PerformanceRecommendation(
-                    "disable-vsync-for-spike-diagnosis",
-                    "Disable VSync for spike diagnosis",
-                    "Average FPS is high but frame-time spikes are visible. Disabling VSync can help Koil separate display pacing from actual render or tick stalls.",
-                    PerformanceBottleneck.GPU,
-                    PerformanceRecommendation.Severity.OPTIONAL,
-                    true,
-                    "vsync",
-                    "current",
-                    "false"
-            ));
-        }
-
         if (mode == PerformanceProfileMode.HIGH_FPS && recommendations.stream().noneMatch(recommendation -> "max_fps".equals(recommendation.settingKey()))) {
             recommendations.add(new PerformanceRecommendation(
                     "cap-fps-high",
@@ -553,7 +539,13 @@ public final class PerformanceRecommendationEngine {
                     "no change"
             ));
         }
+        if ("server".equals(snapshot.worldType())) {
+            recommendations.removeIf(recommendation -> "simulation_distance".equals(recommendation.settingKey()));
+        }
         recommendations = PerformanceLearningService.adaptRecommendations(recommendations, snapshot);
+        if ("server".equals(snapshot.worldType())) {
+            recommendations.removeIf(recommendation -> "simulation_distance".equals(recommendation.settingKey()));
+        }
         PerformanceJsonStore.write(PerformancePaths.DETECTED_BOTTLENECKS, java.util.Map.of(
                 "capturedAtMillis", System.currentTimeMillis(),
                 "primary", snapshot.primaryBottleneck().name(),
@@ -593,7 +585,9 @@ public final class PerformanceRecommendationEngine {
         String targetClouds = benchmarkClouds(snapshot, stable, stressed);
 
         addBenchmarkVanilla(recommendations, "benchmark-render-distance", "Benchmark render distance target", benchmarkReason("render distance", snapshot, stable, stressed, phases), PerformanceBottleneck.CHUNK_STORAGE, "render_distance", String.valueOf(currentRender), String.valueOf(targetRender), PerformanceRecommendation.Severity.SAFE);
-        addBenchmarkVanilla(recommendations, "benchmark-simulation-distance", "Benchmark simulation distance target", benchmarkReason("simulation distance", snapshot, stable, stressed, phases), PerformanceBottleneck.CPU, "simulation_distance", String.valueOf(currentSimulation), String.valueOf(targetSimulation), PerformanceRecommendation.Severity.SAFE);
+        if (!"server".equals(snapshot.worldType())) {
+            addBenchmarkVanilla(recommendations, "benchmark-simulation-distance", "Benchmark simulation distance target", benchmarkReason("simulation distance", snapshot, stable, stressed, phases), PerformanceBottleneck.CPU, "simulation_distance", String.valueOf(currentSimulation), String.valueOf(targetSimulation), PerformanceRecommendation.Severity.SAFE);
+        }
         addBenchmarkVanilla(recommendations, "benchmark-entity-distance", "Benchmark entity distance target", benchmarkReason("entity distance", snapshot, stable, stressed, phases), PerformanceBottleneck.ENTITY_TICK, "entity_distance", String.valueOf(snapshot.entityDistanceScale()), String.format(java.util.Locale.ROOT, "%.2f", targetEntityDistance), PerformanceRecommendation.Severity.SAFE);
         addBenchmarkVanilla(recommendations, "benchmark-particles", "Benchmark particle target", benchmarkReason("particles", snapshot, stable, stressed, phases), PerformanceBottleneck.GPU, "particles", snapshot.particlesMode(), targetParticles, PerformanceRecommendation.Severity.OPTIONAL);
         addBenchmarkVanilla(recommendations, "benchmark-graphics-mode", "Benchmark graphics target", benchmarkReason("graphics mode", snapshot, stable, stressed, phases), PerformanceBottleneck.GPU, "graphics_mode", snapshot.graphicsMode(), targetGraphics, stressed ? PerformanceRecommendation.Severity.CAUTION : PerformanceRecommendation.Severity.OPTIONAL);
@@ -601,8 +595,6 @@ public final class PerformanceRecommendationEngine {
         addBenchmarkVanilla(recommendations, "benchmark-smooth-lighting", "Benchmark smooth lighting target", benchmarkReason("smooth lighting", snapshot, stable, stressed, phases), PerformanceBottleneck.GPU, "smooth_lighting", String.valueOf(snapshot.smoothLighting()), String.valueOf(targetSmoothLighting), stressed ? PerformanceRecommendation.Severity.OPTIONAL : PerformanceRecommendation.Severity.SAFE);
         addBenchmarkVanilla(recommendations, "benchmark-biome-blend", "Benchmark biome blend target", benchmarkReason("biome blend", snapshot, stable, stressed, phases), PerformanceBottleneck.CHUNK_STORAGE, "biome_blend", String.valueOf(snapshot.biomeBlend()), String.valueOf(targetBiomeBlend), PerformanceRecommendation.Severity.OPTIONAL);
         addBenchmarkVanilla(recommendations, "benchmark-entity-shadows", "Benchmark entity shadow target", benchmarkReason("entity shadows", snapshot, stable, stressed, phases), PerformanceBottleneck.GPU, "entity_shadows", String.valueOf(snapshot.entityShadows()), String.valueOf(targetEntityShadows), PerformanceRecommendation.Severity.OPTIONAL);
-        addBenchmarkVanilla(recommendations, "benchmark-vsync", "Benchmark VSync target", "Benchmark mode lets Koil draw as much power as needed, so VSync is disabled to avoid display pacing hiding true render capacity.", PerformanceBottleneck.GPU, "vsync", String.valueOf(snapshot.vsync()), "false", PerformanceRecommendation.Severity.OPTIONAL);
-        addBenchmarkVanilla(recommendations, "benchmark-max-fps", "Benchmark max FPS target", "Benchmark mode uses unlimited FPS so Koil can measure the machine's real available headroom before profile caps are considered.", PerformanceBottleneck.GPU, "max_fps", String.valueOf(snapshot.maxFps()), "unlimited", PerformanceRecommendation.Severity.SAFE);
         if (!snapshot.hasVerifiedVideoOptions()) {
             recommendations.removeIf(recommendation -> isVanillaVideoSetting(recommendation.settingKey()));
         }
@@ -612,7 +604,7 @@ public final class PerformanceRecommendationEngine {
     private static int benchmarkRenderTarget(int current, PerformanceSnapshot snapshot, PerformanceHardwareAdvisor.HardwareClass hardware, boolean stable, boolean stressed) {
         int ceiling = visualRenderCeiling(hardware, snapshot);
         int floor = visualRenderFloor(hardware, snapshot);
-        if (snapshot.shaderModInstalled() || snapshot.shaderPressure() > 0.35D) {
+        if (PerformanceRuntimeContextService.shaderPipelineActive() || snapshot.shaderPressure() > 0.35D) {
             ceiling = Math.min(ceiling, hardware.gpuTier() >= 3 ? 16 : hardware.gpuTier() >= 2 ? 12 : 9);
         }
         if (stressed) {
@@ -666,7 +658,7 @@ public final class PerformanceRecommendationEngine {
         if ((stressed && (snapshot.onePercentLowFps() < 24.0D || snapshot.maxFrameTimeMs() > 125.0D)) || snapshot.entityCount() > 280) {
             return "minimal";
         }
-        if (stressed || snapshot.entityCount() > 220 || snapshot.uiFramePressure() > 0.70D) {
+        if (stressed || snapshot.entityCount() > 220) {
             return "decreased";
         }
         if (stable) {
@@ -1079,6 +1071,19 @@ public final class PerformanceRecommendationEngine {
             return normalized.substring(0, 80);
         }
         return normalized;
+    }
+
+    private static boolean fpsBelowConfiguredTarget(PerformanceSnapshot snapshot, double absoluteThreshold) {
+        if (snapshot == null || snapshot.averageFps() <= 0.0D) {
+            return false;
+        }
+        double target;
+        if (snapshot.maxFps() > 0 && snapshot.maxFps() < 260) {
+            target = snapshot.maxFps();
+        } else {
+            target = snapshot.vsync() ? 60.0D : 120.0D;
+        }
+        return snapshot.averageFps() < Math.min(absoluteThreshold, target * 0.75D);
     }
 
     private static boolean sameValue(String currentValue, String afterValue) {

@@ -1,0 +1,26 @@
+version: 2
+kind: task_template
+id: template.flow_core_release_all_input
+template_id: flow/core/release_all_input
+semantic_operation: sem.task.release_input
+params: []
+metadata:
+  semantic_operations: [sem.task.release_input]
+  target_kinds: []
+  required_params: []
+  optional_params: []
+  tags: [flow, input, cleanup]
+  description: Release All Automation Inputs
+  visibility: internal
+  model_callable: false
+  resource_locks: [input, screen]
+  side_effects: [changes_input_or_screen]
+  timeout_ticks: 100
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.input.release_all
+    params: {}
+  - type: return
+    label: done
+

@@ -1,0 +1,35 @@
+version: 2
+kind: task_template
+id: template.interaction_core_interact_entity_configured
+template_id: interaction/core/interact_entity_configured
+semantic_operation: sem.interaction.interact_entity
+params: [target.id, target.kind, target.selector, hand.id, interaction.sneak, radius, stop.distance]
+metadata:
+  semantic_operations: [sem.interaction.interact_entity]
+  target_kinds: [entity, player]
+  required_params: [target.id, target.kind]
+  optional_params: [target.selector, hand.id, interaction.sneak, radius, stop.distance]
+  tags: [interaction, entity, crouch]
+  description: Resolve, approach, face, and interact with a live entity using explicit hand/crouch options
+  visibility: public
+  model_callable: true
+  resource_locks: [movement, look, input, world]
+  side_effects: [moves_player, changes_orientation, interacts_entity]
+  timeout_ticks: 6000
+  failure_policy: recover
+  recovery_task: movement/recovery/recover_stuck.ktl
+steps:
+  - type: delegate
+    delegate: world/core/validate_target.ktl target.id=${target.id} target.kind=${target.kind} target.selector=${target.selector} radius=${radius} max.distance=${radius}
+  - type: delegate
+    delegate: movement/navigation/move_to_entity.ktl target.id=${target.id} target.kind=${target.kind} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
+  - type: run_primitive
+    action: cap.look.face_target
+    params: {}
+  - type: run_primitive
+    action: cap.interaction.interact_entity_target
+    params:
+      hand.id: ${hand.id}
+      interaction.sneak: ${interaction.sneak}
+  - type: return
+    label: done

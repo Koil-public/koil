@@ -46,4 +46,26 @@ public interface ChatHudPanel {
     ) {
         return false;
     }
+
+    default boolean mouseDragged(
+            ChatHudPanelContext context,
+            ChatHudPanelBounds bounds,
+            double mouseX,
+            double mouseY,
+            int button,
+            double deltaX,
+            double deltaY
+    ) {
+        return false;
+    }
+
+    default boolean mouseReleased(
+            ChatHudPanelContext context,
+            ChatHudPanelBounds bounds,
+            double mouseX,
+            double mouseY,
+            int button
+    ) {
+        return false;
+    }
 }

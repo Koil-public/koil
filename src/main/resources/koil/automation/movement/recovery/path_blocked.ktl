@@ -1,0 +1,32 @@
+version: 2
+kind: task_template
+id: template.movement_recovery_path_blocked_knowledge
+template_id: movement/recovery/path_blocked
+semantic_operation: sem.task.recover_stuck
+params: []
+metadata:
+  semantic_operations: [sem.task.recover_stuck]
+  target_kinds: [location]
+  required_params: []
+  optional_params: []
+  tags: [movement, recovery, failure-knowledge, replanning]
+  description: Change local position after a classified path obstruction so the parent route can re-plan
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input, world]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 360
+  failure_policy: recover
+  recovery_task: movement/recovery/stuck.ktl
+steps:
+  - type: run_primitive
+    action: cap.movement.run_recovery
+    params:
+      recovery.tactic: strafe_left
+  - type: delegate
+    delegate: movement/core/movement_wait_stable.ktl ticks=4
+  - type: run_primitive
+    action: cap.movement.snapshot
+    params: {}
+  - type: return
+    label: recovered

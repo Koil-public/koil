@@ -1121,25 +1121,11 @@ public final class RichChatAttachmentRenderer {
     }
 
     private static SubtextStyle detectSubtextStyle(String text) {
-        if (text == null || text.isEmpty()) {
-            return null;
-        }
-        int leadingWhitespace = 0;
-        while (leadingWhitespace < text.length() && Character.isWhitespace(text.charAt(leadingWhitespace))) {
-            leadingWhitespace++;
-        }
-        int markerLength;
-        if (text.startsWith("-# ", leadingWhitespace)) {
-            markerLength = 3;
-        } else if (RichChatStructuralContinuation.isSubtext(text, leadingWhitespace)) {
-            markerLength = 1;
-        } else {
-            return null;
-        }
-        return new SubtextStyle(
-                text.substring(0, leadingWhitespace),
-                text.substring(leadingWhitespace + markerLength)
-        );
+        RichChatStructuralContinuation.Subtext subtext =
+                RichChatStructuralContinuation.parseSubtext(text);
+        return subtext == null
+                ? null
+                : new SubtextStyle(subtext.leadingWhitespace(), subtext.content());
     }
 
     /**

@@ -6,9 +6,15 @@ import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.automation.AutomationRuntimeStatus;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.automation.capability.AutomationPrimitiveRegistry;
+import com.spirit.koil.api.automation.feedback.AutomationFailureRegistry;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
+import com.spirit.koil.api.automation.navigation.BoundedNavigationPlanner;
+import com.spirit.koil.api.automation.navigation.BoundedNavigationSnapshot;
+import com.spirit.koil.api.automation.navigation.RecedingHorizonNavigationController;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.network.ClientPlayerInteractionManager;
@@ -16,12 +22,26 @@ import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.option.Perspective;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.mob.HostileEntity;
+import net.minecraft.entity.passive.PassiveEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
+import net.minecraft.entity.vehicle.BoatEntity;
+import net.minecraft.item.BoatItem;
+import net.minecraft.item.ElytraItem;
+import net.minecraft.item.FireworkRocketItem;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
+import net.minecraft.recipe.Recipe;
+import net.minecraft.recipe.RecipeMatcher;
 import net.minecraft.registry.Registries;
+import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.registry.tag.FluidTags;
+import net.minecraft.screen.CraftingScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.ActionResult;
@@ -32,6 +52,7 @@ import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.*;
 import net.minecraft.util.shape.VoxelShape;
+import net.minecraft.world.RaycastContext;
 import net.minecraft.world.World;
 
 import java.time.Instant;
@@ -84,12 +105,19 @@ public final class AutomationExecutor {
     private static final int PARKOUR_SINGLE_CHARGE_TICKS = 1;
     private static final int PARKOUR_AIR_TIMEOUT_TICKS = 34;
     private static final int PARKOUR_APPROACH_TIMEOUT_TICKS = 90;
+    private static final int BOAT_SEARCH_RADIUS_DEFAULT = 6;
+    private static final int BOAT_SEARCH_RADIUS_MAXIMUM = 8;
+    private static final int BOAT_SEARCH_VERTICAL_RADIUS = 2;
+    private static final double BOAT_PLACEMENT_REACH_SQUARED = 36.0D;
 
     private final KtlCompilerService compilerService;
     private final Deque<ActiveExecution> executionStack = new ArrayDeque<>();
     private final Map<String, HeldInput> heldInputs = new LinkedHashMap<>();
     private final Map<String, CachedEntityRef> cachedEntities = new LinkedHashMap<>();
     private final Map<String, Long> hotStateReportTimes = new LinkedHashMap<>();
+    private final RecedingHorizonNavigationController navigationPlanner = new RecedingHorizonNavigationController();
+    private Object lastScreen;
+    private boolean automationItemUseActive;
 
     public AutomationExecutor(KtlCompilerService compilerService) {
         this.compilerService = compilerService;
@@ -109,10 +137,11 @@ public final class AutomationExecutor {
         String detail = reason == null || reason.isBlank() ? "canceled" : reason;
         ActiveExecution root = this.executionStack.peekLast();
         this.executionStack.clear();
+        this.navigationPlanner.cancel();
         releaseAllInputs();
         this.cachedEntities.clear();
         AutomationRuntimeStatus.canceled(detail);
-        AutomationCliViewModel.activeState("failed", "", detail);
+        AutomationCliViewModel.activeState("cancelled", "", detail);
         AutomationReporter.fail("[fail]", "automation canceled: " + detail);
         if (hadActiveExecution) {
             publishExecutionResult(root, "cancelled", "cancelled", detail);
@@ -125,13 +154,22 @@ public final class AutomationExecutor {
         ClientPlayerEntity player = client == null ? null : client.player;
         ClientWorld world = client == null ? null : client.world;
 
+        Object currentScreen = client == null ? null : client.currentScreen;
+        if (currentScreen != this.lastScreen) {
+            if (this.lastScreen != null || currentScreen != null) {
+                releaseAllInputs();
+                if (!this.executionStack.isEmpty()) {
+                    this.executionStack.peek().state.put("result.input_cleanup.screen_change", true);
+                }
+            }
+            this.lastScreen = currentScreen;
+        }
+
         updateHeldInputs();
         updateTapInputs();
         updateMouseLook(player);
 
         if (this.executionStack.isEmpty()) {
-            releaseAllInputs();
-            AutomationRuntimeStatus.idle("no active task");
             AutomationCliViewModel.activeState("idle", "", "no active task");
             return;
         }
@@ -141,7 +179,10 @@ public final class AutomationExecutor {
         AutomationCliViewModel.activeState("thinking", current.frameId, "tick");
 
         KtlCompilerService.CompiledTemplateMetadata currentMetadata = templateMetadata(current);
-        if (current.tickCounter > currentMetadata.timeoutTicks()) {
+        // Root frames are persistent agent objectives and must not fail merely
+        // because 180 seconds elapsed. Nested KTL operations retain their
+        // declared watchdogs so a single wait/action cannot hang forever.
+        if (this.executionStack.size() > 1 && current.tickCounter > currentMetadata.timeoutTicks()) {
             current.state.put("result.failure_code", "task_timeout");
             current.state.put("result.failure_reason", "task exceeded " + currentMetadata.timeoutTicks() + " ticks");
             AutomationReporter.block("[block]", current.interpretationResult.selectedTemplateId() + " -> task timeout");
@@ -154,6 +195,13 @@ public final class AutomationExecutor {
         updateActiveConsumption(current);
         updateActiveAttack(current);
         updateActiveMining(current);
+        updateActiveLook(current);
+        updateActiveBoatPreparation(current);
+        updateActiveBoatDeployment(current);
+        updateActiveElytraPreparation(current);
+        updateActiveElytraFlight(current);
+        updateActiveMount(current);
+        updateActiveInteraction(current);
         updateRelativeMovement(current, player);
         updateTargetMovement(current, player, world);
         if (shouldSampleObservations(current)) {
@@ -191,12 +239,41 @@ public final class AutomationExecutor {
             return;
         }
 
+        if (Boolean.TRUE.equals(current.state.get("look.failed"))) {
+            String reason = stringParam(current.state, "look.failure_reason", "look_failed");
+            AutomationReporter.block("[block]", "look -> " + reason);
+            AutomationCliViewModel.blocked(current.frameId, "look", reason);
+            current.state.remove("look.failed");
+            current.state.remove("look.failure_reason");
+            handleExecutionFailure(current, current.activeNodeId, reason);
+            return;
+        }
+
         if (Boolean.TRUE.equals(current.state.get("container.transfer.failed"))) {
             String reason = stringParam(current.state, "container.transfer.failure_reason", "transfer_failed");
             AutomationReporter.block("[block]", "container -> " + reason);
             AutomationCliViewModel.blocked(current.frameId, "container.transfer", reason);
             current.state.remove("container.transfer.failed");
             current.state.remove("container.transfer.failure_reason");
+            handleExecutionFailure(current, current.activeNodeId, reason);
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("interaction.failed"))) {
+            String reason = stringParam(current.state, "interaction.failure_reason", "interaction_unverified");
+            AutomationReporter.block("[block]", "interaction -> " + reason);
+            AutomationCliViewModel.blocked(current.frameId, "interaction", reason);
+            current.state.remove("interaction.failed");
+            current.state.remove("interaction.failure_reason");
+            handleExecutionFailure(current, current.activeNodeId, reason);
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("transport.failed"))) {
+            String reason = stringParam(current.state, "transport.failure_reason", "transport_failed");
+            AutomationReporter.block("[block]", "transport -> " + reason);
+            AutomationCliViewModel.blocked(current.frameId, "transport", reason);
+            current.state.remove("transport.failed");
             handleExecutionFailure(current, current.activeNodeId, reason);
             return;
         }
@@ -226,8 +303,47 @@ public final class AutomationExecutor {
             return;
         }
 
+        if (Boolean.TRUE.equals(current.state.get("mount.active"))) {
+            AutomationCliViewModel.activeState("riding", current.frameId, "waiting for verified mount");
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("boat.prepare.active"))) {
+            AutomationCliViewModel.activeState("riding", current.frameId,
+                    stringParam(current.state, "boat.prepare.phase", "preparing boat"));
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("boat.deploy.active"))) {
+            AutomationCliViewModel.activeState("riding", current.frameId, "deploying and locating boat");
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("elytra.prepare.active"))) {
+            AutomationCliViewModel.activeState("preparing", current.frameId,
+                    stringParam(current.state, "elytra.prepare.phase", "equipping elytra"));
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("elytra.flight.active"))) {
+            AutomationCliViewModel.activeState("gliding", current.frameId,
+                    stringParam(current.state, "elytra.flight.phase", "elytra flight"));
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("look.active"))) {
+            AutomationCliViewModel.activeState("looking", current.frameId, "smooth orientation");
+            return;
+        }
+
         if (Boolean.TRUE.equals(current.state.get("container.transfer.active"))) {
             AutomationCliViewModel.activeState("using", current.frameId, stringParam(current.state, "container.transfer.phase", "container"));
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("interaction.verify.active"))) {
+            AutomationCliViewModel.activeState("interacting", current.frameId,
+                    stringParam(current.state, "interaction.verify.kind", "waiting for world response"));
             return;
         }
 
@@ -375,6 +491,32 @@ public final class AutomationExecutor {
         int attempts = intState(current.state, attemptKey, 0);
         String policy = metadata.failurePolicy().toLowerCase(Locale.ROOT);
 
+        String action = current.activeAction == null
+                ? current.interpretationResult.selectedTemplateId()
+                : current.activeAction;
+        Optional<AutomationFailureRegistry.Match> failureMatch =
+                AutomationFailureRegistry.match(action, reason, current.state);
+        int failureIndex = intState(current.state, "result.failures_encountered", 0) + 1;
+        current.state.put("result.failures_encountered", failureIndex);
+        current.state.put("result.failure." + failureIndex + ".action", action);
+        current.state.put("result.failure." + failureIndex + ".reason",
+                reason == null ? "blocked" : reason);
+        current.state.put("result.failure." + failureIndex + ".node", nodeId == null ? "" : nodeId);
+        current.state.put("result.failure." + failureIndex + ".classification",
+                failureMatch.map(match -> match.type().id()).orElse("unknown"));
+        current.state.put("result.failure." + failureIndex + ".failure_type_file",
+                failureMatch.map(AutomationFailureRegistry.Match::file).orElse(""));
+        int recoveryIndex = intState(current.state, "result.recovery.count", 0) + 1;
+        failureMatch.ifPresent(match -> {
+            current.state.put("result.recovery." + recoveryIndex + ".failure",
+                    reason == null ? "blocked" : reason);
+            current.state.put("result.recovery." + recoveryIndex + ".classification", match.type().id());
+            current.state.put("result.recovery." + recoveryIndex + ".failure_type_file", match.file());
+            current.state.put("result.recovery." + recoveryIndex + ".knowledge_rule", match.type().auto_fix_rule());
+            current.state.put("result.recovery." + recoveryIndex + ".state_before",
+                    recoveryStateFingerprint(current.state));
+        });
+
         current.state.put("result.last_failure", reason == null ? "blocked" : reason);
         current.state.put("result.last_failure_node", nodeId == null ? "" : nodeId);
         current.activeNodeId = null;
@@ -396,10 +538,25 @@ public final class AutomationExecutor {
             return;
         }
 
-        if ("recover".equals(policy) && attempts < 1 && !metadata.recoveryTask().isBlank()) {
+        String knowledgeRecovery = failureMatch
+                .map(match -> stripKtlSuffix(match.type().auto_fix_rule()))
+                .filter(task -> !task.isBlank() && this.compilerService.assets().templateMetadata.containsKey(task))
+                .orElse("");
+        String metadataRecovery = stripKtlSuffix(metadata.recoveryTask());
+        String recoveryTask = !knowledgeRecovery.isBlank() ? knowledgeRecovery : metadataRecovery;
+        String recoverySignature = "ktl.recovery_strategy."
+                + recoveryTask.replace('/', '.').replace(' ', '_');
+        int strategyAttempts = intState(current.state, recoverySignature, 0);
+        boolean recoveryDeclared = !knowledgeRecovery.isBlank()
+                || ("recover".equals(policy) && !metadataRecovery.isBlank());
+
+        if (recoveryDeclared && attempts < 1 && strategyAttempts < 1
+                && this.executionStack.size() < 5) {
             current.state.put(attemptKey, attempts + 1);
+            current.state.put(recoverySignature, strategyAttempts + 1);
+            current.state.put("result.recovery.count", recoveryIndex);
+            current.state.put("result.recovery.used", true);
             current.index = failedIndex;
-            String recoveryTask = stripKtlSuffix(metadata.recoveryTask());
             try {
                 InterpretationResult recovery = this.compilerService.interpret(
                         new AutomationRequest(recoveryTask, true, true)
@@ -411,6 +568,8 @@ public final class AutomationExecutor {
                         "recover node " + failedIndex,
                         current.state
                 );
+                current.state.put("result.recovery." + recoveryIndex + ".task", recoveryTask);
+                current.state.put("result.recovery." + recoveryIndex + ".result", "active");
                 AutomationReporter.run("[recover]", current.interpretationResult.selectedTemplateId()
                         + " -> " + recoveryTask);
                 AutomationCliViewModel.delegate(
@@ -436,6 +595,17 @@ public final class AutomationExecutor {
                 : normalized;
     }
 
+    private String recoveryStateFingerprint(Map<String, Object> state) {
+        return round(doubleState(state, "player.x", doubleState(state, "result.after.x", 0.0D))) + ","
+                + round(doubleState(state, "player.y", doubleState(state, "result.after.y", 0.0D))) + ","
+                + round(doubleState(state, "player.z", doubleState(state, "result.after.z", 0.0D))) + "|"
+                + stringParam(state, "current.target.id", "") + "|"
+                + intState(state, "state.counter", 0) + "|"
+                + stringParam(state, "result.after.screen", stringParam(state, "result.before.screen", "")) + "|"
+                + booleanState(state, "result.after.mounted", booleanState(state, "result.before.mounted", false)) + "|"
+                + intState(state, "result.after.item_count", intState(state, "result.before.item_count", 0));
+    }
+
     private String startExecution(ExecutionPlan plan, InterpretationResult interpretationResult, String parentFrameId, String resumeLabel, Map<String, Object> inheritedState) {
         String frameId = String.format("frame-%04d", FRAME_SEQUENCE.incrementAndGet());
         Map<String, Object> state = new LinkedHashMap<>();
@@ -443,6 +613,10 @@ public final class AutomationExecutor {
             state.putAll(inheritedState);
         }
         state.putAll(plan.params());
+        if (parentFrameId == null) {
+            captureRequestedEvidence(state, interpretationResult);
+            captureStateEvidence(state, "result.before.");
+        }
 
         AutomationReporter.run("[run ]", "objective -> " + interpretationResult.selectedTemplateId());
         AutomationReporter.mem("active.template", interpretationResult.selectedTemplateId());
@@ -459,6 +633,10 @@ public final class AutomationExecutor {
         }
 
         ActiveExecution finished = this.executionStack.pop();
+        boolean rootExecution = this.executionStack.isEmpty();
+        if (rootExecution) {
+            status = finalizeStructuredEvidence(finished, status);
+        }
 
         if (finished.state.containsKey("state.counter") && finished.state.containsKey("count.value")) {
             AutomationReporter.info("[info]", "final.progress = [ " + finished.state.get("state.counter") + " / " + finished.state.get("count.value") + " ]");
@@ -479,6 +657,28 @@ public final class AutomationExecutor {
         if (!this.executionStack.isEmpty()) {
             ActiveExecution parent = this.executionStack.peek();
             parent.state.putAll(finished.state);
+            if (finished.resumeLabel != null && finished.resumeLabel.startsWith("recover node ")) {
+                int recoveryIndex = intState(parent.state, "result.recovery.count", 1);
+                String beforeRecovery = stringParam(parent.state,
+                        "result.recovery." + recoveryIndex + ".state_before", "");
+                String afterRecovery = recoveryStateFingerprint(parent.state);
+                boolean recoveryChangedState = !beforeRecovery.isBlank() && !beforeRecovery.equals(afterRecovery);
+                boolean recoverySucceeded = "success".equals(status) && recoveryChangedState;
+                parent.state.put("result.recovery." + recoveryIndex + ".result", status);
+                parent.state.put("result.recovery." + recoveryIndex + ".state_after",
+                        afterRecovery);
+                parent.state.put("result.recovery." + recoveryIndex + ".state_changed", recoveryChangedState);
+                parent.state.put("result.recovery." + recoveryIndex + ".original_task_resumed",
+                        recoverySucceeded);
+                parent.state.put("result.recovery_tasks_executed",
+                        intState(parent.state, "result.recovery_tasks_executed", 0) + 1);
+                if ("success".equals(status) && !recoveryChangedState) {
+                    status = "blocked";
+                    parent.state.put("result.reason", "no_progress_after_recovery");
+                    parent.state.put("result.retry_same_action", false);
+                    parent.state.put("result.replan_recommended", true);
+                }
+            }
             AutomationCliViewModel.returned(finished.frameId, parent.frameId, status, finished.resumeLabel);
             if (finished.resumeLabel != null && !finished.resumeLabel.isBlank()) {
                 AutomationReporter.ok("[return]", "return_to = " + finished.resumeLabel);
@@ -491,6 +691,8 @@ public final class AutomationExecutor {
                 finishCurrentExecution(status);
             }
         } else {
+            this.navigationPlanner.cancel();
+            releaseAllInputs();
             runCompletionCommand(status, finished.state);
             String failureCode = "success".equalsIgnoreCase(status) ? "" : executionFailureCode(finished.state, status);
             String detail = "success".equalsIgnoreCase(status)
@@ -500,7 +702,15 @@ public final class AutomationExecutor {
             // CompletableFuture callbacks may run inline from publish(), and
             // model-driven action chains are allowed to start their next task
             // from that callback.
-            AutomationRuntimeStatus.idle(status);
+            switch (status.toLowerCase(Locale.ROOT)) {
+                case "success", "completed" -> AutomationRuntimeStatus.completed(detail);
+                case "already_satisfied" -> AutomationRuntimeStatus.alreadySatisfied(detail);
+                case "partial" -> AutomationRuntimeStatus.partial(detail);
+                case "blocked", "no_target", "timed_out" -> AutomationRuntimeStatus.blocked(detail);
+                case "cancelled", "canceled" -> AutomationRuntimeStatus.canceled(detail);
+                case "interrupted" -> AutomationRuntimeStatus.interrupted(detail);
+                default -> AutomationRuntimeStatus.failed(detail);
+            }
             publishExecutionResult(finished, status, failureCode, detail);
             AutomationCliViewModel.offerFeedbackPrompt();
         }
@@ -535,13 +745,164 @@ public final class AutomationExecutor {
         ));
     }
 
+    private void captureRequestedEvidence(Map<String, Object> state, InterpretationResult interpretationResult) {
+        state.put("result.action_id", interpretationResult == null ? "" : interpretationResult.selectedTemplateId());
+        copyEvidence(state, "target.id", "result.requested.target_id");
+        copyEvidence(state, "target.kind", "result.requested.target_kind");
+        copyEvidence(state, "target.selector", "result.requested.selector");
+        copyEvidence(state, "target.x", "result.requested.target_x");
+        copyEvidence(state, "target.y", "result.requested.target_y");
+        copyEvidence(state, "target.z", "result.requested.target_z");
+        copyEvidence(state, "count.value", "result.requested.count");
+        copyEvidence(state, "radius", "result.requested.radius");
+        copyEvidence(state, "item.id", "result.requested.item_id");
+        copyEvidence(state, "block.id", "result.requested.block_id");
+    }
+
+    private static void copyEvidence(Map<String, Object> state, String from, String to) {
+        Object value = state.get(from);
+        if (value != null && !value.toString().isBlank()) state.put(to, value);
+    }
+
+    private void captureStateEvidence(Map<String, Object> state, String prefix) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientWorld world = client == null ? null : client.world;
+        if (player == null) return;
+        state.put(prefix + "health", round(player.getHealth()));
+        state.put(prefix + "max_health", round(player.getMaxHealth()));
+        state.put(prefix + "hunger", player.getHungerManager().getFoodLevel());
+        state.put(prefix + "saturation", round(player.getHungerManager().getSaturationLevel()));
+        state.put(prefix + "x", round(player.getX()));
+        state.put(prefix + "y", round(player.getY()));
+        state.put(prefix + "z", round(player.getZ()));
+        state.put(prefix + "dimension", world == null ? "" : world.getRegistryKey().getValue().toString());
+        state.put(prefix + "screen", client.currentScreen == null ? "world" : client.currentScreen.getClass().getSimpleName());
+        state.put(prefix + "mounted", player.hasVehicle());
+        Identifier vehicleId = player.getVehicle() == null ? null : Registries.ENTITY_TYPE.getId(player.getVehicle().getType());
+        state.put(prefix + "vehicle", vehicleId == null ? "" : vehicleId.toString());
+        String itemId = stringParam(state, "item.id", stringParam(state, "result.requested.item_id", ""));
+        if (!itemId.isBlank()) state.put(prefix + "item_count", countInventory(player.getInventory(), itemId));
+    }
+
+    private String finalizeStructuredEvidence(ActiveExecution execution, String rawStatus) {
+        Map<String, Object> state = execution.state;
+        captureStateEvidence(state, "result.after.");
+        putNumericDelta(state, "health");
+        putNumericDelta(state, "hunger");
+        putNumericDelta(state, "saturation");
+        putNumericDelta(state, "item_count");
+        putNumericDelta(state, "x");
+        putNumericDelta(state, "y");
+        putNumericDelta(state, "z");
+        if (execution.initialPosition != null) {
+            double endX = doubleState(state, "result.after.x", execution.initialPosition.x());
+            double endY = doubleState(state, "result.after.y", execution.initialPosition.y());
+            double endZ = doubleState(state, "result.after.z", execution.initialPosition.z());
+            double dx = endX - execution.initialPosition.x();
+            double dy = endY - execution.initialPosition.y();
+            double dz = endZ - execution.initialPosition.z();
+            state.put("result.distance_traveled", round(Math.sqrt(dx * dx + dy * dy + dz * dz)));
+        }
+        if (state.containsKey("result.requested.target_x") && state.containsKey("result.requested.target_z")) {
+            double targetX = doubleState(state, "result.requested.target_x", doubleState(state, "result.after.x", 0.0D));
+            double targetY = doubleState(state, "result.requested.target_y", doubleState(state, "result.after.y", 0.0D));
+            double targetZ = doubleState(state, "result.requested.target_z", doubleState(state, "result.after.z", 0.0D));
+            double beforeDistance = distance3(
+                    doubleState(state, "result.before.x", targetX), doubleState(state, "result.before.y", targetY), doubleState(state, "result.before.z", targetZ),
+                    targetX, targetY, targetZ);
+            double afterDistance = distance3(
+                    doubleState(state, "result.after.x", targetX), doubleState(state, "result.after.y", targetY), doubleState(state, "result.after.z", targetZ),
+                    targetX, targetY, targetZ);
+            state.put("result.distance_requested", round(beforeDistance));
+            state.put("result.distance_remaining", round(afterDistance));
+        }
+        int requested = intState(state, "result.requested.count", intState(state, "count.value", 0));
+        int completed = intState(state, "state.counter", intState(state, "result.completed_amount", 0));
+        if (requested > 0) {
+            state.put("result.completed_amount", Math.min(requested, Math.max(0, completed)));
+            state.put("result.remaining_amount", Math.max(0, requested - completed));
+        }
+        boolean changed = meaningfulStateChange(state);
+        state.put("result.state_changed", changed);
+        String validation = stringParam(state, "result.validation.status", "not_required");
+        String template = execution.interpretationResult.selectedTemplateId().toLowerCase(Locale.ROOT);
+        boolean success = "success".equalsIgnoreCase(rawStatus);
+        boolean reached = success && !"failed".equals(validation);
+        if (template.contains("move_to_position") && state.containsKey("result.distance_remaining")) {
+            reached = reached && doubleState(state, "result.distance_remaining", Double.MAX_VALUE) <= 1.5D;
+        }
+        if (requested > 0) reached = reached && completed >= requested;
+        if (template.contains("eat_item") && intState(state, "result.before.hunger", 0) >= 20 && !changed) {
+            state.put("result.reason", "hunger_full");
+            state.put("result.objective_reached", true);
+            state.put("result.retry_same_action", false);
+            state.put("result.replan_recommended", false);
+            return "already_satisfied";
+        }
+        if (booleanState(state, "result.already_satisfied", false)) {
+            state.put("result.objective_reached", true);
+            state.put("result.retry_same_action", false);
+            state.put("result.continue_recommended", false);
+            state.put("result.replan_recommended", false);
+            return "already_satisfied";
+        }
+        state.put("result.objective_reached", reached);
+        state.put("result.retry_same_action", !reached && booleanState(state, "result.retryable", false) && !unchangedFailure(state));
+        state.put("result.continue_recommended", !reached && changed);
+        state.put("result.replan_recommended", !reached && (!changed || !booleanState(state, "result.retry_same_action", false)));
+        if (success && !reached) return changed ? "partial" : "blocked";
+        if (!success && changed) return "partial";
+        return rawStatus;
+    }
+
+    private static double distance3(double ax, double ay, double az, double bx, double by, double bz) {
+        double dx = bx - ax;
+        double dy = by - ay;
+        double dz = bz - az;
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    private static void putNumericDelta(Map<String, Object> state, String key) {
+        Object before = state.get("result.before." + key);
+        Object after = state.get("result.after." + key);
+        if (before instanceof Number a && after instanceof Number b) {
+            state.put("result.delta." + key, Math.round((b.doubleValue() - a.doubleValue()) * 100.0D) / 100.0D);
+        }
+    }
+
+    private boolean meaningfulStateChange(Map<String, Object> state) {
+        for (Map.Entry<String, Object> entry : state.entrySet()) {
+            if (!entry.getKey().startsWith("result.delta.")) continue;
+            if (entry.getValue() instanceof Number number && Math.abs(number.doubleValue()) > 0.01D) return true;
+        }
+        if (doubleState(state, "result.distance_traveled", 0.0D) > 0.05D) return true;
+        if (intState(state, "state.counter", 0) > 0) return true;
+        return !stringParam(state, "result.validation.status", "").equals("failed")
+                && stringParam(state, "result.validation.status", "").equals("passed");
+    }
+
+    private boolean unchangedFailure(Map<String, Object> state) {
+        return !booleanState(state, "result.state_changed", false)
+                && !stringParam(state, "result.last_failure", "").isBlank();
+    }
+
+    private static boolean booleanState(Map<String, Object> state, String key, boolean fallback) {
+        Object value = state.get(key);
+        if (value instanceof Boolean bool) return bool;
+        return value == null ? fallback : Boolean.parseBoolean(value.toString());
+    }
+
     private static String executionFailureCode(Map<String, Object> state, String fallback) {
         for (String key : List.of(
                 "move.failure_reason",
                 "attack.failure_reason",
                 "mine.failure_reason",
+                "mount.failure_reason",
                 "consume.failure_reason",
                 "container.transfer.failure_reason",
+                "transport.failure_reason",
+                "scan.failure_reason",
                 "result.reason"
         )) {
             Object value = state.get(key);
@@ -581,9 +942,15 @@ public final class AutomationExecutor {
         return Boolean.TRUE.equals(state.get("consume.active"))
                 || Boolean.TRUE.equals(state.get("attack.active"))
                 || Boolean.TRUE.equals(state.get("mine.active"))
+                || Boolean.TRUE.equals(state.get("mount.active"))
+                || Boolean.TRUE.equals(state.get("boat.prepare.active"))
+                || Boolean.TRUE.equals(state.get("boat.deploy.active"))
+                || Boolean.TRUE.equals(state.get("elytra.prepare.active"))
+                || Boolean.TRUE.equals(state.get("elytra.flight.active"))
                 || Boolean.TRUE.equals(state.get("move.relative.active"))
                 || Boolean.TRUE.equals(state.get("move.target.active"))
                 || Boolean.TRUE.equals(state.get("container.transfer.active"))
+                || Boolean.TRUE.equals(state.get("interaction.verify.active"))
                 || intState(state, "wait.ticks", 0) > 0;
     }
 
@@ -712,6 +1079,96 @@ public final class AutomationExecutor {
                 AutomationReporter.mem(resultKey, value);
                 yield true;
             }
+            case "cap.world.inspect_surroundings" -> {
+                if (client == null || player == null || world == null) {
+                    yield false;
+                }
+                int radius = MathHelper.clamp(
+                        intParam(resolvedParams, "search.radius", BOAT_SEARCH_RADIUS_DEFAULT),
+                        2,
+                        BOAT_SEARCH_RADIUS_MAXIMUM
+                );
+                SurroundingsScan scan = scanSurroundings(client, player, world, radius);
+                writeSurroundingsEvidence(state, player, scan,
+                        stringParam(resolvedParams, "inspect.focus", "general"));
+                yield true;
+            }
+
+            case "cap.build.resolve_exact_target" -> {
+                if (player == null || world == null) {
+                    yield false;
+                }
+                BlockPos target = new BlockPos(
+                        intParam(resolvedParams, "target.x", player.getBlockX()),
+                        intParam(resolvedParams, "target.y", player.getBlockY() - 1),
+                        intParam(resolvedParams, "target.z", player.getBlockZ())
+                );
+                BlockPos stand = placementStandPosition(world, player, target);
+                if (stand == null) {
+                    state.put("result.reason", "no_safe_placement_position");
+                    yield false;
+                }
+                state.put("current.target.kind", "block");
+                state.put("current.target.id", stringParam(resolvedParams, "block.id", ""));
+                state.put("current.target.x", target.getX());
+                state.put("current.target.y", target.getY());
+                state.put("current.target.z", target.getZ());
+                state.put("build.stand.x", stand.getX() + 0.5D);
+                state.put("build.stand.y", (double) stand.getY());
+                state.put("build.stand.z", stand.getZ() + 0.5D);
+                yield world.getBlockState(target).isReplaceable()
+                        || stringParam(resolvedParams, "block.id", "").equals(blockId(world, target));
+            }
+            case "cap.build.resolve_pattern_target" -> {
+                if (player == null || world == null) {
+                    yield false;
+                }
+                int index = Math.max(0, intParam(resolvedParams, "state.counter", intState(state, "state.counter", 0)));
+                int length = Math.max(1, intParam(resolvedParams, "pattern.length", 1));
+                int width = Math.max(1, intParam(resolvedParams, "pattern.width", 1));
+                String pattern = stringParam(resolvedParams, "pattern.id", "line").toLowerCase(Locale.ROOT);
+                Direction forward = buildDirection(player, stringParam(resolvedParams, "direction.id", "forward"));
+                Direction right = forward.rotateYClockwise();
+                if (!state.containsKey("build.origin.x")) {
+                    BlockPos origin = player.getBlockPos();
+                    state.put("build.origin.x", origin.getX());
+                    state.put("build.origin.y", origin.getY());
+                    state.put("build.origin.z", origin.getZ());
+                    state.put("build.direction", forward.asString());
+                }
+                int[] offset = buildPatternOffset(pattern, index, length, width);
+                int originX = intState(state, "build.origin.x", player.getBlockX());
+                int originY = intState(state, "build.origin.y", player.getBlockY());
+                int originZ = intState(state, "build.origin.z", player.getBlockZ());
+                int targetX = originX + forward.getOffsetX() * offset[0] + right.getOffsetX() * offset[1];
+                int targetY = originY - 1;
+                int targetZ = originZ + forward.getOffsetZ() * offset[0] + right.getOffsetZ() * offset[1];
+                if (index == 0) {
+                    state.put("build.stand.x", originX + 0.5D);
+                    state.put("build.stand.y", (double) originY);
+                    state.put("build.stand.z", originZ + 0.5D);
+                } else {
+                    state.put("build.stand.x", doubleState(state, "current.target.x", originX) + 0.5D);
+                    state.put("build.stand.y", doubleState(state, "current.target.y", targetY) + 1.0D);
+                    state.put("build.stand.z", doubleState(state, "current.target.z", originZ) + 0.5D);
+                }
+                state.put("current.target.kind", "block");
+                state.put("current.target.id", stringParam(resolvedParams, "block.id", ""));
+                state.put("current.target.x", targetX);
+                state.put("current.target.y", targetY);
+                state.put("current.target.z", targetZ);
+                state.put("build.pattern", pattern);
+                state.put("build.index", index);
+                state.put("build.target.x", targetX);
+                state.put("build.target.y", targetY);
+                state.put("build.target.z", targetZ);
+                AutomationReporter.mem("build.index", index);
+                AutomationReporter.mem("build.target.x", targetX);
+                AutomationReporter.mem("build.target.y", targetY);
+                AutomationReporter.mem("build.target.z", targetZ);
+                yield world.getBlockState(new BlockPos(targetX, targetY, targetZ)).isReplaceable()
+                        || stringParam(resolvedParams, "block.id", "").equals(blockId(world, new BlockPos(targetX, targetY, targetZ)));
+            }
 
             case "cap.input.press_key" -> {
                 String keyId = stringParam(resolvedParams, "input.key", "");
@@ -826,13 +1283,27 @@ public final class AutomationExecutor {
                 if (client == null || player == null) {
                     yield false;
                 }
-                if (client.currentScreen != null) {
+                if (client.currentScreen instanceof InventoryScreen) {
+                    state.put("result.reason", "inventory_already_open");
+                    state.put("result.objective_reached", true);
+                    state.put("result.validation.status", "passed");
                     yield true;
                 }
-                tapInput("inventory", 2);
-                state.put("result.action", "SUCCESS");
-                AutomationReporter.mem("result.action", "SUCCESS");
-                yield true;
+                if (client.currentScreen != null) {
+                    state.put("result.reason", "another_screen_open");
+                    yield false;
+                }
+                state.put("result.before.target_screen", "world");
+                performImmediateTapAction("inventory", client, player);
+                boolean opened = client.currentScreen instanceof InventoryScreen;
+                state.put("result.after.target_screen", screenName(client));
+                state.put("result.validation.status", opened ? "passed" : "failed");
+                state.put("result.validation.fact", opened
+                        ? "The player's normal inventory screen opened."
+                        : "The inventory screen did not open.");
+                state.put("result.action", opened ? "SUCCESS" : "FAIL");
+                AutomationReporter.mem("result.action", opened ? "SUCCESS" : "FAIL");
+                yield opened;
             }
             case "cap.container.find_item_in_open_screen" -> {
                 if (player == null) {
@@ -1107,8 +1578,16 @@ public final class AutomationExecutor {
                         if (blockId.isBlank()) {
                             yield false;
                         }
+                        Identifier requestedId = Identifier.tryParse(blockId);
+                        if (requestedId == null || !Registries.BLOCK.containsId(requestedId)) {
+                            state.put("scan.failure_reason", "unknown_block_id");
+                            state.put("result.reason", "unknown_block_id");
+                            state.put("result.requested_target_id", blockId);
+                            state.put("result.retryable", false);
+                            yield false;
+                        }
                         writeScanTelemetry(state, "block", blockId, selectorId, radius, countMatchingBlocks(player, blockId, radius));
-                        BlockPos pos = findNearestBlock(player, blockId, radius);
+                        BlockPos pos = findBlockBySelector(player, blockId, radius, selectorId);
                         if (pos == null) {
                             state.put("scan.failure_reason", "no_matching_block");
                             yield false;
@@ -1162,6 +1641,35 @@ public final class AutomationExecutor {
                     }
                 };
             }
+            case "cap.world.snapshot_target_count" -> {
+                if (player == null || world == null) yield false;
+                String kind = stringParam(resolvedParams, "target.kind", "entity").toLowerCase(Locale.ROOT);
+                String targetId = stringParam(resolvedParams, "target.id", "");
+                double radius = doubleParam(resolvedParams, "radius", "block".equals(kind) ? 6.0D : 24.0D);
+                if (targetId.isBlank()) yield false;
+                int count = switch (kind) {
+                    case "block" -> countMatchingBlocks(player, targetId, Math.max(1, (int) Math.ceil(radius)));
+                    case "player" -> countMatchingPlayers(player, targetId, radius);
+                    case "item" -> countMatchingItems(player, targetId, radius);
+                    default -> countMatchingEntities(player, targetId, radius);
+                };
+                state.put("count.value", count);
+                state.put("result.requested_count", count);
+                state.put("result.requested.count", count);
+                state.put("result.targets_found", count);
+                state.put("collection.initial_count", count);
+                state.put("collection.quantity_mode", "all");
+                state.put("state.counter", 0);
+                if (count == 0) {
+                    state.put("result.reason", "no_matching_targets");
+                    state.put("result.already_satisfied", true);
+                    state.put("result.objective_reached", true);
+                    state.put("result.retry_same_action", false);
+                }
+                writeScanTelemetry(state, kind, targetId, "all_snapshot", radius, count);
+                AutomationReporter.mem("collection.initial_count", count);
+                yield true;
+            }
             case "cap.world.validate_target" -> {
                 if (player == null || world == null) {
                     yield false;
@@ -1188,6 +1696,20 @@ public final class AutomationExecutor {
                 AutomationReporter.mem(resultKey, valid);
                 yield valid;
             }
+            case "cap.world.verify_block_target" -> {
+                if (world == null || !hasTargetPosition(state)) {
+                    yield false;
+                }
+                String expected = stringParam(resolvedParams, "block.id", stringParam(state, "current.target.id", ""));
+                String actual = blockId(world, targetBlockPos(state));
+                boolean matched = !expected.isBlank() && expected.equals(actual);
+                state.put("build.validation", matched ? "passed" : "failed");
+                state.put("build.actual_block", actual);
+                state.put("result.action", matched ? "SUCCESS" : "FAIL");
+                AutomationReporter.mem("build.validation", matched ? "passed" : "failed");
+                AutomationReporter.mem("build.actual_block", actual);
+                yield matched;
+            }
             case "cap.world.target_in_range" -> {
                 if (player == null || !hasTargetPosition(state)) {
                     yield false;
@@ -1211,15 +1733,61 @@ public final class AutomationExecutor {
                 }
                 String uuid = stringParam(state, "current.target.uuid", "");
                 Entity entity = findEntityByUuid(world, uuid);
-                if (entity != null) {
-                    facePosition(player, entity.getEyePos());
-                    yield true;
+                Vec3d target = entity != null
+                        ? entity.getEyePos()
+                        : hasTargetPosition(state)
+                        ? new Vec3d(doubleState(state, "current.target.x", player.getX()) + 0.5D,
+                        doubleState(state, "current.target.y", player.getEyeY()),
+                        doubleState(state, "current.target.z", player.getZ()) + 0.5D)
+                        : null;
+                if (target == null) yield false;
+                float[] angles = lookAngles(player, target);
+                state.put("look.target.yaw", angles[0]);
+                state.put("look.target.pitch", angles[1]);
+                state.put("look.horizontal_only", booleanParam(resolvedParams, "horizontal.only", false));
+                String turnSpeed = stringParam(resolvedParams, "turn.speed", "natural").toLowerCase(Locale.ROOT);
+                if (!Set.of("slow", "natural", "fast").contains(turnSpeed)) turnSpeed = "natural";
+                state.put("look.turn_speed", turnSpeed);
+                double configuredMaximum = doubleParam(resolvedParams, "maximum.degrees.per.tick", -1.0D);
+                if (configuredMaximum >= 0.5D) {
+                    state.put("look.maximum_degrees_per_tick", MathHelper.clamp(configuredMaximum, 0.5D, 30.0D));
                 }
-                if (hasTargetPosition(state)) {
-                    facePosition(player, new Vec3d(doubleState(state, "current.target.x", player.getX()) + 0.5D, doubleState(state, "current.target.y", player.getEyeY()), doubleState(state, "current.target.z", player.getZ()) + 0.5D));
-                    yield true;
+                state.put("look.ticks", 0);
+                state.put("look.active", true);
+                state.put("result.validation.status", "pending");
+                state.put("result.validation.fact", "The view is turning smoothly toward the live target before alignment is checked.");
+                yield true;
+            }
+            case "cap.look.verify_target" -> {
+                if (player == null || world == null) yield false;
+                String uuid = stringParam(state, "current.target.uuid", "");
+                Entity entity = findEntityByUuid(world, uuid);
+                Vec3d target = entity != null
+                        ? entity.getEyePos()
+                        : hasTargetPosition(state)
+                        ? new Vec3d(doubleState(state, "current.target.x", player.getX()) + 0.5D,
+                        doubleState(state, "current.target.y", player.getEyeY()),
+                        doubleState(state, "current.target.z", player.getZ()) + 0.5D)
+                        : null;
+                if (target == null) {
+                    state.put("result.validation.status", "failed");
+                    state.put("result.validation.fact", "The selected target disappeared before orientation could be verified.");
+                    yield false;
                 }
-                yield false;
+                float[] angles = lookAngles(player, target);
+                float yawError = Math.abs(MathHelper.wrapDegrees(angles[0] - player.getYaw()));
+                float pitchError = Math.abs(angles[1] - player.getPitch());
+                boolean horizontalOnly = booleanParam(resolvedParams, "horizontal.only", false);
+                double maximum = doubleParam(resolvedParams, "maximum.error.degrees", 2.5D);
+                boolean verified = yawError <= maximum && (horizontalOnly || pitchError <= maximum);
+                state.put("result.validation.status", verified ? "passed" : "failed");
+                state.put("result.validation.target", stringParam(state, "current.target.id", entity == null ? "target" : entity.getName().getString()));
+                state.put("result.validation.yaw_error", yawError);
+                state.put("result.validation.pitch_error", pitchError);
+                state.put("result.validation.fact", verified
+                        ? "The player orientation was independently compared with the live target position."
+                        : "The player orientation did not align with the live target within " + maximum + " degrees.");
+                yield verified;
             }
             case "cap.look.face_target_horizontal" -> {
                 if (player == null || world == null) {
@@ -1630,6 +2198,78 @@ public final class AutomationExecutor {
                 AutomationReporter.mem("result.action", "SUCCESS");
                 yield true;
             }
+            case "cap.transport.mount_target" -> {
+                if (player == null || interactionManager == null || world == null) yield false;
+                Entity entity = resolveTargetEntity(world, resolvedParams, state);
+                if (entity == null) yield false;
+                ActionResult result = interactionManager.interactEntity(player, entity, Hand.MAIN_HAND);
+                player.swingHand(Hand.MAIN_HAND);
+                writeActionResult(state, "result.action", result);
+                if (result == ActionResult.FAIL) yield false;
+                state.put("mount.active", true);
+                state.put("mount.ticks", 0);
+                state.put("mount.target.uuid", entity.getUuidAsString());
+                state.put("mount.target.id", Registries.ENTITY_TYPE.getId(entity.getType()).toString());
+                state.put("result.validation.status", "pending");
+                state.put("result.validation.fact", "Waiting for the server-confirmed ridden vehicle before continuing.");
+                yield true;
+            }
+            case "cap.transport.verify_mounted" -> {
+                if (player == null || !player.hasVehicle()) yield false;
+                String expected = stringParam(state, "mount.target.uuid", "");
+                Entity vehicle = player.getVehicle();
+                boolean matched = vehicle != null && (expected.isBlank() || expected.equals(vehicle.getUuidAsString()));
+                state.put("result.validation.status", matched ? "passed" : "failed");
+                state.put("result.validation.vehicle", vehicle == null ? "" : Registries.ENTITY_TYPE.getId(vehicle.getType()).toString());
+                yield matched;
+            }
+            case "cap.transport.verify_dismounted" -> {
+                if (player == null) yield false;
+                boolean dismounted = !player.hasVehicle();
+                state.put("result.validation.status", dismounted ? "passed" : "failed");
+                state.put("result.validation.fact", dismounted
+                        ? "The player is no longer riding a vehicle."
+                        : "The player is still riding a vehicle.");
+                yield dismounted;
+            }
+            case "cap.transport.resolve_boat_target" -> {
+                yield resolveBoatPlacementTarget(client, player, world, resolvedParams, state);
+            }
+            case "cap.transport.prepare_boat" -> {
+                yield beginBoatPreparation(client, player, interactionManager, world, resolvedParams, state);
+            }
+            case "cap.transport.deploy_boat" -> {
+                yield beginBoatDeployment(player, interactionManager, world, resolvedParams, state);
+            }
+            case "cap.transport.verify_boat_mounted" -> {
+                if (player == null || !(player.getVehicle() instanceof BoatEntity boat)) yield false;
+                String expectedUuid = stringParam(state, "boat.deployed.uuid", "");
+                String expectedItem = stringParam(resolvedParams, "boat.item", stringParam(state, "boat.item", ""));
+                Identifier actualItem = Registries.ITEM.getId(boat.asItem());
+                boolean verified = (expectedUuid.isBlank() || expectedUuid.equals(boat.getUuidAsString()))
+                        && actualItem != null && expectedItem.equals(actualItem.toString());
+                state.put("result.validation.status", verified ? "passed" : "failed");
+                state.put("result.validation.vehicle_uuid", boat.getUuidAsString());
+                state.put("result.validation.vehicle_item", actualItem == null ? "" : actualItem.toString());
+                state.put("result.validation.fact", verified
+                        ? "The newly deployed exact boat is the player's server-confirmed vehicle."
+                        : "The ridden vehicle did not match the exact deployed boat evidence.");
+                yield verified;
+            }
+            case "cap.transport.prepare_elytra" -> {
+                yield beginElytraPreparation(client, player, interactionManager, resolvedParams, state);
+            }
+            case "cap.transport.fly_elytra" -> {
+                yield beginElytraFlight(player, world, resolvedParams, state);
+            }
+            case "cap.transport.verify_elytra_arrival" -> {
+                boolean verified = "passed".equals(stringParam(state, "elytra.arrival.status", ""));
+                state.put("result.validation.status", verified ? "passed" : "failed");
+                state.put("result.validation.fact", verified
+                        ? "The player entered the requested radius while server-confirmed fall-flying."
+                        : "No verified in-flight arrival evidence was recorded.");
+                yield verified;
+            }
             case "cap.player.crouch" -> {
                 setHeldInput("sneak", true);
                 yield true;
@@ -1651,39 +2291,25 @@ public final class AutomationExecutor {
                 if (player == null || interactionManager == null || world == null) {
                     yield false;
                 }
-                Hand hand = resolveHand(resolvedParams);
-                ActionResult result = interactionManager.interactItem(player, hand);
-                player.swingHand(hand);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedItemUse(client, player, interactionManager, resolveHand(resolvedParams), state);
             }
             case "cap.interaction.use_main_hand_item" -> {
                 if (player == null || interactionManager == null || world == null) {
                     yield false;
                 }
-                ActionResult result = interactionManager.interactItem(player, Hand.MAIN_HAND);
-                player.swingHand(Hand.MAIN_HAND);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedItemUse(client, player, interactionManager, Hand.MAIN_HAND, state);
             }
             case "cap.interaction.use_off_hand_item" -> {
                 if (player == null || interactionManager == null || world == null) {
                     yield false;
                 }
-                ActionResult result = interactionManager.interactItem(player, Hand.OFF_HAND);
-                player.swingHand(Hand.OFF_HAND);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedItemUse(client, player, interactionManager, Hand.OFF_HAND, state);
             }
             case "cap.interaction.use_selected_item" -> {
                 if (player == null || interactionManager == null || world == null) {
                     yield false;
                 }
-                Hand hand = resolveHand(resolvedParams);
-                ActionResult result = interactionManager.interactItem(player, hand);
-                player.swingHand(hand);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedItemUse(client, player, interactionManager, resolveHand(resolvedParams), state);
             }
             case "cap.interaction.use_item_on_block_target" -> {
                 if (player == null || interactionManager == null || world == null) {
@@ -1693,11 +2319,10 @@ public final class AutomationExecutor {
                 if (hitResult == null) {
                     yield false;
                 }
-                Hand hand = resolveHand(resolvedParams);
-                ActionResult result = interactionManager.interactBlock(player, hand, hitResult);
-                player.swingHand(hand);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedBlockInteraction(client, player, interactionManager, world,
+                        hitResult, resolveHand(resolvedParams),
+                        booleanParam(resolvedParams, "interaction.sneak", false),
+                        false, true, state);
             }
             case "cap.interaction.use_item_on_current_block" -> {
                 if (player == null || interactionManager == null || world == null) {
@@ -1707,11 +2332,10 @@ public final class AutomationExecutor {
                     yield false;
                 }
                 BlockHitResult hitResult = createCenterHit(player, targetBlockPos(state));
-                Hand hand = resolveHand(resolvedParams);
-                ActionResult result = interactionManager.interactBlock(player, hand, hitResult);
-                player.swingHand(hand);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedBlockInteraction(client, player, interactionManager, world,
+                        hitResult, resolveHand(resolvedParams),
+                        booleanParam(resolvedParams, "interaction.sneak", false),
+                        false, false, state);
             }
             case "cap.interaction.interact_entity_target" -> {
                 if (player == null || interactionManager == null || world == null) {
@@ -1721,10 +2345,39 @@ public final class AutomationExecutor {
                 if (entity == null) {
                     yield false;
                 }
+                yield beginVerifiedEntityInteraction(client, player, interactionManager, entity,
+                        resolveHand(resolvedParams),
+                        booleanParam(resolvedParams, "interaction.sneak", false), state);
+            }
+            case "cap.interaction.place_block_target" -> {
+                if (player == null || interactionManager == null || world == null || !hasTargetPosition(state)) {
+                    yield false;
+                }
+                BlockPos target = targetBlockPos(state);
+                String expected = stringParam(resolvedParams, "block.id", stringParam(state, "current.target.id", ""));
+                if (!expected.isBlank() && expected.equals(blockId(world, target))) {
+                    state.put("result.action", "UNCHANGED");
+                    yield true;
+                }
+                BlockHitResult placement = placementHit(world, target);
+                if (placement == null || !world.getBlockState(target).isReplaceable()) {
+                    state.put("result.reason", placement == null ? "no_placement_support" : "target_not_replaceable");
+                    yield false;
+                }
                 Hand hand = resolveHand(resolvedParams);
-                ActionResult result = interactionManager.interactEntity(player, entity, hand);
+                boolean sneak = booleanParam(resolvedParams, "interaction.sneak", true);
+                if (sneak) setHeldInput("sneak", true);
+                applyPlayerInputState(player);
+                facePosition(player, placement.getPos());
+                ActionResult result = interactionManager.interactBlock(player, hand, placement);
                 player.swingHand(hand);
+                if (sneak) {
+                    setHeldInput("sneak", false);
+                    applyPlayerInputState(player);
+                }
                 writeActionResult(state, "result.action", result);
+                state.put("build.placement_support", placement.getBlockPos().toShortString());
+                state.put("build.placement_face", placement.getSide().asString());
                 yield result != ActionResult.FAIL;
             }
             case "cap.interaction.interact_target" -> {
@@ -1738,19 +2391,17 @@ public final class AutomationExecutor {
                     if (hitResult == null) {
                         yield false;
                     }
-                    ActionResult result = interactionManager.interactBlock(player, hand, hitResult);
-                    player.swingHand(hand);
-                    writeActionResult(state, "result.action", result);
-                    yield result != ActionResult.FAIL;
+                    yield beginVerifiedBlockInteraction(client, player, interactionManager, world,
+                            hitResult, hand,
+                            booleanParam(resolvedParams, "interaction.sneak", false),
+                            false, false, state);
                 }
                 Entity entity = resolveTargetEntity(world, resolvedParams, state);
                 if (entity == null) {
                     yield false;
                 }
-                ActionResult result = interactionManager.interactEntity(player, entity, hand);
-                player.swingHand(hand);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedEntityInteraction(client, player, interactionManager, entity, hand,
+                        booleanParam(resolvedParams, "interaction.sneak", false), state);
             }
             case "cap.interaction.use_item_on_entity_target" -> {
                 if (player == null || interactionManager == null || world == null) {
@@ -1761,10 +2412,8 @@ public final class AutomationExecutor {
                     yield false;
                 }
                 Hand hand = resolveHand(resolvedParams);
-                ActionResult result = interactionManager.interactEntity(player, entity, hand);
-                player.swingHand(hand);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedEntityInteraction(client, player, interactionManager, entity, hand,
+                        booleanParam(resolvedParams, "interaction.sneak", false), state);
             }
             case "cap.interaction.open_target" -> {
                 if (player == null || interactionManager == null || world == null) {
@@ -1775,18 +2424,27 @@ public final class AutomationExecutor {
                 }
                 BlockPos pos = targetBlockPos(state);
                 BlockHitResult hitResult = createCenterHit(player, pos);
-                Hand hand = resolveHand(resolvedParams);
-                ActionResult result = interactionManager.interactBlock(player, hand, hitResult);
-                player.swingHand(hand);
-                writeActionResult(state, "result.action", result);
-                yield result != ActionResult.FAIL;
+                yield beginVerifiedBlockInteraction(client, player, interactionManager, world,
+                        hitResult, resolveHand(resolvedParams), false,
+                        true, false, state);
             }
             case "cap.interaction.close_screen" -> {
-                if (player == null) {
+                if (client == null || player == null) {
                     yield false;
                 }
+                if (client.currentScreen == null) {
+                    state.put("result.reason", "screen_already_closed");
+                    state.put("result.objective_reached", true);
+                    state.put("result.validation.status", "passed");
+                    yield true;
+                }
                 player.closeHandledScreen();
-                yield true;
+                boolean closed = client.currentScreen == null;
+                state.put("result.validation.status", closed ? "passed" : "failed");
+                state.put("result.validation.fact", closed
+                        ? "The active screen closed through the normal player screen path."
+                        : "The active screen remained open after close was requested.");
+                yield closed;
             }
             case "cap.interaction.attack_target" -> {
                 if (player == null || interactionManager == null || world == null) {
@@ -1880,16 +2538,20 @@ public final class AutomationExecutor {
                 if (!stack.isFood()) {
                     yield false;
                 }
-                if (player.isCreative()) {
-                    state.put(stringParam(resolvedParams, "result.key", "result.consumed"), 1);
-                    state.put("result.action", "SUCCESS");
-                    AutomationReporter.mem(stringParam(resolvedParams, "result.key", "result.consumed"), 1);
-                    AutomationReporter.mem("result.action", "SUCCESS");
-                    yield true;
-                }
                 int beforeCount = stack.getCount();
                 int beforeHunger = player.getHungerManager().getFoodLevel();
                 float beforeSaturation = player.getHungerManager().getSaturationLevel();
+                if (beforeHunger >= 20) {
+                    state.put(stringParam(resolvedParams, "result.key", "result.consumed"), 0);
+                    state.put("result.reason", "hunger_full");
+                    state.put("result.before.hunger", beforeHunger);
+                    state.put("result.before.saturation", round(beforeSaturation));
+                    state.put("result.after.hunger", beforeHunger);
+                    state.put("result.after.saturation", round(beforeSaturation));
+                    state.put("result.retryable", false);
+                    state.put("result.retry_same_action", false);
+                    yield false;
+                }
 
                 ActionResult result = interactionManager.interactItem(player, Hand.MAIN_HAND);
                 if (result == ActionResult.FAIL) {
@@ -1908,6 +2570,7 @@ public final class AutomationExecutor {
                 state.put("consume.max_ticks", Math.max(40, stack.getMaxUseTime() + 20));
                 state.put("consume.failure_reason", "");
                 state.put("consume.hold_use", true);
+                this.automationItemUseActive = true;
                 setHeldInput("use", true);
 
                 AutomationReporter.mem("consume.active", true);
@@ -1955,6 +2618,272 @@ public final class AutomationExecutor {
         String value = result == null ? "FAIL" : result.name();
         state.put(key, value);
         AutomationReporter.mem(key, value);
+    }
+
+    private boolean beginVerifiedBlockInteraction(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            ClientWorld world,
+            BlockHitResult hit,
+            Hand hand,
+            boolean sneak,
+            boolean expectScreen,
+            boolean allowItemChange,
+            Map<String, Object> state
+    ) {
+        if (client == null || player == null || interactionManager == null || world == null || hit == null) return false;
+        BlockPos target = hit.getBlockPos();
+        if (player.getEyePos().squaredDistanceTo(hit.getPos()) > 36.0D) {
+            state.put("interaction.failure_reason", "target_out_of_reach");
+            state.put("result.validation.status", "failed");
+            return false;
+        }
+        ItemStack held = player.getStackInHand(hand);
+        state.put("interaction.verify.kind", expectScreen ? "open_screen" : "block_state");
+        state.put("interaction.verify.target_x", target.getX());
+        state.put("interaction.verify.target_y", target.getY());
+        state.put("interaction.verify.target_z", target.getZ());
+        state.put("interaction.verify.block_before", world.getBlockState(target).toString());
+        state.put("interaction.verify.screen_before", screenName(client));
+        state.put("interaction.verify.item_before", held.isEmpty() ? "" : Registries.ITEM.getId(held.getItem()).toString());
+        state.put("interaction.verify.item_count_before", held.getCount());
+        state.put("result.before.target_block", world.getBlockState(target).toString());
+        state.put("result.before.target_screen", screenName(client));
+        state.put("result.before.held_item_count", held.getCount());
+        state.put("interaction.verify.hand", hand.name().toLowerCase(Locale.ROOT));
+        state.put("interaction.verify.expect_screen", expectScreen);
+        state.put("interaction.verify.allow_item_change", allowItemChange);
+        state.put("interaction.verify.ticks", 0);
+        setInteractionSneaking(player, sneak);
+        ActionResult result = interactionManager.interactBlock(player, hand, hit);
+        player.swingHand(hand);
+        setInteractionSneaking(player, false);
+        writeActionResult(state, "result.action", result);
+        if (result == null || result == ActionResult.FAIL || result == ActionResult.PASS) {
+            state.put("interaction.failure_reason", "minecraft_rejected_block_interaction");
+            state.put("result.validation.status", "failed");
+            return false;
+        }
+        state.put("interaction.verify.active", true);
+        state.put("result.validation.status", "pending");
+        state.put("result.validation.fact", "Waiting for observable client/server state after the normal block interaction.");
+        return true;
+    }
+
+    private boolean beginVerifiedItemUse(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            Hand hand,
+            Map<String, Object> state
+    ) {
+        if (client == null || player == null || interactionManager == null || hand == null) return false;
+        ItemStack held = player.getStackInHand(hand);
+        state.put("interaction.verify.kind", "item_state");
+        state.put("interaction.verify.screen_before", screenName(client));
+        state.put("interaction.verify.item_before", held.isEmpty() ? "" : Registries.ITEM.getId(held.getItem()).toString());
+        state.put("interaction.verify.item_count_before", held.getCount());
+        state.put("interaction.verify.item_damage_before", held.getDamage());
+        state.put("interaction.verify.using_before", player.isUsingItem());
+        state.put("interaction.verify.hand", hand.name().toLowerCase(Locale.ROOT));
+        state.put("interaction.verify.ticks", 0);
+        state.put("result.before.target_screen", screenName(client));
+        state.put("result.before.held_item_count", held.getCount());
+        state.put("result.before.held_item_damage", held.getDamage());
+        state.put("result.before.using_item", player.isUsingItem());
+        ActionResult result = interactionManager.interactItem(player, hand);
+        this.automationItemUseActive = true;
+        player.swingHand(hand);
+        writeActionResult(state, "result.action", result);
+        if (result == null || result == ActionResult.FAIL || result == ActionResult.PASS) {
+            state.put("interaction.failure_reason", "minecraft_rejected_item_use");
+            state.put("result.validation.status", "failed");
+            return false;
+        }
+        state.put("interaction.verify.active", true);
+        state.put("result.validation.status", "pending");
+        state.put("result.validation.fact", "Waiting for observable client/server state after normal held-item use.");
+        return true;
+    }
+
+    private void setInteractionSneaking(ClientPlayerEntity player, boolean sneak) {
+        setHeldInput("sneak", sneak);
+        applyPlayerInputState(player);
+        player.setSneaking(sneak);
+        if (player.networkHandler != null) {
+            player.networkHandler.sendPacket(new ClientCommandC2SPacket(
+                    player,
+                    sneak ? ClientCommandC2SPacket.Mode.PRESS_SHIFT_KEY : ClientCommandC2SPacket.Mode.RELEASE_SHIFT_KEY
+            ));
+        }
+    }
+
+    private boolean beginVerifiedEntityInteraction(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            Entity entity,
+            Hand hand,
+            boolean sneak,
+            Map<String, Object> state
+    ) {
+        if (client == null || player == null || interactionManager == null || entity == null) return false;
+        if (player.squaredDistanceTo(entity) > 36.0D) {
+            state.put("interaction.failure_reason", "target_out_of_reach");
+            state.put("result.validation.status", "failed");
+            return false;
+        }
+        ItemStack held = player.getStackInHand(hand);
+        state.put("interaction.verify.kind", "entity_state");
+        state.put("interaction.verify.entity_uuid", entity.getUuidAsString());
+        state.put("interaction.verify.entity_nbt_before", entityNbt(entity));
+        state.put("interaction.verify.entity_pose_before", entity.getPose().name());
+        state.put("interaction.verify.entity_passengers_before", entity.getPassengerList().size());
+        state.put("interaction.verify.entity_vehicle_before", player.hasVehicle());
+        state.put("interaction.verify.screen_before", screenName(client));
+        state.put("interaction.verify.item_count_before", held.getCount());
+        state.put("result.before.entity_pose", entity.getPose().name());
+        state.put("result.before.entity_passengers", entity.getPassengerList().size());
+        state.put("result.before.mounted", player.hasVehicle());
+        state.put("result.before.target_screen", screenName(client));
+        state.put("result.before.held_item_count", held.getCount());
+        state.put("interaction.verify.hand", hand.name().toLowerCase(Locale.ROOT));
+        state.put("interaction.verify.allow_item_change", true);
+        state.put("interaction.verify.expect_screen", false);
+        state.put("interaction.verify.ticks", 0);
+        setInteractionSneaking(player, sneak);
+        ActionResult result = interactionManager.interactEntity(player, entity, hand);
+        player.swingHand(hand);
+        setInteractionSneaking(player, false);
+        writeActionResult(state, "result.action", result);
+        if (result == null || result == ActionResult.FAIL || result == ActionResult.PASS) {
+            state.put("interaction.failure_reason", "minecraft_rejected_entity_interaction");
+            state.put("result.validation.status", "failed");
+            return false;
+        }
+        state.put("interaction.verify.active", true);
+        state.put("result.validation.status", "pending");
+        state.put("result.validation.fact", "Waiting for observable client/server state after the normal entity interaction.");
+        return true;
+    }
+
+    private void updateActiveInteraction(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("interaction.verify.active"))) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientWorld world = client == null ? null : client.world;
+        if (client == null || player == null || world == null) {
+            failInteraction(state, "client_context_lost");
+            return;
+        }
+        int ticks = intState(state, "interaction.verify.ticks", 0) + 1;
+        state.put("interaction.verify.ticks", ticks);
+        String interactionKind = stringParam(state, "interaction.verify.kind", "");
+        boolean entityInteraction = "entity_state".equals(interactionKind);
+        boolean itemInteraction = "item_state".equals(interactionKind);
+        BlockPos target = new BlockPos(
+                intState(state, "interaction.verify.target_x", 0),
+                intState(state, "interaction.verify.target_y", 0),
+                intState(state, "interaction.verify.target_z", 0));
+        String blockAfter = entityInteraction || itemInteraction ? "" : world.getBlockState(target).toString();
+        String screenAfter = screenName(client);
+        Hand hand = "off_hand".equals(stringParam(state, "interaction.verify.hand", "")) ? Hand.OFF_HAND : Hand.MAIN_HAND;
+        ItemStack held = player.getStackInHand(hand);
+        int itemAfter = held.getCount();
+        int damageAfter = held.getDamage();
+        boolean usingAfter = player.isUsingItem();
+        boolean screenChanged = !screenAfter.equals(stringParam(state, "interaction.verify.screen_before", "world"))
+                && !"world".equals(screenAfter);
+        boolean blockChanged = !entityInteraction && !itemInteraction
+                && !blockAfter.equals(stringParam(state, "interaction.verify.block_before", blockAfter));
+        boolean itemChanged = (itemInteraction || booleanState(state, "interaction.verify.allow_item_change", false))
+                && (itemAfter != intState(state, "interaction.verify.item_count_before", itemAfter)
+                || damageAfter != intState(state, "interaction.verify.item_damage_before", damageAfter));
+        boolean useChanged = itemInteraction
+                && usingAfter != booleanState(state, "interaction.verify.using_before", usingAfter);
+        boolean mountChanged = entityInteraction
+                && player.hasVehicle() != booleanState(state, "interaction.verify.entity_vehicle_before", player.hasVehicle());
+        Entity interactedEntity = entityInteraction
+                ? findEntityByUuid(world, stringParam(state, "interaction.verify.entity_uuid", ""))
+                : null;
+        boolean entityChanged = entityInteraction && interactedEntity != null && (
+                !entityNbt(interactedEntity).equals(stringParam(state, "interaction.verify.entity_nbt_before", ""))
+                        || !interactedEntity.getPose().name().equals(stringParam(state, "interaction.verify.entity_pose_before", ""))
+                        || interactedEntity.getPassengerList().size() != intState(state, "interaction.verify.entity_passengers_before", interactedEntity.getPassengerList().size())
+        );
+        state.put("interaction.verify.block_after", blockAfter);
+        state.put("interaction.verify.screen_after", screenAfter);
+        state.put("interaction.verify.item_count_after", itemAfter);
+        state.put("result.after.target_screen", screenAfter);
+        state.put("result.after.held_item_count", itemAfter);
+        state.put("result.after.held_item_damage", damageAfter);
+        state.put("result.after.using_item", usingAfter);
+        if (!entityInteraction && !itemInteraction) {
+            state.put("result.after.target_block", blockAfter);
+        } else {
+            state.put("result.after.mounted", player.hasVehicle());
+            if (interactedEntity != null) {
+                state.put("result.after.entity_pose", interactedEntity.getPose().name());
+                state.put("result.after.entity_passengers", interactedEntity.getPassengerList().size());
+            }
+        }
+        if (screenChanged || blockChanged || itemChanged || useChanged || mountChanged || entityChanged) {
+            state.put("interaction.verify.active", false);
+            state.put("result.validation.status", "passed");
+            state.put("result.validation.fact", screenChanged
+                    ? "Minecraft opened " + screenAfter + " for the targeted interaction."
+                    : blockChanged ? "The targeted block state changed after interaction."
+                    : mountChanged ? "The player's mounted state changed after the entity interaction."
+                    : entityChanged ? "The targeted entity's synchronized state changed after interaction."
+                    : useChanged ? "Minecraft entered or left the held item's normal use state."
+                    : "The held item's count or durability changed after the use action.");
+            state.put("result.objective_reached", true);
+            state.put("result.state_changed", true);
+            execution.activeNodeId = null;
+            execution.activeNodeLabel = null;
+            execution.activeAction = null;
+            return;
+        }
+        int limit = booleanState(state, "interaction.verify.expect_screen", false) ? 40 : 12;
+        if (ticks >= limit) failInteraction(state,
+                booleanState(state, "interaction.verify.expect_screen", false)
+                        ? "expected_screen_not_opened"
+                        : "interaction_produced_no_observable_state_change");
+    }
+
+    private void failInteraction(Map<String, Object> state, String reason) {
+        state.put("interaction.verify.active", false);
+        state.put("interaction.failed", true);
+        state.put("interaction.failure_reason", reason);
+        state.put("result.reason", reason);
+        state.put("result.validation.status", "failed");
+        state.put("result.validation.fact", "The interaction did not produce its required observable end state.");
+        state.put("result.objective_reached", false);
+        state.put("result.retry_same_action", false);
+        state.put("result.replan_recommended", true);
+    }
+
+    private static String entityNbt(Entity entity) {
+        if (entity == null) return "";
+        try {
+            NbtCompound nbt = new NbtCompound();
+            entity.writeNbt(nbt);
+            nbt.remove("Pos");
+            nbt.remove("Motion");
+            nbt.remove("Rotation");
+            nbt.remove("FallDistance");
+            nbt.remove("Air");
+            nbt.remove("OnGround");
+            return nbt.toString();
+        } catch (RuntimeException ignored) {
+            return entity.getPose().name() + '|' + entity.getPassengerList().size();
+        }
+    }
+
+    private static String screenName(MinecraftClient client) {
+        return client == null || client.currentScreen == null ? "world" : client.currentScreen.getClass().getSimpleName();
     }
 
     private Entity resolveTargetEntity(World world, Map<String, Object> params, Map<String, Object> state) {
@@ -2060,7 +2989,12 @@ public final class AutomationExecutor {
                 state.put("movement.resolve.reason", "no_block_approach");
                 return false;
             }
-            state.put("current.target.kind", "block");
+            state.put("interaction.target.kind", "block");
+            state.put("interaction.target.id", stringParam(state, "current.target.id", stringParam(params, "target.id", "")));
+            state.put("interaction.target.x", blockPos.getX());
+            state.put("interaction.target.y", blockPos.getY());
+            state.put("interaction.target.z", blockPos.getZ());
+            state.put("current.target.kind", "block_approach");
             state.put("current.target.x", approach.x);
             state.put("current.target.y", approach.y);
             state.put("current.target.z", approach.z);
@@ -2079,6 +3013,19 @@ public final class AutomationExecutor {
                     (int) Math.floor(doubleParam(params, "target.y", 0.0D)),
                     (int) Math.floor(doubleParam(params, "target.z", 0.0D))
             );
+        }
+        if (state.containsKey("interaction.target.x")
+                && state.containsKey("interaction.target.y")
+                && state.containsKey("interaction.target.z")) {
+            String requestedId = stringParam(params, "target.id", "");
+            String interactionId = stringParam(state, "interaction.target.id", "");
+            if (requestedId.isBlank() || requestedId.equals(interactionId)) {
+                return new BlockPos(
+                        intState(state, "interaction.target.x", 0),
+                        intState(state, "interaction.target.y", 0),
+                        intState(state, "interaction.target.z", 0)
+                );
+            }
         }
         if (hasTargetPosition(state)) {
             String requestedId = stringParam(params, "target.id", "");
@@ -2310,6 +3257,11 @@ public final class AutomationExecutor {
                     player.closeHandledScreen();
                 }
             }
+            case "chat", "t" -> {
+                if (client.currentScreen == null) {
+                    client.setScreen(new ChatScreen(""));
+                }
+            }
             case "swap_hands", "swap", "f" -> {
                 if (player.networkHandler != null) {
                     player.networkHandler.sendPacket(new PlayerActionC2SPacket(PlayerActionC2SPacket.Action.SWAP_ITEM_WITH_OFFHAND, BlockPos.ORIGIN, Direction.DOWN));
@@ -2455,28 +3407,27 @@ public final class AutomationExecutor {
     }
 
     private void releaseAllInputs() {
+        Set<String> ownedKeys = new LinkedHashSet<>(this.heldInputs.keySet());
         for (HeldInput input : this.heldInputs.values()) {
             input.pressed = false;
             input.tapTicks = 0;
+            input.yawDelta = 0.0F;
+            input.pitchDelta = 0.0F;
         }
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null) {
-            applyKeyState(resolveKeyBinding(client, "forward"), false);
-            applyKeyState(resolveKeyBinding(client, "back"), false);
-            applyKeyState(resolveKeyBinding(client, "left"), false);
-            applyKeyState(resolveKeyBinding(client, "right"), false);
-            applyKeyState(resolveKeyBinding(client, "jump"), false);
-            applyKeyState(resolveKeyBinding(client, "sneak"), false);
-            applyKeyState(resolveKeyBinding(client, "sprint"), false);
-            applyKeyState(resolveKeyBinding(client, "attack"), false);
-            applyKeyState(resolveKeyBinding(client, "use"), false);
-            applyKeyState(resolveKeyBinding(client, "inventory"), false);
-            applyKeyState(resolveKeyBinding(client, "swap_hands"), false);
-            applyKeyState(resolveKeyBinding(client, "drop"), false);
-            applyKeyState(resolveKeyBinding(client, "pick_block"), false);
-            applyKeyState(resolveKeyBinding(client, "perspective"), false);
+            for (String key : ownedKeys) {
+                if (!"__mouse__".equals(key)) {
+                    applyKeyState(resolveKeyBinding(client, key), false);
+                }
+            }
+            if (this.automationItemUseActive && client.player != null && client.player.isUsingItem()) {
+                client.player.stopUsingItem();
+            }
             applyPlayerInputState(client.player);
         }
+        this.automationItemUseActive = false;
+        this.heldInputs.clear();
     }
 
     private void releaseMovementInputs() {
@@ -2667,6 +3618,11 @@ public final class AutomationExecutor {
             state.put("move.target.required_displacement", requiredDisplacement);
         }
         state.put("move.target.sprint", sprint);
+        state.put("move.context", player != null && player.hasVehicle() ? "mounted" : "on_foot");
+        if (player != null && player.getVehicle() != null) {
+            Identifier vehicleId = Registries.ENTITY_TYPE.getId(player.getVehicle().getType());
+            state.put("move.vehicle.id", vehicleId == null ? "unknown" : vehicleId.toString());
+        }
         state.put("move.target.precise", false);
         state.put("move.nav.phase", "navigating");
         state.put("move.nav.blocked_ticks", 0);
@@ -3605,7 +4561,8 @@ public final class AutomationExecutor {
         double lastX = doubleState(state, "move.nav.last_x", player.getX());
         double lastZ = doubleState(state, "move.nav.last_z", player.getZ());
         double movedSquared = Math.pow(player.getX() - lastX, 2.0D) + Math.pow(player.getZ() - lastZ, 2.0D);
-        boolean groundedOrSwimming = player.isOnGround() || player.isTouchingWater() || player.isSubmergedInWater();
+        boolean mounted = player.hasVehicle();
+        boolean groundedOrSwimming = mounted || player.isOnGround() || player.isTouchingWater() || player.isSubmergedInWater();
         if (!groundedOrSwimming) {
             writeStateValue(state, "move.nav.stall_ticks", 0);
         } else if (movedSquared < 0.0025D) {
@@ -3686,8 +4643,8 @@ public final class AutomationExecutor {
         writeStateValue(state, "move.nav.strafe_mode", decision.strafeMode());
         writeStateValue(state, "move.nav.steer_lock_ticks", intState(state, "move.nav.steer_lock_ticks", 0));
 
-        if (intState(state, "move.nav.blocked_ticks", 0) >= NAV_STUCK_TICKS && player.isOnGround()) {
-            player.jump();
+        if (intState(state, "move.nav.blocked_ticks", 0) >= NAV_STUCK_TICKS && (player.isOnGround() || mounted)) {
+            if (mounted) setHeldInput("jump", true); else player.jump();
             writeStateValue(state, "move.nav.jump_window", 4);
             writeStateValue(state, "move.nav.phase", "unstick_jump");
         }
@@ -3703,6 +4660,20 @@ public final class AutomationExecutor {
     }
 
     private NavigatorDecision intervalNavigationDecision(ClientPlayerEntity player, ClientWorld world, Vec3d target, Map<String, Object> state, boolean sprint, double stopDistance, int blockedTicks, int stallTicks, int escapeTicks, String escapeSide, boolean useY, boolean precisionApproach, double distance) {
+        if (player.hasVehicle()) {
+            Vec3d direct = new Vec3d(target.x - player.getX(), 0.0D, target.z - player.getZ());
+            if (direct.lengthSquared() < 1.0E-4D) {
+                return new NavigatorDecision(Vec3d.ZERO, target, false, false, false,
+                        "mounted_arrival", "none");
+            }
+            Vec3d steered = direct.normalize();
+            boolean jump = player.horizontalCollision || blockedTicks >= NAV_STUCK_TICKS / 2
+                    || stallTicks >= NAV_STUCK_TICKS / 2;
+            writeStateValue(state, "move.context", "mounted");
+            writeStateValue(state, "move.nav.route.reason", "mounted_context_direct_steering");
+            return new NavigatorDecision(steered, target, false, false, jump,
+                    jump ? "mounted_jump" : "mounted_navigation", "none");
+        }
         boolean forcedReplan = precisionApproach || blockedTicks >= NAV_STUCK_TICKS || stallTicks >= NAV_STUCK_TICKS || escapeTicks > 0;
         int decisionTicks = intState(state, "move.nav.decision_ticks", 0);
         Vec3d cachedDirection = new Vec3d(
@@ -3990,6 +4961,974 @@ public final class AutomationExecutor {
         }
     }
 
+    private void updateActiveLook(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("look.active"))) return;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientWorld world = client == null ? null : client.world;
+        if (player == null || world == null) {
+            state.put("look.active", false);
+            state.put("look.failed", true);
+            state.put("look.failure_reason", "no_client_context");
+            return;
+        }
+
+        String uuid = stringParam(state, "current.target.uuid", "");
+        Entity entity = findEntityByUuid(world, uuid);
+        Vec3d target = entity != null
+                ? entity.getEyePos()
+                : hasTargetPosition(state)
+                ? new Vec3d(
+                        doubleState(state, "current.target.x", player.getX()) + 0.5D,
+                        doubleState(state, "current.target.y", player.getEyeY()),
+                        doubleState(state, "current.target.z", player.getZ()) + 0.5D
+                )
+                : null;
+        if (target == null) {
+            state.put("look.active", false);
+            state.put("look.failed", true);
+            state.put("look.failure_reason", "target_disappeared");
+            state.put("result.validation.status", "failed");
+            state.put("result.validation.fact", "The selected live target disappeared during the camera turn.");
+            return;
+        }
+
+        int ticks = intState(state, "look.ticks", 0) + 1;
+        state.put("look.ticks", ticks);
+        float[] desired = lookAngles(player, target);
+        float yawError = Math.abs(MathHelper.wrapDegrees(desired[0] - player.getYaw()));
+        float pitchError = Math.abs(desired[1] - player.getPitch());
+        boolean horizontalOnly = Boolean.TRUE.equals(state.get("look.horizontal_only"));
+        String turnSpeed = stringParam(state, "look.turn_speed", "natural");
+        float response = switch (turnSpeed) {
+            case "slow" -> 0.12F;
+            case "fast" -> 0.32F;
+            default -> 0.20F;
+        };
+        float minimumYaw = switch (turnSpeed) {
+            case "slow" -> 0.45F;
+            case "fast" -> 2.50F;
+            default -> 1.15F;
+        };
+        float maximumYaw = switch (turnSpeed) {
+            case "slow" -> 2.50F;
+            case "fast" -> 14.0F;
+            default -> 6.25F;
+        };
+        double configuredMaximum = doubleState(state, "look.maximum_degrees_per_tick", -1.0D);
+        if (configuredMaximum >= 0.5D) maximumYaw = (float) Math.min(maximumYaw, configuredMaximum);
+        float yawStep = MathHelper.clamp(yawError * response, Math.min(minimumYaw, maximumYaw), maximumYaw);
+        float pitchStep = MathHelper.clamp(pitchError * response * 0.90F,
+                Math.min(0.35F + minimumYaw * 0.40F, maximumYaw * 0.75F),
+                Math.max(0.5F, maximumYaw * 0.65F));
+        smoothYawToward(player, desired[0], yawStep);
+        if (!horizontalOnly) smoothPitchToward(player, desired[1], pitchStep);
+
+        yawError = Math.abs(MathHelper.wrapDegrees(desired[0] - player.getYaw()));
+        pitchError = Math.abs(desired[1] - player.getPitch());
+        state.put("result.validation.yaw_error", round(yawError));
+        state.put("result.validation.pitch_error", round(pitchError));
+        if (yawError <= 1.25F && (horizontalOnly || pitchError <= 1.25F)) {
+            state.put("look.active", false);
+            state.put("result.validation.status", "passed");
+            state.put("result.validation.target", stringParam(state, "current.target.id",
+                    entity == null ? "target" : entity.getName().getString()));
+            state.put("result.validation.turn_speed", turnSpeed);
+            state.put("result.validation.maximum_degrees_per_tick", round(maximumYaw));
+            state.put("result.validation.fact",
+                    "A smooth camera turn completed and the final orientation was compared with the target's current position.");
+            state.put("result.action", "SUCCESS");
+            execution.activeNodeId = null;
+            execution.activeNodeLabel = null;
+            execution.activeAction = null;
+            return;
+        }
+        int timeoutTicks = "slow".equals(turnSpeed) ? 180 : "fast".equals(turnSpeed) ? 60 : 100;
+        if (ticks >= timeoutTicks) {
+            state.put("look.active", false);
+            state.put("look.failed", true);
+            state.put("look.failure_reason", "orientation_timeout");
+            state.put("result.validation.status", "failed");
+            state.put("result.validation.fact", "The camera could not align with the moving target within four seconds.");
+        }
+    }
+
+    private boolean resolveBoatPlacementTarget(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientWorld world,
+            Map<String, Object> params,
+            Map<String, Object> state
+    ) {
+        if (client == null || player == null || world == null) return false;
+        BoatPlacementPreference preference = BoatPlacementPreference.from(
+                stringParam(params, "placement.preference", "auto")
+        );
+        int radius = MathHelper.clamp(
+                intParam(params, "search.radius", BOAT_SEARCH_RADIUS_DEFAULT),
+                2,
+                BOAT_SEARCH_RADIUS_MAXIMUM
+        );
+        boolean exact = params.containsKey("target.x")
+                && params.containsKey("target.y")
+                && params.containsKey("target.z");
+        BoatPlacementCandidate selected;
+        String source;
+        SurroundingsScan scan = null;
+        if (exact) {
+            BlockPos target = BlockPos.ofFloored(
+                    doubleParam(params, "target.x", player.getX()),
+                    doubleParam(params, "target.y", player.getY()),
+                    doubleParam(params, "target.z", player.getZ())
+            );
+            selected = boatPlacementCandidate(world, player, target);
+            if (selected != null && !boatTargetVisible(world, player, selected)) selected = null;
+            source = "exact";
+        } else {
+            scan = scanSurroundings(client, player, world, radius);
+            selected = switch (preference) {
+                case WATER -> scan.nearestWater() != null ? scan.nearestWater() : scan.nearestGround();
+                case GROUND -> scan.nearestGround() != null ? scan.nearestGround() : scan.nearestWater();
+                case AUTO -> scan.crosshair() != null
+                        ? scan.crosshair()
+                        : scan.nearestWater() != null ? scan.nearestWater() : scan.nearestGround();
+            };
+            source = scan.crosshair() != null && selected == scan.crosshair() ? "crosshair" : "bounded_scan";
+        }
+        if (selected == null) {
+            String fact = exact
+                    ? "The exact requested block is not currently a reachable water or clear ground boat surface."
+                    : "No reachable water or clear ground boat surface was found in the bounded radius."
+                            + " Koil did not invent coordinates or search indefinitely.";
+            setTransportFailure(state, "no_reachable_boat_surface", fact);
+            return false;
+        }
+
+        boolean fallback = preference != BoatPlacementPreference.AUTO
+                && !preference.id().equals(selected.surface());
+        state.put("boat.placement.requested_preference", preference.id());
+        state.put("boat.placement.selected_surface", selected.surface());
+        state.put("boat.placement.selection_source", source);
+        state.put("boat.placement.fallback", fallback);
+        state.put("boat.placement.search_radius", exact ? 0 : radius);
+        if (scan != null) {
+            state.put("boat.placement.positions_inspected", scan.positionsInspected());
+            state.put("boat.placement.water_candidates", scan.waterCandidates());
+            state.put("boat.placement.ground_candidates", scan.groundCandidates());
+        }
+        BlockPos target = selected.position();
+        state.put("boat.deploy.target.x", target.getX());
+        state.put("boat.deploy.target.y", target.getY());
+        state.put("boat.deploy.target.z", target.getZ());
+        state.put("current.target.kind", "block");
+        state.put("current.target.id", selected.surface() + "_boat_surface");
+        state.put("current.target.x", target.getX());
+        state.put("current.target.y", selected.lookY());
+        state.put("current.target.z", target.getZ());
+        state.put("result.action", "SUCCESS");
+        state.put("result.validation.status", "passed");
+        state.put("result.validation.fact", "Selected a reachable " + selected.surface()
+                + " boat surface at " + target.getX() + " " + target.getY() + " " + target.getZ()
+                + (fallback ? " after the preferred surface was unavailable." : "."));
+        return true;
+    }
+
+    private SurroundingsScan scanSurroundings(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientWorld world,
+            int requestedRadius
+    ) {
+        int radius = MathHelper.clamp(requestedRadius, 2, BOAT_SEARCH_RADIUS_MAXIMUM);
+        BlockPos origin = player.getBlockPos();
+        List<BoatPlacementCandidate> nearestWaterCandidates = new ArrayList<>();
+        List<BoatPlacementCandidate> nearestGroundCandidates = new ArrayList<>();
+        int positions = 0;
+        int waterCandidates = 0;
+        int groundCandidates = 0;
+        for (int y = origin.getY() - BOAT_SEARCH_VERTICAL_RADIUS;
+             y <= origin.getY() + BOAT_SEARCH_VERTICAL_RADIUS; y++) {
+            for (int x = origin.getX() - radius; x <= origin.getX() + radius; x++) {
+                for (int z = origin.getZ() - radius; z <= origin.getZ() + radius; z++) {
+                    positions++;
+                    BoatPlacementCandidate candidate = boatPlacementCandidate(world, player, new BlockPos(x, y, z));
+                    if (candidate == null) continue;
+                    if ("water".equals(candidate.surface())) {
+                        waterCandidates++;
+                        retainNearestBoatCandidate(nearestWaterCandidates, candidate);
+                    } else {
+                        groundCandidates++;
+                        retainNearestBoatCandidate(nearestGroundCandidates, candidate);
+                    }
+                }
+            }
+        }
+        BoatPlacementCandidate nearestWater = firstVisibleBoatCandidate(
+                world, player, nearestWaterCandidates);
+        BoatPlacementCandidate nearestGround = firstVisibleBoatCandidate(
+                world, player, nearestGroundCandidates);
+        BoatPlacementCandidate crosshair = null;
+        if (client.crosshairTarget instanceof BlockHitResult blockHit) {
+            crosshair = boatPlacementCandidate(world, player, blockHit.getBlockPos());
+            if (crosshair != null && !boatTargetVisible(world, player, crosshair)) crosshair = null;
+        }
+        Box entityBox = player.getBoundingBox().expand(radius, BOAT_SEARCH_VERTICAL_RADIUS + 1.0D, radius);
+        int hostiles = world.getEntitiesByClass(HostileEntity.class, entityBox, Entity::isAlive).size();
+        int passives = world.getEntitiesByClass(PassiveEntity.class, entityBox, Entity::isAlive).size();
+        return new SurroundingsScan(
+                nearestWater,
+                nearestGround,
+                crosshair,
+                positions,
+                waterCandidates,
+                groundCandidates,
+                hostiles,
+                passives,
+                radius
+        );
+    }
+
+    private static void retainNearestBoatCandidate(
+            List<BoatPlacementCandidate> candidates,
+            BoatPlacementCandidate candidate
+    ) {
+        candidates.add(candidate);
+        candidates.sort(Comparator.comparingDouble(BoatPlacementCandidate::distanceSquared)
+                .thenComparingLong(value -> value.position().asLong()));
+        if (candidates.size() > 16) candidates.remove(candidates.size() - 1);
+    }
+
+    private BoatPlacementCandidate firstVisibleBoatCandidate(
+            ClientWorld world,
+            ClientPlayerEntity player,
+            List<BoatPlacementCandidate> candidates
+    ) {
+        for (BoatPlacementCandidate candidate : candidates) {
+            if (boatTargetVisible(world, player, candidate)) return candidate;
+        }
+        return null;
+    }
+
+    private boolean boatTargetVisible(
+            ClientWorld world,
+            ClientPlayerEntity player,
+            BoatPlacementCandidate candidate
+    ) {
+        Vec3d aim = new Vec3d(
+                candidate.position().getX() + 0.5D,
+                candidate.lookY(),
+                candidate.position().getZ() + 0.5D
+        );
+        BlockHitResult hit = world.raycast(new RaycastContext(
+                player.getEyePos(),
+                aim,
+                RaycastContext.ShapeType.COLLIDER,
+                RaycastContext.FluidHandling.ANY,
+                player
+        ));
+        return hit.getType() == HitResult.Type.BLOCK
+                && hit.getBlockPos().equals(candidate.position());
+    }
+
+    private BoatPlacementCandidate boatPlacementCandidate(
+            ClientWorld world,
+            ClientPlayerEntity player,
+            BlockPos target
+    ) {
+        if (world == null || player == null || target == null || !world.isInBuildLimit(target)) return null;
+        String surface;
+        double lookY;
+        if (isBoatWaterTarget(world, target)) {
+            surface = "water";
+            lookY = target.getY() + 0.5D;
+        } else if (isBoatGroundTarget(world, target)) {
+            surface = "ground";
+            lookY = target.getY() + 1.0D;
+        } else {
+            return null;
+        }
+        Vec3d aim = new Vec3d(target.getX() + 0.5D, lookY, target.getZ() + 0.5D);
+        double distanceSquared = player.getEyePos().squaredDistanceTo(aim);
+        if (distanceSquared > BOAT_PLACEMENT_REACH_SQUARED) return null;
+        double boatY = "water".equals(surface) ? target.getY() + 0.2D : target.getY() + 1.0D;
+        Box footprint = new Box(
+                target.getX() - 0.20D,
+                boatY,
+                target.getZ() - 0.20D,
+                target.getX() + 1.20D,
+                boatY + 0.75D,
+                target.getZ() + 1.20D
+        );
+        if (player.getBoundingBox().intersects(footprint)) return null;
+        return new BoatPlacementCandidate(target.toImmutable(), surface, lookY, distanceSquared);
+    }
+
+    private static boolean isBoatWaterTarget(ClientWorld world, BlockPos target) {
+        if (!world.getFluidState(target).isIn(FluidTags.WATER)) return false;
+        BlockState at = world.getBlockState(target);
+        BlockState above = world.getBlockState(target.up());
+        return at.getCollisionShape(world, target).isEmpty()
+                && above.getCollisionShape(world, target.up()).isEmpty();
+    }
+
+    private static boolean isBoatGroundTarget(ClientWorld world, BlockPos target) {
+        BlockState surface = world.getBlockState(target);
+        if (surface.isAir() || surface.isReplaceable() || !world.getFluidState(target).isEmpty()
+                || surface.getCollisionShape(world, target).isEmpty()) return false;
+        BlockPos abovePos = target.up();
+        BlockPos headPos = target.up(2);
+        BlockState above = world.getBlockState(abovePos);
+        BlockState head = world.getBlockState(headPos);
+        return above.getCollisionShape(world, abovePos).isEmpty()
+                && head.getCollisionShape(world, headPos).isEmpty();
+    }
+
+    private void writeSurroundingsEvidence(
+            Map<String, Object> state,
+            ClientPlayerEntity player,
+            SurroundingsScan scan,
+            String focus
+    ) {
+        state.put("result.observation.focus", focus == null || focus.isBlank() ? "general" : focus);
+        state.put("result.observation.radius", scan.radius());
+        state.put("result.observation.player.x", round(player.getX()));
+        state.put("result.observation.player.y", round(player.getY()));
+        state.put("result.observation.player.z", round(player.getZ()));
+        state.put("result.observation.positions_inspected", scan.positionsInspected());
+        state.put("result.observation.hostiles", scan.hostiles());
+        state.put("result.observation.passives", scan.passives());
+        state.put("result.observation.water_candidates", scan.waterCandidates());
+        state.put("result.observation.ground_candidates", scan.groundCandidates());
+        writeCandidateEvidence(state, "result.observation.nearest_water", scan.nearestWater());
+        writeCandidateEvidence(state, "result.observation.nearest_ground", scan.nearestGround());
+        state.put("result.action", "SUCCESS");
+        state.put("result.validation.status", "passed");
+        state.put("result.validation.fact",
+                "Captured one bounded client-visible surroundings snapshot; no world or player state was changed.");
+    }
+
+    private void writeCandidateEvidence(
+            Map<String, Object> state,
+            String prefix,
+            BoatPlacementCandidate candidate
+    ) {
+        if (candidate == null) {
+            state.put(prefix + ".available", false);
+            return;
+        }
+        state.put(prefix + ".available", true);
+        state.put(prefix + ".x", candidate.position().getX());
+        state.put(prefix + ".y", candidate.position().getY());
+        state.put(prefix + ".z", candidate.position().getZ());
+        state.put(prefix + ".distance", round(Math.sqrt(candidate.distanceSquared())));
+    }
+
+    private boolean beginBoatPreparation(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            ClientWorld world,
+            Map<String, Object> params,
+            Map<String, Object> state
+    ) {
+        if (client == null || player == null || interactionManager == null || world == null) return false;
+        String boatId = stringParam(params, "boat.item", "");
+        Identifier identifier = Identifier.tryParse(boatId);
+        if (identifier == null || !Registries.ITEM.containsId(identifier)
+                || !(Registries.ITEM.get(identifier) instanceof BoatItem)) {
+            setTransportFailure(state, "boat_item_not_registered_or_deployable",
+                    "The exact requested boat item is not an active BoatItem in this registry.");
+            return false;
+        }
+        state.put("boat.item", boatId);
+        state.put("boat.inventory.before", countInventory(player.getInventory(), boatId));
+        if (countInventory(player.getInventory(), boatId) > 0) {
+            state.put("boat.crafted", false);
+            return beginExactItemSelection(client, player, interactionManager, boatId, state, "boat.prepare");
+        }
+        if (!booleanParam(params, "craft.if_missing", false)) {
+            setTransportFailure(state, "boat_missing_and_crafting_not_approved",
+                    "The exact boat is absent and craft_if_missing was not approved.");
+            return false;
+        }
+        if (!(player.currentScreenHandler instanceof CraftingScreenHandler crafting)
+                || crafting.getCraftingWidth() < 3 || crafting.getCraftingHeight() < 3) {
+            setTransportFailure(state, "crafting_table_screen_required",
+                    "Real boat crafting requires an open, server-synchronized 3x3 crafting-table screen.");
+            return false;
+        }
+        if (crafting.getCursorStack() != null && !crafting.getCursorStack().isEmpty()) {
+            setTransportFailure(state, "crafting_cursor_not_empty",
+                    "Boat crafting will not move or overwrite an item already held by the crafting cursor.");
+            return false;
+        }
+        Recipe<?> recipe = findCraftingRecipe(world, player, boatId, stringParam(params, "recipe.id", ""));
+        if (recipe == null) {
+            setTransportFailure(state, "verified_boat_recipe_unavailable",
+                    "No active exact-output boat recipe with verified inventory ingredients is available.");
+            return false;
+        }
+        int before = countInventory(player.getInventory(), boatId);
+        state.put("boat.prepare.active", true);
+        state.put("boat.prepare.phase", "await_recipe_fill");
+        state.put("boat.prepare.ticks", 0);
+        state.put("boat.prepare.sync_id", crafting.syncId);
+        state.put("boat.recipe.id", recipe.getId().toString());
+        state.put("boat.recipe.ingredient_slots", recipe.getIngredients().stream().filter(ingredient -> !ingredient.isEmpty()).count());
+        state.put("boat.inventory.before", before);
+        state.put("result.validation.status", "pending");
+        state.put("result.validation.fact", "The active recipe and its ingredients were verified; waiting for server crafting-screen synchronization.");
+        interactionManager.clickRecipe(crafting.syncId, recipe, false);
+        return true;
+    }
+
+    private Recipe<?> findCraftingRecipe(ClientWorld world, ClientPlayerEntity player, String outputId, String requestedRecipeId) {
+        if (world == null || player == null || outputId == null || outputId.isBlank()) return null;
+        List<Recipe<?>> candidates = new ArrayList<>();
+        if (requestedRecipeId != null && !requestedRecipeId.isBlank()) {
+            Identifier requested = Identifier.tryParse(requestedRecipeId);
+            if (requested == null) return null;
+            world.getRecipeManager().get(requested).ifPresent(candidates::add);
+        } else {
+            candidates.addAll(world.getRecipeManager().values());
+            candidates.sort(Comparator.comparing(recipe -> recipe.getId().toString()));
+        }
+        RecipeMatcher matcher = new RecipeMatcher();
+        player.getInventory().populateRecipeFinder(matcher);
+        for (Recipe<?> recipe : candidates) {
+            ItemStack output;
+            try {
+                output = recipe.getOutput(world.getRegistryManager());
+            } catch (RuntimeException invalidRecipe) {
+                continue;
+            }
+            if (output == null || output.isEmpty() || !itemMatches(output, outputId) || !recipe.fits(3, 3)) continue;
+            if (matcher.match(recipe, new IntArrayList())) return recipe;
+        }
+        return null;
+    }
+
+    private void updateActiveBoatPreparation(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("boat.prepare.active"))) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientPlayerInteractionManager interactionManager = client == null ? null : client.interactionManager;
+        if (client == null || player == null || interactionManager == null) {
+            failTransportPhase(state, "boat.prepare.active", "no_client_context", "Boat preparation lost the client context.");
+            return;
+        }
+        int ticks = intState(state, "boat.prepare.ticks", 0) + 1;
+        state.put("boat.prepare.ticks", ticks);
+        String boatId = stringParam(state, "boat.item", "");
+        String phase = stringParam(state, "boat.prepare.phase", "await_selection");
+        if ("await_recipe_fill".equals(phase)) {
+            if (!(player.currentScreenHandler instanceof CraftingScreenHandler crafting)
+                    || crafting.syncId != intState(state, "boat.prepare.sync_id", -1)) {
+                failTransportPhase(state, "boat.prepare.active", "crafting_screen_closed",
+                        "The crafting table closed before the server returned the recipe result.");
+                return;
+            }
+            Slot resultSlot = crafting.slots.get(crafting.getCraftingResultSlotIndex());
+            if (resultSlot != null && resultSlot.hasStack() && itemMatches(resultSlot.getStack(), boatId)) {
+                int outputCount = resultSlot.getStack().getCount();
+                int destination = findTransferDestinationSlot(player, boatId, true, outputCount);
+                if (destination < 0) {
+                    failTransportPhase(state, "boat.prepare.active", "no_inventory_space_for_boat",
+                            "There is no verified inventory slot for one exact boat recipe output.");
+                    return;
+                }
+                interactionManager.clickSlot(crafting.syncId, crafting.getCraftingResultSlotIndex(), 0,
+                        SlotActionType.PICKUP, player);
+                interactionManager.clickSlot(crafting.syncId, destination, 0, SlotActionType.PICKUP, player);
+                state.put("boat.recipe.output_count", outputCount);
+                state.put("boat.prepare.phase", "await_inventory_delta");
+                state.put("boat.prepare.ticks", 0);
+                state.put("result.action", "CRAFT_CLICKED");
+                return;
+            }
+        } else if ("await_inventory_delta".equals(phase)) {
+            int before = intState(state, "boat.inventory.before", 0);
+            int after = countInventory(player.getInventory(), boatId);
+            state.put("boat.inventory.after", after);
+            if (after > before) {
+                state.put("boat.crafted", true);
+                player.closeHandledScreen();
+                client.setScreen(null);
+                if (!beginExactItemSelection(client, player, interactionManager, boatId, state, "boat.prepare")) return;
+                state.put("boat.prepare.ticks", 0);
+                return;
+            }
+        } else if ("await_selection".equals(phase)) {
+            if (itemMatches(player.getMainHandStack(), boatId)) {
+                state.put("boat.prepare.active", false);
+                state.put("boat.inventory.after", countInventory(player.getInventory(), boatId));
+                state.put("result.action", "SUCCESS");
+                state.put("result.validation.status", "passed");
+                state.put("result.validation.fact", Boolean.TRUE.equals(state.get("boat.crafted"))
+                        ? "The exact active recipe produced a server-confirmed inventory increase and the boat is selected."
+                        : "The exact existing boat item is selected without crafting or substitution.");
+                return;
+            }
+        }
+        if (ticks >= 80) {
+            failTransportPhase(state, "boat.prepare.active", "boat_preparation_sync_timeout",
+                    "Minecraft did not confirm the exact recipe result or selected boat within the bounded wait.");
+        }
+    }
+
+    private boolean beginBoatDeployment(
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            ClientWorld world,
+            Map<String, Object> params,
+            Map<String, Object> state
+    ) {
+        if (player == null || interactionManager == null || world == null || player.hasVehicle()) return false;
+        String boatId = stringParam(params, "boat.item", stringParam(state, "boat.item", ""));
+        ItemStack selected = player.getMainHandStack();
+        if (!itemMatches(selected, boatId) || !(selected.getItem() instanceof BoatItem)) {
+            setTransportFailure(state, "exact_boat_not_selected", "The exact registered BoatItem is not selected.");
+            return false;
+        }
+        if (!state.containsKey("boat.deploy.target.x")
+                || !state.containsKey("boat.deploy.target.y")
+                || !state.containsKey("boat.deploy.target.z")) {
+            setTransportFailure(state, "boat_target_not_resolved",
+                    "Boat deployment requires a verified exact or bounded nearby target from the resolver.");
+            return false;
+        }
+        BlockPos target = new BlockPos(
+                intState(state, "boat.deploy.target.x", player.getBlockX()),
+                intState(state, "boat.deploy.target.y", player.getBlockY()),
+                intState(state, "boat.deploy.target.z", player.getBlockZ())
+        );
+        String surface = stringParam(state, "boat.placement.selected_surface", "");
+        boolean surfaceStillValid = "water".equals(surface)
+                ? isBoatWaterTarget(world, target)
+                : "ground".equals(surface) && isBoatGroundTarget(world, target);
+        if (!surfaceStillValid) {
+            setTransportFailure(state, "boat_surface_changed",
+                    "The resolved " + surface + " boat surface changed before deployment; Koil will not use stale coordinates.");
+            return false;
+        }
+        double aimY = "water".equals(surface) ? target.getY() + 0.5D : target.getY() + 1.0D;
+        if (player.getEyePos().squaredDistanceTo(new Vec3d(target.getX() + 0.5D, aimY, target.getZ() + 0.5D))
+                > BOAT_PLACEMENT_REACH_SQUARED) {
+            setTransportFailure(state, "boat_target_out_of_reach", "The resolved boat surface moved outside normal item-use reach.");
+            return false;
+        }
+        Box search = new Box(target).expand(8.0D);
+        Set<String> beforeBoats = new LinkedHashSet<>();
+        for (BoatEntity boat : world.getEntitiesByClass(BoatEntity.class, search, Entity::isAlive)) {
+            beforeBoats.add(boat.getUuidAsString());
+        }
+        state.put("boat.deploy.before_uuids", String.join(";", beforeBoats));
+        state.put("boat.deploy.inventory_before", countInventory(player.getInventory(), boatId));
+        state.put("boat.deploy.target.x", target.getX());
+        state.put("boat.deploy.target.y", target.getY());
+        state.put("boat.deploy.target.z", target.getZ());
+        state.put("boat.deploy.surface", surface);
+        state.put("boat.deploy.active", true);
+        state.put("boat.deploy.ticks", 0);
+        state.put("result.validation.status", "pending");
+        ActionResult result = interactionManager.interactItem(player, Hand.MAIN_HAND);
+        player.swingHand(Hand.MAIN_HAND);
+        writeActionResult(state, "boat.deploy.use_result", result);
+        if (result == ActionResult.FAIL) {
+            failTransportPhase(state, "boat.deploy.active", "boat_item_use_rejected",
+                    "Minecraft rejected the exact boat item-use action.");
+            return false;
+        }
+        return true;
+    }
+
+    private void updateActiveBoatDeployment(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("boat.deploy.active"))) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientWorld world = client == null ? null : client.world;
+        ClientPlayerInteractionManager interactionManager = client == null ? null : client.interactionManager;
+        if (player == null || world == null || interactionManager == null) {
+            failTransportPhase(state, "boat.deploy.active", "no_client_context", "Boat deployment lost the client context.");
+            return;
+        }
+        int ticks = intState(state, "boat.deploy.ticks", 0) + 1;
+        state.put("boat.deploy.ticks", ticks);
+        BlockPos target = new BlockPos(intState(state, "boat.deploy.target.x", 0),
+                intState(state, "boat.deploy.target.y", 0), intState(state, "boat.deploy.target.z", 0));
+        Set<String> before = new HashSet<>(Arrays.asList(stringParam(state, "boat.deploy.before_uuids", "").split(";")));
+        String boatId = stringParam(state, "boat.item", "");
+        BoatEntity deployed = world.getEntitiesByClass(BoatEntity.class, new Box(target).expand(8.0D), Entity::isAlive).stream()
+                .filter(boat -> !before.contains(boat.getUuidAsString()))
+                .filter(boat -> {
+                    Identifier item = Registries.ITEM.getId(boat.asItem());
+                    return item != null && boatId.equals(item.toString());
+                })
+                .min(Comparator.comparingDouble(boat -> boat.squaredDistanceTo(Vec3d.ofCenter(target))))
+                .orElse(null);
+        if (deployed != null) {
+            state.put("boat.deployed.uuid", deployed.getUuidAsString());
+            state.put("boat.deployed.entity", Registries.ENTITY_TYPE.getId(deployed.getType()).toString());
+            state.put("boat.deploy.inventory_after", countInventory(player.getInventory(), boatId));
+            ActionResult mount = interactionManager.interactEntity(player, deployed, Hand.MAIN_HAND);
+            player.swingHand(Hand.MAIN_HAND);
+            writeActionResult(state, "boat.mount.action", mount);
+            if (mount == ActionResult.FAIL) {
+                failTransportPhase(state, "boat.deploy.active", "new_boat_mount_rejected",
+                        "The exact new boat spawned, but Minecraft rejected mounting it.");
+                return;
+            }
+            state.put("boat.deploy.active", false);
+            state.put("mount.active", true);
+            state.put("mount.ticks", 0);
+            state.put("mount.target.uuid", deployed.getUuidAsString());
+            state.put("mount.target.id", Registries.ENTITY_TYPE.getId(deployed.getType()).toString());
+            state.put("result.validation.fact", "The exact item produced a new boat entity; waiting for server-confirmed mounting.");
+            return;
+        }
+        if (ticks >= 80) {
+            failTransportPhase(state, "boat.deploy.active", "new_boat_not_observed",
+                    "No new exact boat entity appeared at the resolved boat surface.");
+        }
+    }
+
+    private boolean beginElytraPreparation(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            Map<String, Object> params,
+            Map<String, Object> state
+    ) {
+        if (client == null || player == null || interactionManager == null) return false;
+        String elytraId = stringParam(params, "elytra.item", "minecraft:elytra");
+        String rocketId = stringParam(params, "rocket.item", "minecraft:firework_rocket");
+        boolean useRocket = booleanParam(params, "flight.use_rocket", true);
+        Identifier elytraIdentifier = Identifier.tryParse(elytraId);
+        if (elytraIdentifier == null || !Registries.ITEM.containsId(elytraIdentifier)
+                || !(Registries.ITEM.get(elytraIdentifier) instanceof ElytraItem)) {
+            setTransportFailure(state, "elytra_item_not_registered", "The exact requested item is not an active ElytraItem.");
+            return false;
+        }
+        ItemStack chest = player.getEquippedStack(EquipmentSlot.CHEST);
+        state.put("elytra.item", elytraId);
+        state.put("elytra.equipment.before", chest.isEmpty() ? "minecraft:air" : Registries.ITEM.getId(chest.getItem()).toString());
+        state.put("elytra.rocket.item", rocketId);
+        state.put("elytra.use_rocket", useRocket);
+        state.put("elytra.prepare.ticks", 0);
+        if (!chest.isEmpty() && !itemMatches(chest, elytraId)) {
+            setTransportFailure(state, "chest_slot_occupied",
+                    "A different chest item is equipped; Koil will not silently unequip it.");
+            return false;
+        }
+        if (chest.isEmpty()) {
+            int source = findPlayerHandlerSlot(player, elytraId);
+            if (source < 0) {
+                setTransportFailure(state, "usable_elytra_missing", "The exact requested elytra is not in inventory.");
+                return false;
+            }
+            player.closeHandledScreen();
+            client.setScreen(null);
+            interactionManager.clickSlot(player.playerScreenHandler.syncId, source, 0, SlotActionType.QUICK_MOVE, player);
+            state.put("elytra.prepare.active", true);
+            state.put("elytra.prepare.phase", "await_equipment");
+            state.put("result.validation.status", "pending");
+            return true;
+        }
+        if (!ElytraItem.isUsable(chest)) {
+            setTransportFailure(state, "elytra_not_usable", "The exact equipped elytra has insufficient durability.");
+            return false;
+        }
+        return prepareRocketSelection(client, player, interactionManager, rocketId, useRocket, state);
+    }
+
+    private void updateActiveElytraPreparation(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("elytra.prepare.active"))) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientPlayerInteractionManager interactionManager = client == null ? null : client.interactionManager;
+        if (client == null || player == null || interactionManager == null) {
+            failTransportPhase(state, "elytra.prepare.active", "no_client_context", "Elytra preparation lost the client context.");
+            return;
+        }
+        int ticks = intState(state, "elytra.prepare.ticks", 0) + 1;
+        state.put("elytra.prepare.ticks", ticks);
+        String phase = stringParam(state, "elytra.prepare.phase", "await_equipment");
+        String elytraId = stringParam(state, "elytra.item", "minecraft:elytra");
+        if ("await_equipment".equals(phase)) {
+            ItemStack chest = player.getEquippedStack(EquipmentSlot.CHEST);
+            if (itemMatches(chest, elytraId)) {
+                if (!ElytraItem.isUsable(chest)) {
+                    failTransportPhase(state, "elytra.prepare.active", "elytra_not_usable", "The equipped elytra is not usable.");
+                    return;
+                }
+                state.put("elytra.equipment.after", elytraId);
+                if (!prepareRocketSelection(client, player, interactionManager,
+                        stringParam(state, "elytra.rocket.item", "minecraft:firework_rocket"),
+                        Boolean.TRUE.equals(state.get("elytra.use_rocket")), state)) return;
+                state.put("elytra.prepare.ticks", 0);
+                return;
+            }
+        } else if ("await_rocket_selection".equals(phase)) {
+            String rocketId = stringParam(state, "elytra.rocket.item", "minecraft:firework_rocket");
+            if (itemMatches(player.getMainHandStack(), rocketId)) {
+                finishElytraPreparation(player, state);
+                return;
+            }
+        }
+        if (ticks >= 60) {
+            failTransportPhase(state, "elytra.prepare.active", "elytra_equipment_sync_timeout",
+                    "Minecraft did not confirm the exact elytra equipment or rocket selection in time.");
+        }
+    }
+
+    private boolean prepareRocketSelection(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            String rocketId,
+            boolean useRocket,
+            Map<String, Object> state
+    ) {
+        if (!useRocket) {
+            finishElytraPreparation(player, state);
+            return true;
+        }
+        Identifier rocketIdentifier = Identifier.tryParse(rocketId);
+        if (rocketIdentifier == null || !Registries.ITEM.containsId(rocketIdentifier)
+                || !(Registries.ITEM.get(rocketIdentifier) instanceof FireworkRocketItem)
+                || countInventory(player.getInventory(), rocketId) < 1) {
+            setTransportFailure(state, "exact_firework_missing",
+                    "The requested rocket boost requires an exact registered firework rocket in inventory.");
+            return false;
+        }
+        state.put("elytra.rocket.before", countInventory(player.getInventory(), rocketId));
+        if (!beginExactItemSelection(client, player, interactionManager, rocketId, state, "elytra.prepare")) return false;
+        state.put("elytra.prepare.phase", "await_rocket_selection");
+        state.put("elytra.prepare.active", true);
+        return true;
+    }
+
+    private void finishElytraPreparation(ClientPlayerEntity player, Map<String, Object> state) {
+        state.put("elytra.prepare.active", false);
+        state.put("elytra.equipment.after", stringParam(state, "elytra.item", "minecraft:elytra"));
+        state.put("elytra.rocket.after_prepare", countInventory(player.getInventory(),
+                stringParam(state, "elytra.rocket.item", "minecraft:firework_rocket")));
+        state.put("result.action", "SUCCESS");
+        state.put("result.validation.status", "passed");
+        state.put("result.validation.fact", "The exact usable elytra is equipped and optional exact rocket prerequisites are selected.");
+    }
+
+    private boolean beginElytraFlight(ClientPlayerEntity player, ClientWorld world, Map<String, Object> params, Map<String, Object> state) {
+        if (player == null || world == null || player.hasVehicle() || player.isTouchingWater()) return false;
+        ItemStack chest = player.getEquippedStack(EquipmentSlot.CHEST);
+        if (!(chest.getItem() instanceof ElytraItem) || !ElytraItem.isUsable(chest)) {
+            setTransportFailure(state, "usable_elytra_not_equipped", "A usable elytra is not equipped at launch time.");
+            return false;
+        }
+        state.put("elytra.flight.active", true);
+        state.put("elytra.flight.phase", player.isFallFlying() ? "gliding" : "launching");
+        state.put("elytra.flight.ticks", 0);
+        state.put("elytra.flight.target.x", doubleParam(params, "target.x", player.getX()));
+        state.put("elytra.flight.target.y", doubleParam(params, "target.y", player.getY()));
+        state.put("elytra.flight.target.z", doubleParam(params, "target.z", player.getZ()));
+        state.put("elytra.flight.arrival_radius", doubleParam(params, "arrival.radius", 6.0D));
+        state.put("elytra.flight.turn_speed", stringParam(params, "look.turn_speed", "natural"));
+        state.put("elytra.flight.use_rocket", booleanParam(params, "flight.use_rocket", true));
+        state.put("elytra.flight.rocket_item", stringParam(params, "rocket.item", "minecraft:firework_rocket"));
+        state.put("elytra.flight.start.x", player.getX());
+        state.put("elytra.flight.start.y", player.getY());
+        state.put("elytra.flight.start.z", player.getZ());
+        state.put("elytra.flight.rocket_used", false);
+        state.put("elytra.arrival.status", "pending");
+        state.put("result.validation.status", "pending");
+        setHeldInput("forward", true);
+        if (player.isOnGround()) player.jump();
+        return true;
+    }
+
+    private void updateActiveElytraFlight(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("elytra.flight.active"))) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientPlayerInteractionManager interactionManager = client == null ? null : client.interactionManager;
+        if (player == null || interactionManager == null) {
+            failTransportPhase(state, "elytra.flight.active", "no_client_context", "Elytra flight lost the client context.");
+            return;
+        }
+        int ticks = intState(state, "elytra.flight.ticks", 0) + 1;
+        state.put("elytra.flight.ticks", ticks);
+        String phase = stringParam(state, "elytra.flight.phase", "launching");
+        if (!player.isFallFlying() && "launching".equals(phase)) {
+            if (player.isOnGround() && ticks % 8 == 1) player.jump();
+            if (!player.isOnGround() && ticks >= 2 && ticks % 3 == 0) {
+                player.networkHandler.sendPacket(new ClientCommandC2SPacket(
+                        player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+            }
+            if (ticks >= 60) {
+                failTransportPhase(state, "elytra.flight.active", "elytra_launch_not_confirmed",
+                        "Minecraft did not confirm fall-flying within the bounded launch window.");
+            }
+            return;
+        }
+        if (player.isFallFlying()) {
+            state.put("elytra.flight.phase", "gliding");
+            if (Boolean.TRUE.equals(state.get("elytra.flight.use_rocket"))
+                    && !Boolean.TRUE.equals(state.get("elytra.flight.rocket_used"))) {
+                String rocketId = stringParam(state, "elytra.flight.rocket_item", "minecraft:firework_rocket");
+                if (!itemMatches(player.getMainHandStack(), rocketId)) {
+                    failTransportPhase(state, "elytra.flight.active", "exact_firework_not_selected",
+                            "The exact firework was no longer selected when fall-flying began.");
+                    return;
+                }
+                int before = countInventory(player.getInventory(), rocketId);
+                ActionResult boost = interactionManager.interactItem(player, Hand.MAIN_HAND);
+                player.swingHand(Hand.MAIN_HAND);
+                writeActionResult(state, "elytra.flight.rocket_action", boost);
+                if (boost == ActionResult.FAIL) {
+                    failTransportPhase(state, "elytra.flight.active", "firework_use_rejected",
+                            "Minecraft rejected the requested firework boost.");
+                    return;
+                }
+                state.put("elytra.flight.rocket_before", before);
+                state.put("elytra.flight.rocket_used", true);
+            }
+            Vec3d target = new Vec3d(doubleState(state, "elytra.flight.target.x", player.getX()),
+                    doubleState(state, "elytra.flight.target.y", player.getY()),
+                    doubleState(state, "elytra.flight.target.z", player.getZ()));
+            double dx = target.x - player.getX();
+            double dy = target.y - player.getY();
+            double dz = target.z - player.getZ();
+            double horizontal = Math.sqrt(dx * dx + dz * dz);
+            double radius = doubleState(state, "elytra.flight.arrival_radius", 6.0D);
+            float desiredYaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0D);
+            float desiredPitch = MathHelper.clamp((float) -Math.toDegrees(Math.atan2(dy, Math.max(0.1D, horizontal))), -22.0F, 18.0F);
+            String speed = stringParam(state, "elytra.flight.turn_speed", "natural");
+            float yawStep = "slow".equals(speed) ? 2.5F : "fast".equals(speed) ? 10.0F : 6.0F;
+            float pitchStep = "slow".equals(speed) ? 1.5F : "fast".equals(speed) ? 6.0F : 3.5F;
+            smoothYawToward(player, desiredYaw, yawStep);
+            smoothPitchToward(player, desiredPitch, pitchStep);
+            state.put("elytra.flight.distance_horizontal", round(horizontal));
+            state.put("elytra.flight.distance_vertical", round(Math.abs(dy)));
+            if (horizontal <= radius && Math.abs(dy) <= Math.max(8.0D, radius)) {
+                setHeldInput("forward", false);
+                state.put("elytra.flight.active", false);
+                state.put("elytra.arrival.status", "passed");
+                state.put("elytra.arrival.x", player.getX());
+                state.put("elytra.arrival.y", player.getY());
+                state.put("elytra.arrival.z", player.getZ());
+                state.put("elytra.arrival.fall_flying", true);
+                String rocketId = stringParam(state, "elytra.flight.rocket_item", "minecraft:firework_rocket");
+                state.put("elytra.flight.rocket_after", countInventory(player.getInventory(), rocketId));
+                state.put("result.action", "SUCCESS");
+                state.put("result.validation.status", "passed");
+                state.put("result.validation.fact", "The requested radius was reached while Minecraft confirmed fall-flying.");
+                return;
+            }
+        } else if ("gliding".equals(phase) && player.isOnGround()) {
+            failTransportPhase(state, "elytra.flight.active", "landed_before_target",
+                    "Fall-flying ended before the requested target radius was reached.");
+            return;
+        }
+        if (ticks >= 2400) {
+            failTransportPhase(state, "elytra.flight.active", "elytra_flight_timeout",
+                    "The bounded elytra flight did not reach the requested radius within two minutes.");
+        }
+    }
+
+    private boolean beginExactItemSelection(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            String itemId,
+            Map<String, Object> state,
+            String phasePrefix
+    ) {
+        int hotbar = findHotbarSlot(player.getInventory(), itemId);
+        if (hotbar >= 0) {
+            player.getInventory().selectedSlot = hotbar;
+            state.put(phasePrefix + ".phase", "await_selection");
+            state.put(phasePrefix + ".active", true);
+            return true;
+        }
+        int source = findPlayerHandlerSlot(player, itemId);
+        if (source < 0) {
+            setTransportFailure(state, "exact_item_missing", "The exact required inventory item was not found.");
+            return false;
+        }
+        player.closeHandledScreen();
+        client.setScreen(null);
+        int selected = Math.max(0, Math.min(8, player.getInventory().selectedSlot));
+        interactionManager.clickSlot(player.playerScreenHandler.syncId, source, selected, SlotActionType.SWAP, player);
+        state.put(phasePrefix + ".phase", "await_selection");
+        state.put(phasePrefix + ".active", true);
+        return true;
+    }
+
+    private int findPlayerHandlerSlot(ClientPlayerEntity player, String itemId) {
+        if (player == null || player.playerScreenHandler == null) return -1;
+        for (Slot slot : player.playerScreenHandler.slots) {
+            if (slot != null && slot.inventory == player.getInventory() && slot.hasStack()
+                    && itemMatches(slot.getStack(), itemId)) return slot.id;
+        }
+        return -1;
+    }
+
+    private void setTransportFailure(Map<String, Object> state, String reason, String fact) {
+        state.put("transport.failure_reason", reason);
+        state.put("result.failure_code", reason);
+        state.put("result.failure_reason", fact);
+        state.put("result.validation.status", "failed");
+        state.put("result.validation.fact", fact);
+        state.put("result.action", "FAIL");
+    }
+
+    private void failTransportPhase(Map<String, Object> state, String activeKey, String reason, String fact) {
+        state.put(activeKey, false);
+        setTransportFailure(state, reason, fact);
+        state.put("transport.failed", true);
+        releaseAllInputs();
+    }
+
+    private void updateActiveMount(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("mount.active"))) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        if (player == null) {
+            state.put("mount.active", false);
+            state.put("mount.failure_reason", "no_client_context");
+            return;
+        }
+        int ticks = intState(state, "mount.ticks", 0) + 1;
+        state.put("mount.ticks", ticks);
+        Entity vehicle = player.getVehicle();
+        String expected = stringParam(state, "mount.target.uuid", "");
+        if (vehicle != null && (expected.isBlank() || expected.equals(vehicle.getUuidAsString()))) {
+            state.put("mount.active", false);
+            state.put("result.action", "SUCCESS");
+            state.put("result.validation.status", "passed");
+            state.put("result.validation.vehicle", Registries.ENTITY_TYPE.getId(vehicle.getType()).toString());
+            state.put("result.validation.fact", "The selected entity became the player's server-confirmed vehicle.");
+            execution.activeNodeId = null;
+            execution.activeNodeLabel = null;
+            execution.activeAction = null;
+            return;
+        }
+        if (ticks >= 60) {
+            state.put("mount.active", false);
+            state.put("mount.failure_reason", "target_not_rideable_or_mount_denied");
+            state.put("result.reason", "target_not_rideable_or_mount_denied");
+            state.put("result.validation.status", "failed");
+            state.put("result.validation.fact", "The selected entity never became the player's ridden vehicle.");
+        }
+    }
+
     private void updateActiveMining(ActiveExecution execution) {
         Map<String, Object> state = execution.state;
         if (!Boolean.TRUE.equals(state.get("mine.active"))) {
@@ -4002,6 +5941,8 @@ public final class AutomationExecutor {
         if (player == null || world == null || interactionManager == null) {
             state.put("mine.failed", true);
             state.put("mine.failure_reason", "no_client_context");
+            state.put("result.validation.status", "failed");
+            state.put("result.validation.fact", "The block state could not be reread because the client context disappeared.");
             state.remove("mine.active");
             return;
         }
@@ -4017,6 +5958,11 @@ public final class AutomationExecutor {
         if (gone) {
             state.put("result.block.broken", true);
             state.put("result.action", "SUCCESS");
+            state.put("result.validation.status", "passed");
+            state.put("result.validation.target", pos.toShortString());
+            state.put("result.validation.expected", expectedId);
+            state.put("result.validation.actual", currentId == null ? "minecraft:air" : currentId.toString());
+            state.put("result.validation.fact", "The exact target position was reread and no longer contains the requested block.");
             state.remove("mine.active");
             AutomationReporter.mem("result.block.broken", true);
             AutomationReporter.mem("result.action", "SUCCESS");
@@ -4027,6 +5973,8 @@ public final class AutomationExecutor {
         if (distance > 5.2D) {
             state.put("mine.failed", true);
             state.put("mine.failure_reason", "target_out_of_range");
+            state.put("result.validation.status", "failed");
+            state.put("result.validation.fact", "The exact target remained present but was outside block-breaking range.");
             state.remove("mine.active");
             return;
         }
@@ -4043,6 +5991,8 @@ public final class AutomationExecutor {
             if (!began && !player.isCreative()) {
                 state.put("mine.failed", true);
                 state.put("mine.failure_reason", "attack_block_failed");
+                state.put("result.validation.status", "failed");
+                state.put("result.validation.fact", "Minecraft rejected the block-breaking input for the exact target.");
                 state.remove("mine.active");
             }
             return;
@@ -4383,6 +6333,24 @@ public final class AutomationExecutor {
             }
         }
         return fallback;
+    }
+
+    private long longState(Map<String, Object> state, String key, long fallback) {
+        Object value = state.get(key);
+        if (value instanceof Number number) return number.longValue();
+        if (value instanceof String text) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return fallback;
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return "";
+        for (String value : values) if (value != null && !value.isBlank()) return value;
+        return "";
     }
 
     private boolean hasTargetPosition(Map<String, Object> state) {
@@ -5007,16 +6975,43 @@ public final class AutomationExecutor {
         return bestPos;
     }
 
+    private BlockPos findBlockBySelector(ClientPlayerEntity player, String blockId, int radius, String selector) {
+        if (player == null || player.getWorld() == null) return null;
+        String normalized = selector == null ? "nearest" : selector.toLowerCase(Locale.ROOT);
+        BlockPos exact = switch (normalized) {
+            case "below" -> player.getBlockPos().down();
+            case "above" -> player.getBlockPos().up(2);
+            case "looking_at", "visible" -> {
+                MinecraftClient client = MinecraftClient.getInstance();
+                yield client != null && client.crosshairTarget instanceof BlockHitResult hit ? hit.getBlockPos() : null;
+            }
+            default -> null;
+        };
+        if (exact != null && player.getWorld() instanceof ClientWorld clientWorld
+                && blockId.equals(blockId(clientWorld, exact))) {
+            return exact.toImmutable();
+        }
+        return "below".equals(normalized) || "above".equals(normalized) || "looking_at".equals(normalized)
+                ? null
+                : findNearestBlock(player, blockId, radius);
+    }
+
     private void facePosition(ClientPlayerEntity player, Vec3d target) {
+        float[] angles = lookAngles(player, target);
+        smoothYawToward(player, angles[0], LOOK_MAX_YAW_STEP);
+        smoothPitchToward(player, angles[1], LOOK_MAX_PITCH_STEP);
+    }
+
+    private float[] lookAngles(ClientPlayerEntity player, Vec3d target) {
         Vec3d eye = player.getEyePos();
         double dx = target.x - eye.x;
         double dy = target.y - eye.y;
         double dz = target.z - eye.z;
         double horizontal = Math.sqrt(dx * dx + dz * dz);
-        float yaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0D);
-        float pitch = (float) (-Math.toDegrees(Math.atan2(dy, horizontal)));
-        smoothYawToward(player, yaw, LOOK_MAX_YAW_STEP);
-        smoothPitchToward(player, pitch, LOOK_MAX_PITCH_STEP);
+        return new float[]{
+                (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0D),
+                (float) (-Math.toDegrees(Math.atan2(dy, horizontal)))
+        };
     }
 
     private void facePositionHorizontal(ClientPlayerEntity player, Vec3d target) {
@@ -5074,10 +7069,125 @@ public final class AutomationExecutor {
     }
 
     private BlockHitResult createCenterHit(ClientPlayerEntity player, BlockPos pos) {
-        Direction side = Direction.UP;
-        Vec3d hitPos = Vec3d.ofCenter(pos);
-        boolean insideBlock = false;
-        return new BlockHitResult(hitPos, side, pos, insideBlock);
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null && client.crosshairTarget instanceof BlockHitResult crosshair
+                && pos.equals(crosshair.getBlockPos())) {
+            return crosshair;
+        }
+        Vec3d center = Vec3d.ofCenter(pos);
+        Vec3d towardPlayer = player == null ? new Vec3d(0.0D, 1.0D, 0.0D) : player.getEyePos().subtract(center);
+        Direction side;
+        double ax = Math.abs(towardPlayer.x);
+        double ay = Math.abs(towardPlayer.y);
+        double az = Math.abs(towardPlayer.z);
+        if (ay >= ax && ay >= az) side = towardPlayer.y >= 0.0D ? Direction.UP : Direction.DOWN;
+        else if (ax >= az) side = towardPlayer.x >= 0.0D ? Direction.EAST : Direction.WEST;
+        else side = towardPlayer.z >= 0.0D ? Direction.SOUTH : Direction.NORTH;
+        Vec3d hitPos = center.add(
+                side.getOffsetX() * 0.5D,
+                side.getOffsetY() * 0.5D,
+                side.getOffsetZ() * 0.5D);
+        return new BlockHitResult(hitPos, side, pos, false);
+    }
+
+    private Direction buildDirection(ClientPlayerEntity player, String requested) {
+        Direction facing = player == null ? Direction.NORTH : player.getHorizontalFacing();
+        return switch (requested == null ? "forward" : requested.toLowerCase(Locale.ROOT)) {
+            case "north" -> Direction.NORTH;
+            case "south" -> Direction.SOUTH;
+            case "east" -> Direction.EAST;
+            case "west" -> Direction.WEST;
+            case "back", "backward" -> facing.getOpposite();
+            case "left" -> facing.rotateYCounterclockwise();
+            case "right" -> facing.rotateYClockwise();
+            default -> facing;
+        };
+    }
+
+    /** Returns forward/right offsets for one deterministic pattern index. */
+    private int[] buildPatternOffset(String pattern, int index, int length, int width) {
+        int safeLength = Math.max(1, length);
+        int safeWidth = Math.max(1, width);
+        int safeIndex = Math.max(0, index);
+        if ("platform".equals(pattern)) {
+            int row = safeIndex / safeWidth;
+            int columnInRow = safeIndex % safeWidth;
+            int right = row % 2 == 0 ? columnInRow : safeWidth - 1 - columnInRow;
+            return new int[]{row + 1, right};
+        }
+        if ("perimeter".equals(pattern) && safeLength > 1 && safeWidth > 1) {
+            if (safeIndex < safeLength) {
+                return new int[]{safeIndex + 1, 0};
+            }
+            safeIndex -= safeLength;
+            if (safeIndex < safeWidth - 1) {
+                return new int[]{safeLength, safeIndex + 1};
+            }
+            safeIndex -= safeWidth - 1;
+            if (safeIndex < safeLength - 1) {
+                return new int[]{safeLength - 1 - safeIndex, safeWidth - 1};
+            }
+            safeIndex -= safeLength - 1;
+            return new int[]{1, Math.max(1, safeWidth - 2 - safeIndex)};
+        }
+        if ("perimeter".equals(pattern) && safeLength == 1) {
+            return new int[]{1, safeIndex};
+        }
+        return new int[]{safeIndex + 1, 0};
+    }
+
+    private BlockHitResult placementHit(ClientWorld world, BlockPos target) {
+        if (world == null || target == null) {
+            return null;
+        }
+        List<Direction> supportDirections = List.of(
+                Direction.DOWN,
+                Direction.NORTH,
+                Direction.SOUTH,
+                Direction.WEST,
+                Direction.EAST,
+                Direction.UP
+        );
+        for (Direction targetToSupport : supportDirections) {
+            BlockPos support = target.offset(targetToSupport);
+            BlockState supportState = world.getBlockState(support);
+            if (supportState.isAir() || supportState.isReplaceable()) {
+                continue;
+            }
+            Direction clickedFace = targetToSupport.getOpposite();
+            Vec3d hit = Vec3d.ofCenter(support).add(
+                    clickedFace.getOffsetX() * 0.5D,
+                    clickedFace.getOffsetY() * 0.5D,
+                    clickedFace.getOffsetZ() * 0.5D
+            );
+            return new BlockHitResult(hit, clickedFace, support, false);
+        }
+        return null;
+    }
+
+    private BlockPos placementStandPosition(ClientWorld world, ClientPlayerEntity player, BlockPos target) {
+        if (world == null || player == null || target == null) return null;
+        if (player.getEyePos().squaredDistanceTo(Vec3d.ofCenter(target)) <= 20.25D) {
+            return player.getBlockPos();
+        }
+        BlockPos best = null;
+        double bestDistance = Double.MAX_VALUE;
+        for (int radius = 1; radius <= 3; radius++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
+                    BlockPos candidate = new BlockPos(target.getX() + dx, target.getY() + 1, target.getZ() + dz);
+                    if (!canStandAt(world, candidate)) continue;
+                    double distance = player.getBlockPos().getSquaredDistance(candidate);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = candidate.toImmutable();
+                    }
+                }
+            }
+            if (best != null) break;
+        }
+        return best;
     }
 
     private void updateActiveConsumption(ActiveExecution execution) {
@@ -5605,6 +7715,107 @@ public final class AutomationExecutor {
     }
 
     private Vec3d chooseRoutePlannerWaypoint(ClientWorld world, ClientPlayerEntity player, Vec3d finalTarget, Map<String, Object> state, boolean useY, boolean escaping) {
+        BoundedNavigationSnapshot snapshot = captureNavigationSnapshot(world, player, state, 12, 4, 5);
+        BoundedNavigationSnapshot.Node start = new BoundedNavigationSnapshot.Node(
+                player.getBlockX(), player.getBlockY(), player.getBlockZ());
+        BlockPos target = BlockPos.ofFloored(finalTarget);
+        BoundedNavigationSnapshot.Node goal = new BoundedNavigationSnapshot.Node(
+                target.getX(), target.getY(), target.getZ());
+        BoundedNavigationPlanner.Request request = new BoundedNavigationPlanner.Request(
+                start,
+                goal,
+                NAV_ROUTE_MAX_EXPANSIONS,
+                8_000_000L,
+                escaping ? 1.05D : 1.18D,
+                1.25D,
+                true,
+                Boolean.TRUE.equals(state.get("move.nav.allow_interactions")),
+                Boolean.TRUE.equals(state.get("move.nav.allow_parkour")),
+                3,
+                Boolean.TRUE.equals(state.get("move.target.sprint")),
+                8.0D,
+                Math.max(1.0D, doubleState(state, "move.nav.historical_risk_weight", 1.0D)),
+                firstNonBlank(
+                        stringParam(state, "target.entity.uuid", ""),
+                        stringParam(state, "entity.target.uuid", ""),
+                        stringParam(state, "mount.target.uuid", "")
+                )
+        );
+        Optional<BoundedNavigationPlanner.Plan> available = this.navigationPlanner.poll(snapshot, request);
+        if (available.isEmpty()) {
+            writeStateValue(state, "move.nav.route.active", false);
+            writeStateValue(state, "move.nav.route.reason", "snapshot_expanding");
+            return null;
+        }
+        BoundedNavigationPlanner.Plan plan = available.get();
+        writeStateValue(state, "move.nav.route.expansions", plan.expandedNodes());
+        writeStateValue(state, "move.nav.route.reason", plan.reason());
+        writeStateValue(state, "move.nav.route.fingerprint", Long.toUnsignedString(plan.snapshotFingerprint()));
+        if (!plan.hasProgress()) {
+            writeStateValue(state, "move.nav.route.active", false);
+            return null;
+        }
+        int lookahead = Math.min(plan.waypoints().size() - 1,
+                Math.max(1, player.getPos().distanceTo(finalTarget) > 10.0D
+                        ? NAV_ROUTE_LOOKAHEAD_LONG : NAV_ROUTE_LOOKAHEAD_SHORT));
+        BoundedNavigationPlanner.Waypoint waypoint = plan.waypoints().get(lookahead);
+        writeStateValue(state, "move.nav.route.active", true);
+        writeStateValue(state, "move.nav.route.x", waypoint.node().x());
+        writeStateValue(state, "move.nav.route.y", waypoint.node().y());
+        writeStateValue(state, "move.nav.route.z", waypoint.node().z());
+        writeStateValue(state, "move.nav.route.nodes", plan.waypoints().size());
+        writeStateValue(state, "move.nav.route.transition", waypoint.transition().name().toLowerCase(Locale.ROOT));
+        return new Vec3d(waypoint.node().x() + 0.5D, waypoint.node().y(), waypoint.node().z() + 0.5D);
+    }
+
+    private BoundedNavigationSnapshot captureNavigationSnapshot(ClientWorld world, ClientPlayerEntity player,
+                                                                 Map<String, Object> state, int radius,
+                                                                 int verticalUp, int verticalDown) {
+        Map<BoundedNavigationSnapshot.Node, BoundedNavigationSnapshot.Cell> cells = new LinkedHashMap<>();
+        BlockPos origin = player.getBlockPos();
+        for (int x = origin.getX() - radius; x <= origin.getX() + radius; x++) {
+            for (int z = origin.getZ() - radius; z <= origin.getZ() + radius; z++) {
+                for (int y = origin.getY() - verticalDown; y <= origin.getY() + verticalUp; y++) {
+                    BlockPos feet = new BlockPos(x, y, z);
+                    BlockState feetState = world.getBlockState(feet);
+                    Identifier blockId = Registries.BLOCK.getId(feetState.getBlock());
+                    String block = blockId == null ? "" : blockId.toString();
+                    boolean water = isWaterBlock(world, feet) || isWaterBlock(world, feet.down());
+                    boolean climbable = feetState.isIn(BlockTags.CLIMBABLE)
+                            || world.getBlockState(feet.up()).isIn(BlockTags.CLIMBABLE);
+                    boolean interactable = block.contains("door") || block.contains("trapdoor") || block.contains("fence_gate");
+                    boolean clear = canPassThrough(world, feet) && canPassThrough(world, feet.up());
+                    boolean supported = canStandAt(world, feet);
+                    boolean dangerous = isDangerBlock(world, feet) || isDangerBlock(world, feet.down());
+                    if (!clear && !water && !climbable && !interactable) continue;
+                    cells.put(new BoundedNavigationSnapshot.Node(x, y, z),
+                            new BoundedNavigationSnapshot.Cell(clear, supported, water, climbable,
+                                    interactable, dangerous, clear && !canPassThrough(world, feet.up(2))));
+                }
+            }
+        }
+        List<BoundedNavigationSnapshot.Threat> threats = new ArrayList<>();
+        Box bounds = new Box(origin).expand(radius + 4.0D, verticalUp + verticalDown + 4.0D, radius + 4.0D);
+        for (Entity entity : world.getEntitiesByClass(Entity.class, bounds,
+                entity -> entity != player && entity.isAlive())) {
+            BoundedNavigationSnapshot.Kind kind;
+            if (entity instanceof HostileEntity) kind = BoundedNavigationSnapshot.Kind.HOSTILE;
+            else if (entity instanceof PassiveEntity) kind = BoundedNavigationSnapshot.Kind.PASSIVE;
+            else continue;
+            BlockPos position = entity.getBlockPos();
+            threats.add(new BoundedNavigationSnapshot.Threat(
+                    entity.getUuidAsString(),
+                    new BoundedNavigationSnapshot.Node(position.getX(), position.getY(), position.getZ()),
+                    kind,
+                    player.canSee(entity)
+            ));
+        }
+        return BoundedNavigationSnapshot.of(cells, threats,
+                world.getRegistryKey().getValue().toString(),
+                longState(state, "world.observation.version", 0L));
+    }
+
+    private Vec3d chooseLegacyRoutePlannerWaypoint(ClientWorld world, ClientPlayerEntity player, Vec3d finalTarget, Map<String, Object> state, boolean useY, boolean escaping) {
         BlockPos start = player.getBlockPos();
         BlockPos targetFeet = BlockPos.ofFloored(finalTarget);
         double directDistance = navigationDistance(player.getPos(), finalTarget, useY);
@@ -6326,7 +8537,10 @@ public final class AutomationExecutor {
             return;
         }
 
-        if (decision.jump() && player.isOnGround()) {
+        if (player.hasVehicle()) {
+            setHeldInput("jump", decision.jump());
+            player.setSprinting(false);
+        } else if (decision.jump() && player.isOnGround()) {
             player.jump();
         }
 
@@ -6531,6 +8745,50 @@ public final class AutomationExecutor {
             cursor = cursor.down();
         }
         return true;
+    }
+
+    private enum BoatPlacementPreference {
+        AUTO("auto"), WATER("water"), GROUND("ground");
+
+        private final String id;
+
+        BoatPlacementPreference(String id) {
+            this.id = id;
+        }
+
+        private String id() {
+            return this.id;
+        }
+
+        private static BoatPlacementPreference from(String value) {
+            if (value == null) return AUTO;
+            return switch (value.strip().toLowerCase(Locale.ROOT)) {
+                case "water" -> WATER;
+                case "ground", "land" -> GROUND;
+                default -> AUTO;
+            };
+        }
+    }
+
+    private record BoatPlacementCandidate(
+            BlockPos position,
+            String surface,
+            double lookY,
+            double distanceSquared
+    ) {
+    }
+
+    private record SurroundingsScan(
+            BoatPlacementCandidate nearestWater,
+            BoatPlacementCandidate nearestGround,
+            BoatPlacementCandidate crosshair,
+            int positionsInspected,
+            int waterCandidates,
+            int groundCandidates,
+            int hostiles,
+            int passives,
+            int radius
+    ) {
     }
 
     private record CachedEntityRef(Entity entity, World world) {

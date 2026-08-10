@@ -1,6 +1,5 @@
 package com.spirit.koil.api.automation;
 
-import com.spirit.client.gui.console.ConsoleScreen;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
 import com.spirit.koil.api.automation.feedback.AutomationImprovementService;
@@ -10,6 +9,7 @@ import com.spirit.koil.api.automation.runtime.AutomationExecutionResults;
 import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
 import com.spirit.koil.api.model.LocalModelService;
+import com.spirit.koil.api.model.chat.LocalModelControlChatFeedback;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -50,66 +50,9 @@ public final class AutomationRouter {
 
     public static void registerClientCommands() {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(automationModeCommand("automate")));
-
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(literal("feedback")
-                .executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback");
-                    return 1;
-                })
-                .then(literal("good").executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback good");
-                    return 1;
-                }))
-                .then(literal("bad").executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback bad");
-                    return 1;
-                }).then(argument("input", greedyString()).executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback bad " + getString(context, "input"));
-                    return 1;
-                })))
-                .then(literal("cancel").executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback cancel");
-                    return 1;
-                }))
-                .then(literal("file").then(argument("file", greedyString()).executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback file " + getString(context, "file"));
-                    return 1;
-                })))
-                .then(literal("files").executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback files");
-                    return 1;
-                }))
-                .then(literal("node").then(argument("node", greedyString()).executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback node " + getString(context, "node"));
-                    return 1;
-                })))
-                .then(literal("type").then(argument("failure", greedyString()).executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback type " + getString(context, "failure"));
-                    return 1;
-                })))
-                .then(argument("input", greedyString()).executes(context -> {
-                    AutomationFeedbackService.handleConsoleInput("/feedback " + getString(context, "input"));
-                    return 1;
-                }))
-        ));
-
-        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(literal("proof")
-                .executes(context -> {
-                    AutomationCliViewModel.beginSession("/proof");
-                    return AutomationProofSuite.runAll() ? 1 : 0;
-                })
-                .then(literal("all").executes(context -> {
-                    AutomationCliViewModel.beginSession("/proof all");
-                    return AutomationProofSuite.runAll() ? 1 : 0;
-                }))
-                .then(literal("cache").executes(context -> {
-                    AutomationCliViewModel.beginSession("/proof cache");
-                    return AutomationProofSuite.runCacheOnly() ? 1 : 0;
-                }))
-        ));
     }
 
-    private static LiteralArgumentBuilder<FabricClientCommandSource> automationModeCommand(String commandName) {
+    static LiteralArgumentBuilder<FabricClientCommandSource> automationModeCommand(String commandName) {
         return literal(commandName)
                 .executes(context -> {
                     if (AutomationModeController.isAutomationMode()) {
@@ -144,7 +87,7 @@ public final class AutomationRouter {
                                 + (snapshot.planningActive() ? " (active)" : "")
                                 : "";
                         String experimental = snapshot.enabled()
-                                ? " | experimental: " + (snapshot.experimentalCompactAgentEnabled() ? "on" : "off")
+                                ? " | experimental: " + experimentalStatus(snapshot)
                                 : "";
                         client.inGameHud.getChatHud().addMessage(Text.literal(
                                 "Automation mode: " + state + policy + thinking + planning + experimental
@@ -160,14 +103,6 @@ public final class AutomationRouter {
                             setDeepThinking(!AutomationModeController.isDeepThinkingEnabled());
                             return 1;
                         })
-                        .then(literal("on").executes(context -> {
-                            setDeepThinking(true);
-                            return 1;
-                        }))
-                        .then(literal("off").executes(context -> {
-                            setDeepThinking(false);
-                            return 1;
-                        }))
                         .then(literal("status").executes(context -> {
                             reportModeSetting("Deep Thought", AutomationModeController.isDeepThinkingEnabled());
                             return 1;
@@ -177,14 +112,6 @@ public final class AutomationRouter {
                             setPlanningMode(!AutomationModeController.isPlanningModeEnabled());
                             return 1;
                         })
-                        .then(literal("on").executes(context -> {
-                            setPlanningMode(true);
-                            return 1;
-                        }))
-                        .then(literal("off").executes(context -> {
-                            setPlanningMode(false);
-                            return 1;
-                        }))
                         .then(literal("status").executes(context -> {
                             reportModeSetting("Planning Mode", AutomationModeController.isPlanningModeEnabled());
                             return 1;
@@ -200,16 +127,36 @@ public final class AutomationRouter {
                         })))
                 .then(literal("experimental")
                         .executes(context -> {
-                            return toggleExperimentalMode() ? 1 : 0;
+                            reportExperimentalStatus();
+                            return 1;
                         })
-                        .then(literal("on").executes(context -> {
-                            return setExperimentalMode(true) ? 1 : 0;
+                        .then(literal("compact").executes(context -> {
+                            return toggleExperimentalMode() ? 1 : 0;
                         }))
-                        .then(literal("off").executes(context -> {
-                            return setExperimentalMode(false) ? 1 : 0;
+                        .then(literal("verification").executes(context -> {
+                            setVerification(!AutomationModeController.isVerificationEnabled());
+                            return 1;
                         }))
+                        .then(literal("no-fail").executes(context -> togglePersistentExperiment(
+                            com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.NO_FAIL,
+                            "No-Fail")))
+                        .then(literal("persistent-history").executes(context -> togglePersistentExperiment(
+                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_CONVERSATION_HISTORY,
+                                "Persistent conversation history")))
+                        .then(literal("associative-memory").executes(context -> togglePersistentExperiment(
+                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY,
+                                "Persistent associative memory")))
+                        .then(literal("gigatoken").executes(context -> togglePersistentExperiment(
+                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.GIGATOKEN,
+                                "gigaToken")))
+                        .then(literal("expert-prefetch").executes(context -> togglePersistentExperiment(
+                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH,
+                                "Expert prefetch")))
+                        .then(literal("completion-mode").executes(context -> togglePersistentExperiment(
+                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.COMPLETION_MODE,
+                                "Completion mode")))
                         .then(literal("status").executes(context -> {
-                            reportModeSetting("Experimental compact agent", AutomationModeController.isExperimentalCompactAgentEnabled());
+                            reportExperimentalStatus();
                             return 1;
                         })))
                 .then(literal("exit").executes(context -> {
@@ -232,7 +179,54 @@ public final class AutomationRouter {
                     AutomationCliViewModel.beginSession("/" + commandName + " improve");
                     AutomationImprovementService.improve();
                     return 1;
-                }));
+                }))
+                .then(feedbackCommand())
+                .then(proofCommand(commandName));
+    }
+
+    private static LiteralArgumentBuilder<FabricClientCommandSource> feedbackCommand() {
+        return literal("feedback")
+                .executes(context -> handleFeedbackCommand(""))
+                .then(literal("good").executes(context -> handleFeedbackCommand("good")))
+                .then(literal("bad")
+                        .executes(context -> handleFeedbackCommand("bad"))
+                        .then(argument("input", greedyString()).executes(context ->
+                                handleFeedbackCommand("bad " + getString(context, "input")))))
+                .then(literal("cancel").executes(context -> handleFeedbackCommand("cancel")))
+                .then(literal("files").executes(context -> handleFeedbackCommand("files")))
+                .then(literal("sources").executes(context -> handleFeedbackCommand("sources")))
+                .then(literal("file").then(argument("file", greedyString()).executes(context ->
+                        handleFeedbackCommand("file " + getString(context, "file")))))
+                .then(literal("source").then(argument("source", greedyString()).executes(context ->
+                        handleFeedbackCommand("source " + getString(context, "source")))))
+                .then(literal("node").then(argument("node", greedyString()).executes(context ->
+                        handleFeedbackCommand("node " + getString(context, "node")))))
+                .then(literal("type").then(argument("failure", greedyString()).executes(context ->
+                        handleFeedbackCommand("type " + getString(context, "failure")))))
+                .then(literal("failure").then(argument("failure", greedyString()).executes(context ->
+                        handleFeedbackCommand("failure " + getString(context, "failure")))))
+                .then(literal("note").then(argument("note", greedyString()).executes(context ->
+                        handleFeedbackCommand("note " + getString(context, "note")))))
+                .then(argument("input", greedyString()).executes(context ->
+                        handleFeedbackCommand(getString(context, "input"))));
+    }
+
+    private static int handleFeedbackCommand(String child) {
+        String suffix = child == null || child.isBlank() ? "" : " " + child;
+        return AutomationFeedbackService.handleConsoleInput("/automate feedback" + suffix) ? 1 : 0;
+    }
+
+    private static LiteralArgumentBuilder<FabricClientCommandSource> proofCommand(String commandName) {
+        return literal("proof")
+                .executes(context -> runProof(commandName, false, false))
+                .then(literal("all").executes(context -> runProof(commandName, false, true)))
+                .then(literal("cache").executes(context -> runProof(commandName, true, false)));
+    }
+
+    private static int runProof(String commandName, boolean cacheOnly, boolean explicitAll) {
+        String suffix = cacheOnly ? " cache" : explicitAll ? " all" : "";
+        AutomationCliViewModel.beginSession("/" + commandName + " proof" + suffix);
+        return (cacheOnly ? AutomationProofSuite.runCacheOnly() : AutomationProofSuite.runAll()) ? 1 : 0;
     }
 
     private static boolean enableAutomationMode() {
@@ -277,6 +271,15 @@ public final class AutomationRouter {
         reportModeSetting("Planning Mode", enabled);
     }
 
+    private static void setVerification(boolean enabled) {
+        if (!AutomationModeController.isAutomationMode() && !enableAutomationMode()) {
+            return;
+        }
+        AutomationModeController.setVerificationEnabled(enabled);
+        AutomationReporter.pipeline("[mode]", "result verification " + (enabled ? "enabled" : "disabled"));
+        reportModeSetting("Automation verification", enabled);
+    }
+
     private static void reportModeSetting(String label, boolean enabled) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.inGameHud != null) {
@@ -286,12 +289,37 @@ public final class AutomationRouter {
         }
     }
 
+    private static void reportExperimentalStatus() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null || client.inGameHud == null) return;
+        AutomationModeController.Snapshot snapshot = AutomationModeController.snapshot();
+        client.inGameHud.getChatHud().addMessage(Text.literal(
+                "Experimental: " + experimentalStatus(snapshot)
+                        + " | use an /automate experimental child command to toggle"
+        ));
+    }
+
+    private static int togglePersistentExperiment(
+            com.spirit.koil.api.model.ModelExperimentalFeatures.Feature feature,
+            String label
+    ) {
+        boolean enabled = com.spirit.koil.api.model.ModelExperimentalFeatures.toggle(feature);
+        LocalModelService.refreshExperimentalFeatures();
+        reportModeSetting(label, enabled);
+        return 1;
+    }
+
+    private static String experimentalStatus(AutomationModeController.Snapshot snapshot) {
+        if (snapshot == null || !snapshot.experimentalFeaturesEnabled()) return "off";
+        return String.join(", ", snapshot.enabledExperimentalFeatures());
+    }
+
     private static boolean toggleUnrestrictedMode() {
-        boolean enable = !AutomationModeController.isYoloMode();
+        boolean enable = !AutomationModeController.isUnrestrictedMode();
         if (enable && !AutomationModeController.isAutomationMode() && !enableAutomationMode()) {
             return false;
         }
-        AutomationModeController.setYoloModeEnabled(enable);
+        AutomationModeController.setUnrestrictedModeEnabled(enable);
         AutomationReporter.pipeline(
                 "[mode]",
                 enable
@@ -334,7 +362,7 @@ public final class AutomationRouter {
         }
     }
 
-    public static void toggleAutomationYoloFromUi() {
+    public static void toggleAutomationUnrestrictedFromUi() {
         toggleUnrestrictedMode();
     }
 
@@ -350,12 +378,12 @@ public final class AutomationRouter {
         toggleExperimentalMode();
     }
 
+    public static void toggleVerificationFromUi() {
+        setVerification(!AutomationModeController.isVerificationEnabled());
+    }
+
     public static void openCli() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null) {
-            return;
-        }
-        client.send(() -> client.setScreen(new ConsoleScreen(client.currentScreen, com.spirit.koil.api.console.ConsoleChannel.CLI, true)));
+        LocalModelControlChatFeedback.info("Automation activity is shown in the shared model popup; the Automation console was retired.");
     }
 
     public static void closeCli() {
@@ -363,11 +391,7 @@ public final class AutomationRouter {
         if (client == null) {
             return;
         }
-        client.send(() -> {
-            if (client.currentScreen instanceof ConsoleScreen screen) {
-                screen.close();
-            }
-        });
+        // The retired Automation console has no screen to close.
     }
 
     public static void handleConsoleInput(String input) {
@@ -394,6 +418,14 @@ public final class AutomationRouter {
                 stopAutomation(false);
                 return;
             }
+            case "/automate on" -> {
+                enableAutomationMode();
+                return;
+            }
+            case "/automate off" -> {
+                stopAutomation(false);
+                return;
+            }
             case "/automate exit" -> {
                 stopAutomation(true);
                 return;
@@ -411,8 +443,24 @@ public final class AutomationRouter {
                 AutomationImprovementService.improve();
                 return;
             }
+            case "/automate proof", "/automate proof all" -> {
+                runProof("automate", false, trimmed.endsWith(" all"));
+                return;
+            }
+            case "/automate proof cache" -> {
+                runProof("automate", true, false);
+                return;
+            }
             case "/automate deep" -> {
                 setDeepThinking(!AutomationModeController.isDeepThinkingEnabled());
+                return;
+            }
+            case "/automate deep on" -> {
+                setDeepThinking(true);
+                return;
+            }
+            case "/automate deep off" -> {
+                setDeepThinking(false);
                 return;
             }
             case "/automate deep status" -> {
@@ -421,6 +469,14 @@ public final class AutomationRouter {
             }
             case "/automate plan" -> {
                 setPlanningMode(!AutomationModeController.isPlanningModeEnabled());
+                return;
+            }
+            case "/automate plan on" -> {
+                setPlanningMode(true);
+                return;
+            }
+            case "/automate plan off" -> {
+                setPlanningMode(false);
                 return;
             }
             case "/automate plan status" -> {
@@ -436,11 +492,26 @@ public final class AutomationRouter {
                 return;
             }
             case "/automate experimental" -> {
-                toggleExperimentalMode();
+                reportExperimentalStatus();
                 return;
             }
             case "/automate experimental status" -> {
-                reportModeSetting("Experimental compact agent", AutomationModeController.isExperimentalCompactAgentEnabled());
+                reportExperimentalStatus();
+                return;
+            }
+            case "/automate experimental compact" -> {
+                toggleExperimentalMode();
+                return;
+            }
+            case "/automate experimental verification" -> {
+                setVerification(!AutomationModeController.isVerificationEnabled());
+                return;
+            }
+            case "/automate experimental no-fail" -> {
+                togglePersistentExperiment(
+                        com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.NO_FAIL,
+                        "No-Fail"
+                );
                 return;
             }
             case "/automate unrestricted" -> {
@@ -541,6 +612,12 @@ public final class AutomationRouter {
     }
 
     public static void tick() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        AutomationCompletionModeController.tick(client);
+        if (client != null && client.player == null && (INTERPRETER.isActive() || !PENDING_REQUESTS.isEmpty())) {
+            cancelCurrentTask("player connection closed");
+            return;
+        }
         PlannerOutcome outcome;
         while ((outcome = READY.poll()) != null) {
             PENDING_REQUESTS.remove(outcome.sequence);

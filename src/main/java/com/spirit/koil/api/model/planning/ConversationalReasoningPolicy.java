@@ -21,17 +21,22 @@ public final class ConversationalReasoningPolicy {
                 || normalized.contains(" step by step")
                 || normalized.contains("multiple approaches");
         boolean contextReview = conversationCharacters > Math.max(4_096, profile.contextWindowTokens() * 2);
+        boolean minecraftTopic = contains(normalized, "minecraft", "command", "registry", "entity", "mob", "item", "block",
+                "recipe", "craft", "advancement", "nbt", "snbt", "biome", "dimension", "datapack", "modded");
+        boolean evidenceQuestion = contains(normalized, "what", "which", "how", "where", "does", "is there", "syntax",
+                "exact", "valid", "exists", "id", "identifier", "tag", "property", "ingredient");
+        boolean grounded = minecraftTopic && (complex || evidenceQuestion || normalized.contains("?"));
         if (deepThought) {
-            return new Decision(Depth.DEEP_THOUGHT, true, true, 32, 1536);
+            return new Decision(Depth.DEEP_THOUGHT, true, true, true, 32, 1536);
         }
         if (complex || contextReview) {
             int rounds = profile.stagedExecution() ? 4 : 3;
-            return new Decision(Depth.EXTENDED, true, contextReview, rounds, profile.stagedExecution() ? 1024 : 1536);
+            return new Decision(Depth.EXTENDED, true, contextReview, grounded, rounds, profile.stagedExecution() ? 1024 : 1536);
         }
-        if (normalized.length() < 100 && !normalized.contains("?")) {
-            return new Decision(Depth.DIRECT, false, false, 1, 640);
+        if (normalized.length() < 100 && !normalized.contains("?") && !grounded) {
+            return new Decision(Depth.DIRECT, false, false, false, 1, 192);
         }
-        return new Decision(Depth.NORMAL, false, contextReview, 2, 1024);
+        return new Decision(Depth.NORMAL, false, contextReview, grounded, grounded ? 4 : 2, 1024);
     }
 
     private static boolean contains(String value, String... needles) {
@@ -49,6 +54,7 @@ public final class ConversationalReasoningPolicy {
             Depth depth,
             boolean answerNowAvailable,
             boolean reviewContext,
+            boolean groundedMinecraft,
             int maximumProviderRounds,
             int maximumOutputTokens
     ) {
