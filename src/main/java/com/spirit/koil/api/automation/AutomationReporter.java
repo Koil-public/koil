@@ -4,6 +4,7 @@ import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.console.ConsoleLogBridge;
+import com.spirit.koil.api.util.console.log.KoilLog;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -17,6 +18,7 @@ public final class AutomationReporter {
     public static void row(ConsoleLevel level, String stage, String message) {
         AutomationCliViewModel.appendFromReporter(level, stage, message);
         ConsoleLogBridge.publish(ConsoleChannel.CLI, level, LocalTime.now().format(TIME), "CLI", stage, message, message);
+        KoilLog.write(KoilLog.AUTOMATION_THREAD, level, stage, message);
     }
 
     public static void pipeline(String stage, String message) {

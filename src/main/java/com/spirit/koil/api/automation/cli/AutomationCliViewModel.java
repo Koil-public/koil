@@ -132,14 +132,6 @@ public final class AutomationCliViewModel {
 
     public static synchronized void offerFeedbackPrompt(String reason) {
         hideRowsByPrefix("feedback:");
-        String detailText = reason == null || reason.isBlank() ? "completed root task" : reason;
-        upsertDetailed("feedback:label", "feedback", "feedback_prompt", 0, "[info]", "Feedback:", detailText, true,
-                "", detailText, "", "optional structured feedback", "", "", "automation feedback");
-        upsertDetailed("feedback:good", "feedback", "feedback_button_good", 1, "[ok  ]", "[ \u2713 Good ]", "click = accepted, no event stored", true,
-                "", "non-blocking", "", "ignored = no action", "", "", "automation feedback");
-        upsertDetailed("feedback:bad", "feedback", "feedback_button_bad", 1, "[fail]", "[ \u2717 Bad ]", "click = select failed node", true,
-                "", "non-blocking", "", "begin deterministic failure flow", "", "select node, then failure type", "automation feedback");
-        publishFeedbackChatPrompt(detailText);
         persist();
     }
 
@@ -272,7 +264,7 @@ public final class AutomationCliViewModel {
         String detailText = reason == null || reason.isBlank() ? "task finished" : reason;
         MutableText header = automationChatHeader();
         MutableText prompt = promptLine("Feedback: " + detailText + ". How did it do?");
-        MutableText active = Text.literal("│ └click a button, or type /automate feedback").formatted(Formatting.DARK_GRAY);
+        MutableText active = Text.literal("│ └─ click a button, or type /automate feedback").formatted(Formatting.DARK_GRAY);
         List<AutomationChatHudState.Action> actions = List.of(
                 new AutomationChatHudState.Action("feedback.good", "Good", "/automate feedback good", "", "good"),
                 new AutomationChatHudState.Action("feedback.bad", "Bad", "/automate feedback bad", "", "bad"),

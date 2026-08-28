@@ -77,21 +77,26 @@ public final class LocalModelInstallationService {
     }
 
     public CompletableFuture<ModelInstallationSnapshot> installWithResult(String catalogId) {
-        CompletableFuture<ModelInstallationSnapshot> result = new CompletableFuture<>();
-        if (!beginInstall(catalogId, result)) {
-            result.complete(new ModelInstallationSnapshot(
-                    ModelInstallationState.FAILED,
-                    catalogId == null ? "" : catalogId,
-                    this.snapshot.state().active()
-                            ? "Another model installation operation is already active."
-                            : "Unknown local model catalog id.",
-                    "",
-                    0L,
-                    0L,
-                    Instant.now()
-            ));
-        }
-        return result;
+        return LocalModelCatalog.resolveForInstall(catalogId).thenCompose(resolved -> {
+            CompletableFuture<ModelInstallationSnapshot> result = new CompletableFuture<>();
+            LocalModelCatalogEntry requested = resolved.orElseGet(() -> LocalModelCatalog.find(catalogId).orElse(null));
+            if (requested == null || !requested.runnable() || !beginInstall(requested.id(), result)) {
+                result.complete(new ModelInstallationSnapshot(
+                        ModelInstallationState.FAILED,
+                        catalogId == null ? "" : catalogId,
+                        this.snapshot.state().active()
+                                ? "Another model installation operation is already active."
+                                : requested != null && !requested.runnable()
+                                        ? requested.canonical().unavailableReason()
+                                        : "No verified local implementation could be resolved for this catalog model.",
+                        "",
+                        0L,
+                        0L,
+                        Instant.now()
+                ));
+            }
+            return result;
+        });
     }
 
     private synchronized boolean beginInstall(
@@ -99,7 +104,7 @@ public final class LocalModelInstallationService {
             CompletableFuture<ModelInstallationSnapshot> result
     ) {
         LocalModelCatalogEntry entry = LocalModelCatalog.find(catalogId).orElse(null);
-        if (entry == null || this.snapshot.state().active()) {
+        if (entry == null || !entry.runnable() || this.snapshot.state().active()) {
             return false;
         }
         this.cancellation.set(false);
@@ -125,7 +130,7 @@ public final class LocalModelInstallationService {
     }
 
     public boolean installed(LocalModelCatalogEntry entry) {
-        if (entry == null) {
+        if (entry == null || !entry.runnable()) {
             return false;
         }
         Path runtime = runtimeExecutable();

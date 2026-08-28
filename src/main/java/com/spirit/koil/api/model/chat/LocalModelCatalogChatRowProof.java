@@ -3,6 +3,7 @@ package com.spirit.koil.api.model.chat;
 import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
 import com.spirit.koil.api.model.catalog.LocalModelCompatibility;
+import com.spirit.koil.api.model.catalog.LocalModelCatalogView;
 import com.spirit.koil.api.model.catalog.LocalModelAutomationEligibility;
 import com.spirit.koil.api.command.CommandOutputPresentation;
 import net.minecraft.text.ClickEvent;
@@ -71,21 +72,26 @@ public final class LocalModelCatalogChatRowProof {
         for (LocalModelCatalogEntry catalogEntry : LocalModelCatalog.entries()) {
             Text installRow = LocalModelCatalogChatRow.create(catalogEntry, compatibility, false, false);
             verifyPalette(installRow);
-            verifyInteraction(installRow, "/model install " + catalogEntry.id());
+            if (catalogEntry.runnable() || LocalModelCatalog.canResolveForInstall(catalogEntry)) {
+                verifyInteraction(installRow, "/model install " + catalogEntry.id());
+            } else {
+                require(installRow.getStyle().getClickEvent() == null
+                                && installRow.getString().contains("[catalog]"),
+                        "metadata-only catalog row incorrectly exposed an install action");
+            }
             String installHover = hoverText(installRow).getString();
             require(installHover.contains("Model ID: " + catalogEntry.id()), "hover omitted model id");
             require(installHover.contains("Intent estimate:"), "hover omitted intent estimate");
-            String expectedTools = LocalModelAutomationEligibility.supportsAutomationTools(catalogEntry)
-                    ? "yes / yes"
-                    : "yes / no";
+            String expectedTools = (catalogEntry.capabilityTags().contains(
+                    com.spirit.koil.api.model.catalog.LocalModelCapabilityTag.CHAT) ? "yes" : "no")
+                    + " / "
+                    + (LocalModelAutomationEligibility.supportsAutomationTools(catalogEntry) ? "yes" : "no");
             require(installHover.contains("Chat / tools: " + expectedTools),
                     "hover misstated chat/tool support for " + catalogEntry.id());
-            String automationRule = LocalModelAutomationEligibility.REQUIRED_COMPLEX_INTENT_EXCLUSIVE + "%";
             require(installHover.contains(LocalModelAutomationEligibility.supportsAutomationTools(catalogEntry)
-                            ? "Automation: eligible — complex intent exceeds " + automationRule
-                            : "Automation: blocked — complex intent must exceed " + automationRule
-                                    + "; /ask remains available"),
-                    "hover omitted the Automation complexity boundary for " + catalogEntry.id());
+                            ? "Automation: eligible — verified tool protocol"
+                            : "Automation: unavailable — no verified tool protocol/runtime"),
+                    "hover omitted the Automation protocol eligibility for " + catalogEntry.id());
             require(installHover.contains("Storage:"), "hover omitted storage");
             require(installHover.contains("Compatibility: Recommended"), "hover omitted compatibility");
 
@@ -99,8 +105,23 @@ public final class LocalModelCatalogChatRowProof {
         require(uninstallRow.getString().contains("[uninstall]"), "installed row omitted uninstall action");
         require(hoverText(uninstallRow).getString().contains("Status: selected and installed"),
                 "selected model status was not preserved");
-        require(hoverText(uninstallRow).getString().contains("Chat / tools: yes / no"),
-                "sub-threshold selected model still advertised tools");
+        require(hoverText(uninstallRow).getString().contains(
+                        "Chat / tools: yes / "
+                                + (LocalModelAutomationEligibility.supportsAutomationTools(entry) ? "yes" : "no")),
+                "selected model misstated protocol-backed tool availability");
+
+        LocalModelCatalogView.Page firstPage = LocalModelCatalogView.page(LocalModelCatalog.entries(), 1, 10);
+        LocalModelCatalogView.Page lastPage = LocalModelCatalogView.page(
+                LocalModelCatalog.entries(), Integer.MAX_VALUE, 10);
+        require(firstPage.entries().size() == 10 && firstPage.pageCount() > 1
+                        && lastPage.page() == lastPage.pageCount() && !lastPage.entries().isEmpty(),
+                "catalog pagination did not keep every large-roster page reachable");
+        require(LocalModelCatalogView.search(LocalModelCatalog.entries(), "qwen thinking").stream()
+                        .allMatch(model -> (model.displayName() + " " + model.canonical().modelType())
+                                .toLowerCase(java.util.Locale.ROOT).contains("qwen")),
+                "catalog search did not match canonical metadata");
+        require(!LocalModelCatalogView.search(LocalModelCatalog.entries(), "qwen3.8").isEmpty(),
+                "catalog search returned no current Qwen3.8 entries");
 
         System.out.println("Local model catalog chat-row proof passed.");
     }

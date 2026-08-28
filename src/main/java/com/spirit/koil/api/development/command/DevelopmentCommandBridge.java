@@ -4,7 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.spirit.koil.api.util.console.log.SubFileLogger;
+import com.spirit.koil.api.util.console.log.KoilLog;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
@@ -30,8 +30,6 @@ import java.util.Set;
  * network-listener surface.</p>
  */
 public final class DevelopmentCommandBridge {
-    private static final String LOGGER_ID = "developmentCommandBridgeLogger";
-    private static final String LOG_THREAD = "Development command bridge";
     private static final int STATUS_INTERVAL_TICKS = 100;
     private static final int FEEDBACK_WINDOW_TICKS = 20;
     private static final long REQUEST_TIMEOUT_SECONDS = 300L;
@@ -43,7 +41,6 @@ public final class DevelopmentCommandBridge {
     );
 
     private static DevelopmentCommandFileStore store;
-    private static SubFileLogger logger;
     private static boolean initialized;
     private static boolean developmentEnvironment;
     private static boolean enabledByConfig;
@@ -70,12 +67,6 @@ public final class DevelopmentCommandBridge {
         store = new DevelopmentCommandFileStore(
                 gameDirectory.resolve("koil/sys/development/command-bridge")
         );
-        SubFileLogger.initialize(
-                LOGGER_ID,
-                gameDirectory.resolve("koil/logs/development-command-bridge").toString(),
-                "development-command-bridge"
-        );
-        logger = SubFileLogger.getInstance(LOGGER_ID);
         refreshConfig();
         try {
             store.initialize();
@@ -784,15 +775,15 @@ public final class DevelopmentCommandBridge {
     }
 
     private static void logInfo(String message) {
-        if (logger != null) logger.logI(LOG_THREAD, message);
+        KoilLog.info(KoilLog.BRIDGE_THREAD, "development command bridge", message);
     }
 
     private static void logWarning(String message) {
-        if (logger != null) logger.logW(LOG_THREAD, message);
+        KoilLog.warning(KoilLog.BRIDGE_THREAD, "development command bridge", message);
     }
 
     private static void logError(String message) {
-        if (logger != null) logger.logE(LOG_THREAD, message);
+        KoilLog.error(KoilLog.BRIDGE_THREAD, "development command bridge", message);
     }
 
     private record ActiveCommand(

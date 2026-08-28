@@ -4,6 +4,9 @@ import com.spirit.client.gui.PopupMenu;
 import com.spirit.koil.api.automation.AutomationModeController;
 import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.model.LocalModelService;
+import com.spirit.koil.api.model.catalog.LocalModelCatalog;
+import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
+import com.spirit.koil.api.model.catalog.LocalModelFamilySelection;
 import com.spirit.koil.api.model.chat.LocalModelControlChatFeedback;
 import com.spirit.koil.api.model.install.LocalModelInstallationService;
 import com.spirit.koil.api.model.voice.ModelVoiceService;
@@ -21,6 +24,8 @@ public final class ChatComposerMenuBridge {
     public static final String PRIVATE_SECTION = "composer:private";
     public static final String AUTOMATION_SECTION = "composer:automation";
     public static final String MODEL_SECTION = "composer:model";
+    public static final String MODEL_ACTIVE_SELECTOR = "composer:model_active_selector";
+    public static final String MODEL_COMPLEXITY_SELECTOR = "composer:model_complexity_selector";
     public static final String VOICE_SELECTOR = "composer:voice_selector";
     public static final String EXPERIMENTAL_SELECTOR = "composer:automation_experimental";
 
@@ -77,18 +82,26 @@ public final class ChatComposerMenuBridge {
         }
         if (MODEL_SECTION.equals(section)) {
             List<PopupMenu.MenuEntry> entries = new ArrayList<>();
-            String selected = LocalModelService.selectedCatalogId();
-            for (var model : LocalModelInstallationService.instance().installedEntries()) {
-                boolean active = model.id().equals(selected);
-                entries.add(new PopupMenu.MenuEntry(
-                        "composer:model:" + model.id(),
-                        model.displayName(),
-                        active ? 0xFF55AA55 : 0,
-                        active ? "•" : ""
-                ));
-            }
-            if (entries.isEmpty()) {
+            ModelSelectionSnapshot selection = modelSelectionSnapshot();
+            if (selection.families().isEmpty()) {
                 entries.add(new PopupMenu.MenuEntry("composer:model_setup", "Open model setup…"));
+            } else {
+                entries.add(new PopupMenu.MenuEntry(
+                        MODEL_ACTIVE_SELECTOR,
+                        "Active: " + selection.activeFamily(),
+                        0,
+                        "",
+                        0xFFAAB4C3,
+                        ">"
+                ));
+                entries.add(new PopupMenu.MenuEntry(
+                        MODEL_COMPLEXITY_SELECTOR,
+                        "Complexity: " + selection.activeComplexity(),
+                        0,
+                        "",
+                        0xFFAAB4C3,
+                        ">"
+                ));
             }
             var settings = ModelVoiceService.settings();
             entries.add(new PopupMenu.MenuEntry(
@@ -130,6 +143,34 @@ public final class ChatComposerMenuBridge {
             return voices.isEmpty()
                     ? List.of(new PopupMenu.MenuEntry("composer:no_voices", "No voices available"))
                     : List.copyOf(voices);
+        }
+        if (MODEL_ACTIVE_SELECTOR.equals(selector)) {
+            ModelSelectionSnapshot selection = modelSelectionSnapshot();
+            return selection.families().stream().map(family -> {
+                boolean active = family.label().equalsIgnoreCase(selection.activeFamily());
+                return new PopupMenu.MenuEntry(
+                        "composer:model_family:" + family.label(),
+                        family.label(),
+                        active ? 0xFF55AA55 : 0,
+                        active ? "•" : ""
+                );
+            }).toList();
+        }
+        if (MODEL_COMPLEXITY_SELECTOR.equals(selector)) {
+            ModelSelectionSnapshot selection = modelSelectionSnapshot();
+            return selection.families().stream()
+                    .filter(family -> family.label().equalsIgnoreCase(selection.activeFamily()))
+                    .findFirst()
+                    .map(family -> family.variants().stream().map(variant -> {
+                        boolean active = variant.catalogId().equals(LocalModelService.selectedCatalogId());
+                        return new PopupMenu.MenuEntry(
+                                "composer:model:" + variant.catalogId(),
+                                variant.label(),
+                                active ? 0xFF55AA55 : 0,
+                                active ? "•" : ""
+                        );
+                    }).toList())
+                    .orElse(List.of());
         }
         if (EXPERIMENTAL_SELECTOR.equals(selector)) {
             return List.of(
@@ -204,23 +245,22 @@ public final class ChatComposerMenuBridge {
                 return ActionResult.HANDLED;
             }
         }
+        if (actionId.startsWith("composer:model_family:")) {
+            String familyName = actionId.substring("composer:model_family:".length());
+            ModelSelectionSnapshot selection = modelSelectionSnapshot();
+            LocalModelFamilySelection.FamilyOption family = selection.families().stream()
+                    .filter(option -> option.label().equalsIgnoreCase(familyName))
+                    .findFirst().orElse(null);
+            if (family == null || family.variants().isEmpty()) {
+                LocalModelControlChatFeedback.warning("That installed model family is no longer available.");
+                return ActionResult.HANDLED;
+            }
+            selectModel(family.variants().get(0).catalogId());
+            return ActionResult.HANDLED;
+        }
         if (actionId.startsWith("composer:model:")) {
             String modelId = actionId.substring("composer:model:".length());
-            LocalModelService.selectInstalledCatalogModel(modelId).whenComplete((selected, failure) -> {
-                MinecraftClient client = MinecraftClient.getInstance();
-                if (client == null) {
-                    return;
-                }
-                client.execute(() -> {
-                    if (failure != null) {
-                        LocalModelControlChatFeedback.error("Model switch failed: " + failure.getMessage());
-                    } else if (Boolean.TRUE.equals(selected)) {
-                        LocalModelControlChatFeedback.success("Selected local model " + modelId + ".");
-                    } else {
-                        LocalModelControlChatFeedback.warning("Model " + modelId + " is not installed or is incomplete.");
-                    }
-                });
-            });
+            selectModel(modelId);
             return ActionResult.HANDLED;
         }
         if ("composer:model_setup".equals(actionId)) {
@@ -244,6 +284,48 @@ public final class ChatComposerMenuBridge {
         return ActionResult.NOT_HANDLED;
     }
 
+    private static void selectModel(String modelId) {
+        LocalModelService.selectInstalledCatalogModel(modelId).whenComplete((selected, failure) -> {
+                MinecraftClient client = MinecraftClient.getInstance();
+                if (client == null) {
+                    return;
+                }
+                client.execute(() -> {
+                    if (failure != null) {
+                        LocalModelControlChatFeedback.error("Model switch failed: " + failure.getMessage());
+                    } else if (Boolean.TRUE.equals(selected)) {
+                        LocalModelControlChatFeedback.success("Selected local model " + modelId + ".");
+                    } else {
+                        LocalModelControlChatFeedback.warning("Model " + modelId + " is not installed or is incomplete.");
+                    }
+                });
+            });
+    }
+
+    private static ModelSelectionSnapshot modelSelectionSnapshot() {
+        List<LocalModelCatalogEntry> known = LocalModelCatalog.entries();
+        List<LocalModelCatalogEntry> installed = LocalModelInstallationService.instance().installedEntries();
+        List<LocalModelFamilySelection.FamilyOption> families = LocalModelFamilySelection.families(known, installed);
+        LocalModelCatalogEntry selected = LocalModelCatalog.find(LocalModelService.selectedCatalogId()).orElse(null);
+        String family = selected == null ? "" : selected.family();
+        String catalogFamily = family;
+        if (family.isBlank() || families.stream().noneMatch(option -> option.label().equalsIgnoreCase(catalogFamily))) {
+            family = families.isEmpty() ? "None" : families.get(0).label();
+        }
+        String selectedFamily = family;
+        String complexity = families.stream()
+                .filter(option -> option.label().equalsIgnoreCase(selectedFamily))
+                .flatMap(option -> option.variants().stream())
+                .filter(option -> selected != null && option.catalogId().equals(selected.id()))
+                .map(LocalModelFamilySelection.VariantOption::label)
+                .findFirst()
+                .orElseGet(() -> families.stream()
+                        .filter(option -> option.label().equalsIgnoreCase(selectedFamily))
+                        .flatMap(option -> option.variants().stream())
+                        .findFirst().map(LocalModelFamilySelection.VariantOption::label).orElse("None"));
+        return new ModelSelectionSnapshot(families, selectedFamily, complexity);
+    }
+
     private static PopupMenu.MenuEntry experimentalEntry(
             String id,
             String label,
@@ -263,8 +345,16 @@ public final class ChatComposerMenuBridge {
     public static boolean isNestedSelector(String actionId) {
         return "pm_target_header".equals(actionId)
                 || VOICE_SELECTOR.equals(actionId)
-                || EXPERIMENTAL_SELECTOR.equals(actionId);
+                || EXPERIMENTAL_SELECTOR.equals(actionId)
+                || MODEL_ACTIVE_SELECTOR.equals(actionId)
+                || MODEL_COMPLEXITY_SELECTOR.equals(actionId);
     }
+
+    private record ModelSelectionSnapshot(
+            List<LocalModelFamilySelection.FamilyOption> families,
+            String activeFamily,
+            String activeComplexity
+    ) { }
 
     public enum ActionResult {
         NOT_HANDLED,

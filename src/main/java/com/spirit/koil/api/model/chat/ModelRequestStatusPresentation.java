@@ -45,7 +45,6 @@ public final class ModelRequestStatusPresentation {
     public static View forActivity(ModelRequestState state, String detail, String toolId) {
         ModelRequestState safe = state == null ? ModelRequestState.FAILED : state;
         String normalizedDetail = normalize(detail);
-        String normalizedTool = normalize(toolId);
         if (safe == ModelRequestState.PREPARING_CONTEXT) {
             if (normalizedDetail.contains("correct") || normalizedDetail.contains("repair")) {
                 return new View("Repairing", ModelActivityState.REPAIRING);
@@ -56,56 +55,16 @@ public final class ModelRequestStatusPresentation {
             return new View("Preparing", ModelActivityState.PREPARING);
         }
         if (safe == ModelRequestState.EXECUTING_TOOL) {
-            if (normalizedTool.contains("automation plan")) {
-                return new View("Planning", ModelActivityState.PLANNING);
-            }
-            if (normalizedTool.contains("workspace read")) {
-                return new View("Reading", ModelActivityState.READING);
-            }
-            if (normalizedTool.contains("workspace search") || normalizedTool.contains("workspace list")
-                    || normalizedTool.contains("workspace stat") || normalizedTool.contains("workspace roots")) {
-                return new View("Searching", ModelActivityState.SEARCHING);
-            }
-            if (normalizedTool.contains("workspace write")
-                    || normalizedTool.contains("workspace create")
-                    || normalizedTool.contains("workspace delete")
-                    || normalizedTool.contains("ktl apply")) {
-                return new View("Editing", ModelActivityState.EDITING);
-            }
-            if (normalizedTool.contains("knowledge")) {
-                return new View("Inspecting", ModelActivityState.INSPECTING);
-            }
-            if (normalizedTool.contains("development") || normalizedTool.contains("proof")
-                    || normalizedTool.contains("compile") || normalizedTool.contains("test")) {
-                return new View("Testing", ModelActivityState.TESTING);
-            }
-            if (normalizedTool.contains("command")) {
-                return new View("Executing", ModelActivityState.EXECUTING);
-            }
-            if (normalizedTool.contains("look at") || normalizedTool.contains("camera")) {
-                return new View("Orienting", ModelActivityState.ORIENTING);
-            }
-            if (normalizedTool.contains("ride") || normalizedTool.contains("mount") || normalizedTool.contains("boat")) {
-                return new View("Riding", ModelActivityState.RIDING);
-            }
-            if (normalizedTool.contains("elytra") || normalizedTool.contains("glide")) {
-                return new View("Gliding", ModelActivityState.GLIDING);
-            }
-            if (normalizedTool.contains("eat") || normalizedTool.contains("consume")) return new View("Eating", ModelActivityState.EATING);
-            if (normalizedTool.contains("use item")) return new View("Using item", ModelActivityState.USING_ITEM);
-            if (normalizedTool.contains("swim")) return new View("Swimming", ModelActivityState.SWIMMING);
-            if (normalizedTool.contains("climb") || normalizedTool.contains("ladder") || normalizedTool.contains("vine")) return new View("Climbing", ModelActivityState.CLIMBING);
-            if (normalizedTool.contains("parkour")) return new View("Parkour", ModelActivityState.PARKOUR);
-            if (normalizedTool.contains("sprint")) return new View("Sprinting", ModelActivityState.SPRINTING);
-            if (normalizedTool.contains("mine") || normalizedTool.contains("break")) return new View("Mining", ModelActivityState.MINING);
-            if (normalizedTool.contains("place") || normalizedTool.contains("build")) return new View("Building", ModelActivityState.BUILDING);
-            if (normalizedTool.contains("attack") || normalizedTool.contains("combat")) return new View("Attacking", ModelActivityState.ATTACKING);
-            if (normalizedTool.contains("interact") || normalizedTool.contains("use")) return new View("Interacting", ModelActivityState.INTERACTING);
-            if (normalizedTool.contains("movement")) {
-                return new View("Navigating", ModelActivityState.NAVIGATING);
-            }
+            ModelToolActivityPresentation.Activity tool =
+                    ModelToolActivityPresentation.activity(toolId, normalizedDetail);
+            return new View(label(tool.state()), tool.state());
         }
         return forState(safe);
+    }
+
+    private static String label(ModelActivityState state) {
+        String value = state == null ? "executing" : state.id().replace('_', ' ');
+        return Character.toUpperCase(value.charAt(0)) + value.substring(1);
     }
 
     private static String normalize(String value) {

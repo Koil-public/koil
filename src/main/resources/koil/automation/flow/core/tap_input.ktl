@@ -19,10 +19,16 @@ metadata:
   failure_policy: fail
 steps:
   - type: run_primitive
-    action: cap.input.tap_key
+    action: cap.input.press_key
     params:
       input.key: ${input.key}
+  - type: run_primitive
+    action: cap.wait.ticks
+    params:
       count.value: ${count.value}
+  - type: run_primitive
+    action: cap.input.release_key
+    params:
+      input.key: ${input.key}
   - type: return
     label: done
-

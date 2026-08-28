@@ -18,8 +18,23 @@ public record LocalModelCatalogEntry(
         boolean toolCalling,
         List<LocalModelCapabilityTag> capabilityTags,
         String summary,
-        List<ModelArtifact> artifacts
+        List<ModelArtifact> artifacts,
+        LocalModelCanonicalMetadata canonical
 ) {
+    public LocalModelCatalogEntry(
+            String id, String displayName, String providerId, String runtimeId, String modelId,
+            String parameterCount, String quantization, String license, int contextTokens,
+            long estimatedMinimumMemoryBytes, long estimatedRecommendedMemoryBytes,
+            int complexReasoningEstimatePercent, boolean toolCalling,
+            List<LocalModelCapabilityTag> capabilityTags, String summary, List<ModelArtifact> artifacts
+    ) {
+        this(id, displayName, providerId, runtimeId, modelId, parameterCount, quantization, license,
+                contextTokens, estimatedMinimumMemoryBytes, estimatedRecommendedMemoryBytes,
+                complexReasoningEstimatePercent, toolCalling, capabilityTags, summary, artifacts,
+                LocalModelCanonicalMetadata.legacy(displayName, parameterCount, quantization, contextTokens,
+                        artifacts != null && !artifacts.isEmpty()));
+    }
+
     public LocalModelCatalogEntry {
         id = safe(id);
         displayName = safe(displayName);
@@ -36,8 +51,11 @@ public record LocalModelCatalogEntry(
         capabilityTags = capabilityTags == null ? List.of() : List.copyOf(capabilityTags);
         summary = summary == null ? "" : summary.strip();
         artifacts = artifacts == null ? List.of() : List.copyOf(artifacts);
+        canonical = canonical == null
+                ? LocalModelCanonicalMetadata.legacy(displayName, parameterCount, quantization, contextTokens, !artifacts.isEmpty())
+                : canonical;
         if (id.isEmpty() || displayName.isEmpty() || providerId.isEmpty() || runtimeId.isEmpty()
-                || modelId.isEmpty() || artifacts.isEmpty()) {
+                || modelId.isEmpty() || canonical.runnable() && artifacts.isEmpty()) {
             throw new IllegalArgumentException("catalog entry is incomplete");
         }
     }
@@ -51,7 +69,15 @@ public record LocalModelCatalogEntry(
     }
 
     public String primaryFileName() {
-        return this.artifacts.get(0).fileName();
+        return this.artifacts.isEmpty() ? "" : this.artifacts.get(0).fileName();
+    }
+
+    public boolean runnable() {
+        return this.canonical.runnable() && !this.artifacts.isEmpty();
+    }
+
+    public String family() {
+        return this.canonical.family();
     }
 
     public String capabilityLabel() {

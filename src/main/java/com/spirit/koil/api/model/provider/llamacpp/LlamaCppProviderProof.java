@@ -5,6 +5,7 @@ import com.spirit.koil.api.model.ModelHealthState;
 import com.spirit.koil.api.model.ModelMessage;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolDefinition;
+import com.spirit.koil.api.model.ModelUsage;
 import com.spirit.koil.api.model.StreamingModelObserver;
 import com.spirit.koil.api.model.StreamingModelRequest;
 import com.spirit.koil.api.model.StreamingModelResponse;
@@ -67,6 +68,7 @@ public final class LlamaCppProviderProof {
                     "provider did not connect to compatible local runtime");
             CompletableFuture<StreamingModelResponse> completed = new CompletableFuture<>();
             StringBuilder streamed = new StringBuilder();
+            List<ModelUsage> liveUsage = new java.util.concurrent.CopyOnWriteArrayList<>();
             StreamingModelRequest request = new StreamingModelRequest(
                     UUID.randomUUID(),
                     "proof",
@@ -92,6 +94,11 @@ public final class LlamaCppProviderProof {
                 @Override
                 public void onTextDelta(UUID requestId, String delta) {
                     streamed.append(delta);
+                }
+
+                @Override
+                public void onUsage(UUID requestId, ModelUsage usage) {
+                    liveUsage.add(usage);
                 }
 
                 @Override
@@ -122,6 +129,9 @@ public final class LlamaCppProviderProof {
                     "llama.cpp prompt-prefix reuse was not requested");
             require(response.usage().promptTokens() == 12, "prompt usage was not decoded");
             require(response.usage().completionTokens() == 4, "completion usage was not decoded");
+            require(liveUsage.size() >= 2
+                            && liveUsage.stream().anyMatch(usage -> usage.tokensPerSecond() > 0.0D),
+                    "llama.cpp stream did not publish live request-local throughput updates");
             LlamaCppToolNameMap collisionProof = new LlamaCppToolNameMap();
             String dotted = collisionProof.toWire("example.tool");
             String underscored = collisionProof.toWire("example_tool");

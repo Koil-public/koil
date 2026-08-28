@@ -117,11 +117,11 @@ public final class LocalModelSetupScreen extends Screen {
                 context.drawBorder(left + 4, y, width - 8, ROW_HEIGHT - 3, border);
                 context.drawText(this.textRenderer, entry.displayName(), left + 10, y + 6,
                         new Color(uiColorContentBaseTitleText, true).getRGB(), false);
-                String facts = entry.complexReasoningEstimatePercent() + "% complex  |  " + BinaryStorageFormatter.format(entry.downloadBytes())
-                        + "  |  " + entry.quantization();
+                String facts = entry.canonical().baseCapability() + "  |  " + entry.canonical().modelType()
+                        + "  |  " + entry.canonical().maturity().name().toLowerCase(java.util.Locale.ROOT);
                 context.drawText(this.textRenderer, facts, left + 10, y + 18,
                         new Color(uiColorHeaderSubTitleText, true).getRGB(), false);
-                String installStatus = this.installer.installed(entry)
+                String installStatus = !entry.runnable() ? "Catalog only" : this.installer.installed(entry)
                         ? entry.id().equals(LocalModelService.selectedCatalogId()) ? "Selected" : "Installed"
                         : "";
                 String status = installStatus.isBlank()
@@ -152,26 +152,29 @@ public final class LocalModelSetupScreen extends Screen {
         int secondary = new Color(uiColorHeaderSubTitleText, true).getRGB();
         context.drawText(this.textRenderer, entry.displayName(), x, y, color, false);
         y += 15;
-        context.drawText(this.textRenderer, "Complex-intent estimate: "
-                + entry.complexReasoningEstimatePercent() + "%", x, y, secondary, false);
+        context.drawText(this.textRenderer, "Family: " + entry.family(), x, y, secondary, false);
         y += 11;
-        context.drawText(this.textRenderer, "Parameters: " + entry.parameterCount(), x, y, secondary, false);
+        context.drawText(this.textRenderer, "Capability: " + entry.canonical().baseCapability()
+                + " | " + entry.canonical().modelType(), x, y, secondary, false);
         y += 11;
-        context.drawText(this.textRenderer, "Download: " + BinaryStorageFormatter.format(entry.downloadBytes()), x, y, secondary, false);
+        context.drawText(this.textRenderer, "Parameters: " + entry.parameterCount()
+                + " | " + entry.canonical().architecture().name(), x, y, secondary, false);
         y += 11;
-        context.drawText(this.textRenderer, "Quantization: " + entry.quantization(), x, y, secondary, false);
+        context.drawText(this.textRenderer, "Formats: " + String.join(", ", entry.canonical().runtimeFormats()), x, y, secondary, false);
         y += 11;
-        context.drawText(this.textRenderer, "Context: " + entry.contextTokens() + " tokens", x, y, secondary, false);
+        context.drawText(this.textRenderer, "Native context: " + entry.canonical().nativeContextTokens()
+                + (entry.canonical().extendedContextTokens() > entry.canonical().nativeContextTokens()
+                ? " | Extended: " + entry.canonical().extendedContextTokens() : ""), x, y, secondary, false);
         y += 11;
-        context.drawText(this.textRenderer, "License: " + entry.license(), x, y, secondary, false);
+        context.drawText(this.textRenderer, "Modalities: " + String.join(", ", entry.canonical().modalities()), x, y, secondary, false);
         y += 11;
-        context.drawText(this.textRenderer, "Capabilities: " + entry.capabilityLabel(), x, y, 0xFF8FCBFF, false);
+        context.drawText(this.textRenderer, "Repository: " + trim(entry.canonical().canonicalRepository(), 56), x, y, 0xFF8FCBFF, false);
         y += 14;
-        context.drawText(this.textRenderer, "Estimated memory guidance", x, y, color, false);
+        context.drawText(this.textRenderer, entry.runnable() ? "Verified local implementation" : "Catalog metadata", x, y, color, false);
         y += 11;
-        context.drawText(this.textRenderer, "Minimum: " + BinaryStorageFormatter.format(entry.estimatedMinimumMemoryBytes()), x, y, secondary, false);
-        y += 11;
-        context.drawText(this.textRenderer, "Recommended: " + BinaryStorageFormatter.format(entry.estimatedRecommendedMemoryBytes()), x, y, secondary, false);
+        context.drawText(this.textRenderer, entry.runnable()
+                ? "Download: " + BinaryStorageFormatter.format(entry.downloadBytes()) + " | " + entry.quantization()
+                : trim(entry.canonical().unavailableReason(), 72), x, y, secondary, false);
         y += 11;
         LocalModelCompatibility compatibility = LocalModelCompatibility.evaluate(
                 entry,
@@ -188,7 +191,9 @@ public final class LocalModelSetupScreen extends Screen {
         y += 4;
         context.drawText(this.textRenderer, "Runtime measurements decide real speed.", x, y, 0xFFFFCC77, false);
         y += 11;
-        context.drawText(this.textRenderer, "Installation starts only after confirmation.", x, y, 0xFFFFCC77, false);
+        context.drawText(this.textRenderer, entry.runnable()
+                ? "Installation starts only after confirmation."
+                : "No weights are downloaded for catalog-only entries.", x, y, 0xFFFFCC77, false);
     }
 
     private void renderInstallation(DrawContext context) {
@@ -213,7 +218,7 @@ public final class LocalModelSetupScreen extends Screen {
 
     private void action() {
         LocalModelCatalogEntry entry = selected();
-        if (entry == null || this.activating || this.installer.snapshot().state().active()) {
+        if (entry == null || !entry.runnable() || this.activating || this.installer.snapshot().state().active()) {
             return;
         }
         if (this.installer.installed(entry)) {
@@ -279,11 +284,14 @@ public final class LocalModelSetupScreen extends Screen {
         boolean selected = entry != null && entry.id().equals(LocalModelService.selectedCatalogId());
         this.actionButton.setMessage(Text.literal(
                 this.activating ? "Activating..."
+                        : entry == null ? "Unavailable"
                         : selected ? "Selected"
+                        : !entry.runnable() ? "Catalog Only"
                         : installed ? "Use"
                         : "Install & Use"
         ));
-        this.actionButton.active = entry != null && !this.activating && !snapshot.state().active() && !selected;
+        this.actionButton.active = entry != null && entry.runnable()
+                && !this.activating && !snapshot.state().active() && !selected;
         this.cancelButton.visible = snapshot.state().active();
         this.cancelButton.active = snapshot.state().active();
     }
@@ -364,7 +372,7 @@ public final class LocalModelSetupScreen extends Screen {
             case RECOMMENDED -> 0xFF8FE3A5;
             case SUPPORTED_WITH_LIMITS -> 0xFFFFCC77;
             case NOT_RECOMMENDED, STORAGE_BLOCKED -> 0xFFFF7777;
-            case UNKNOWN -> 0xFFB8C5D6;
+            case UNAVAILABLE, UNKNOWN -> 0xFFB8C5D6;
         };
     }
 

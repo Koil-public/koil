@@ -7,6 +7,7 @@ import com.google.gson.JsonParser;
 import com.spirit.koil.api.model.LocalModelProvider;
 import com.spirit.koil.api.model.LocalModelOwnedProcessRegistry;
 import com.spirit.koil.api.model.LocalModelRuntimeLog;
+import com.spirit.koil.api.model.catalog.LocalModelReliabilityStore;
 import com.spirit.koil.api.model.ModelCancellationHandle;
 import com.spirit.koil.api.model.ModelCapabilityDescriptor;
 import com.spirit.koil.api.model.ModelHealthSnapshot;
@@ -294,6 +295,11 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
                                 firstToken = System.nanoTime();
                                 observer.onState(request.id(), ModelRequestState.GENERATING, "writing");
                             }
+                            if (firstToken != 0L && decoder.liveCompletionTokens() > 0) {
+                                observer.onUsage(request.id(), liveUsage(
+                                        decoder, queueMillis, started, firstToken
+                                ));
+                            }
                         }
                         eventName = "";
                         data.setLength(0);
@@ -309,6 +315,11 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
             }
             if (data.length() > 0) {
                 decoder.accept(eventName, data.toString());
+                if (firstToken != 0L && decoder.liveCompletionTokens() > 0) {
+                    observer.onUsage(request.id(), liveUsage(
+                            decoder, queueMillis, started, firstToken
+                    ));
+                }
             }
             decoder.finishOpenBlocks();
             observer.onState(request.id(), ModelRequestState.FINALIZING, "finishing");
@@ -351,6 +362,27 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
         } finally {
             cancellation.call = null;
         }
+    }
+
+    private static ModelUsage liveUsage(
+            ColibriStreamDecoder decoder,
+            long queueMillis,
+            long startedNanos,
+            long firstTokenNanos
+    ) {
+        long now = System.nanoTime();
+        long ttft = Math.max(0L, (firstTokenNanos - startedNanos) / 1_000_000L);
+        double seconds = Math.max(0.001D, (now - firstTokenNanos) / 1_000_000_000.0D);
+        ModelUsage reported = decoder.usage(queueMillis, ttft, 0.0D);
+        int liveCompletion = decoder.liveCompletionTokens();
+        return new ModelUsage(
+                reported.promptTokens(),
+                liveCompletion,
+                reported.reusedPrefixTokens(),
+                reported.queueMillis(),
+                reported.timeToFirstTokenMillis(),
+                liveCompletion / seconds
+        );
     }
 
     private JsonObject requestPayload(StreamingModelRequest request) {
@@ -509,6 +541,7 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
         int exitCode = exited.exitValue();
         updateHealth(ModelHealthState.FAILED, "Colibri exited with code " + exitCode, Map.of("exitCode", Integer.toString(exitCode)));
         LocalModelRuntimeLog.write("crash", "runtime exited with code " + exitCode);
+        LocalModelReliabilityStore.recordCrash(this.configuration.modelId(), "Colibri exited with code " + exitCode);
         if (this.restartAttempts >= this.configuration.maximumRestartAttempts()) {
             return;
         }

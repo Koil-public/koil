@@ -4,6 +4,7 @@ import com.spirit.koil.api.command.CommandOutputPresentation;
 import com.spirit.koil.api.model.BinaryStorageFormatter;
 import com.spirit.koil.api.model.catalog.LocalModelAutomationEligibility;
 import com.spirit.koil.api.model.catalog.LocalModelCapabilityTag;
+import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
 import com.spirit.koil.api.model.catalog.LocalModelCompatibility;
 import net.minecraft.text.ClickEvent;
@@ -33,21 +34,26 @@ public final class LocalModelCatalogChatRow {
     ) {
         String command = selectionCommand(entry, installed);
         Formatting compatibilityColor = compatibilityFormatting(compatibility);
+        boolean available = entry.runnable() || LocalModelCatalog.canResolveForInstall(entry);
         MutableText row = Text.literal("• ").formatted(compatibilityColor)
                 .append(CommandOutputPresentation.text(entry.displayName(), Tone.PRIMARY))
-                .append(Text.literal(installed ? "  [uninstall]" : "  [install]")
-                        .formatted(installed ? Formatting.RED : Formatting.GREEN))
+                .append(Text.literal(installed ? "  [uninstall]" : available ? "  [install]" : "  [catalog]")
+                        .formatted(installed ? Formatting.RED : available ? Formatting.GREEN : Formatting.DARK_GRAY))
                 .append(Text.literal("  " + statusLabel(compatibility, installed, selected))
                         .formatted(installed ? Formatting.GREEN : compatibilityColor));
-        return row.styled(style -> style
-                .withClickEvent(new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command))
-                .withHoverEvent(new HoverEvent(
-                        HoverEvent.Action.SHOW_TEXT,
-                        hoverText(entry, compatibility, installed, selected, command)
-                )));
+        return row.styled(style -> {
+            var styled = style.withHoverEvent(new HoverEvent(
+                    HoverEvent.Action.SHOW_TEXT,
+                    hoverText(entry, compatibility, installed, selected, command)
+            ));
+            return command.isBlank() ? styled : styled.withClickEvent(
+                    new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command));
+        });
     }
 
     public static String selectionCommand(LocalModelCatalogEntry entry, boolean installed) {
+        if (entry == null) return "";
+        if (!installed && !entry.runnable() && !LocalModelCatalog.canResolveForInstall(entry)) return "";
         return "/model " + (installed ? "uninstall " : "install ") + entry.id();
     }
 
@@ -64,6 +70,7 @@ public final class LocalModelCatalogChatRow {
     ) {
         boolean chats = entry.capabilityTags().contains(LocalModelCapabilityTag.CHAT);
         boolean automationEligible = LocalModelAutomationEligibility.supportsAutomationTools(entry);
+        boolean resolvable = !entry.runnable() && LocalModelCatalog.canResolveForInstall(entry);
         MutableText tooltip = CommandOutputPresentation.text(entry.displayName(), Tone.PRIMARY)
                 .append(detail("Model ID", entry.id()))
                 .append(detail(
@@ -77,11 +84,8 @@ public final class LocalModelCatalogChatRow {
                 .append(detail(
                         "Automation",
                         automationEligible
-                                ? "eligible — complex intent exceeds "
-                                        + LocalModelAutomationEligibility.REQUIRED_COMPLEX_INTENT_EXCLUSIVE + "%"
-                                : "blocked — complex intent must exceed "
-                                        + LocalModelAutomationEligibility.REQUIRED_COMPLEX_INTENT_EXCLUSIVE
-                                        + "%; /ask remains available"
+                                ? "eligible — verified tool protocol"
+                                : "unavailable — no verified tool protocol/runtime"
                 ))
                 .append(detail("Storage", formatStorage(entry.downloadBytes())))
                 .append(detail("Parameters", entry.parameterCount()))
@@ -98,8 +102,14 @@ public final class LocalModelCatalogChatRow {
                         compatibility.label() + (compatibility.detail().isBlank() ? "" : " — " + compatibility.detail())
                 ))
                 .append(detail("Status", selected ? "selected and installed" : installed ? "installed" : "not installed"))
-                .append(Text.literal("\nClick to prefill: ").formatted(Formatting.DARK_GRAY))
-                .append(Text.literal(command).formatted(installed ? Formatting.RED : Formatting.GREEN));
+                .append(command.isBlank()
+                        ? Text.literal("\nMetadata only; no compatible local runtime is currently resolvable.")
+                                .formatted(Formatting.DARK_GRAY)
+                        : Text.literal(resolvable
+                                        ? "\nClick to resolve a verified Hugging Face GGUF and install: "
+                                        : "\nClick to prefill: ")
+                                .formatted(Formatting.DARK_GRAY)
+                                .append(Text.literal(command).formatted(installed ? Formatting.RED : Formatting.GREEN)));
         return tooltip;
     }
 
@@ -131,6 +141,7 @@ public final class LocalModelCatalogChatRow {
             case RECOMMENDED -> Formatting.GREEN;
             case SUPPORTED_WITH_LIMITS, UNKNOWN -> Formatting.DARK_GRAY;
             case NOT_RECOMMENDED, STORAGE_BLOCKED -> Formatting.RED;
+            case UNAVAILABLE -> Formatting.DARK_GRAY;
         };
     }
 }

@@ -1,6 +1,7 @@
 package com.spirit.koil.api.model.tool;
 
 import com.google.gson.JsonObject;
+import com.spirit.koil.api.automation.cli.AutomationChatHudState;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolResult;
 
@@ -13,10 +14,33 @@ public final class DeepThoughtReadOnlyToolCoordinator {
     public static boolean supports(String toolId) {
         return MinecraftKnowledgeModelToolRegistry.supports(toolId)
                 || ModelWorkspaceToolRegistry.supports(toolId)
-                || InternetResearchModelToolRegistry.supports(toolId);
+                || InternetResearchModelToolRegistry.supports(toolId)
+                || KoilDocumentationModelToolRegistry.supports(toolId);
     }
 
     public static CompletableFuture<ModelToolResult> execute(ModelToolCall call) {
+        AutomationChatHudState.toolStarted(call);
+        CompletableFuture<ModelToolResult> execution;
+        try {
+            execution = executeInternal(call);
+        } catch (RuntimeException exception) {
+            execution = CompletableFuture.completedFuture(new ModelToolResult(
+                    call == null ? "" : call.id(), call == null ? "" : call.toolId(),
+                    "failed", new JsonObject(), "read_only_tool_failed",
+                    exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage()
+            ));
+        }
+        return execution.whenComplete((result, error) -> AutomationChatHudState.toolFinished(
+                call,
+                error == null ? result : new ModelToolResult(
+                        call == null ? "" : call.id(), call == null ? "" : call.toolId(),
+                        "failed", new JsonObject(), "read_only_tool_failed",
+                        error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage()
+                )
+        ));
+    }
+
+    private static CompletableFuture<ModelToolResult> executeInternal(ModelToolCall call) {
         if (call == null) return unsupported(null);
         if (MinecraftKnowledgeModelToolRegistry.supports(call.toolId())) {
             return MinecraftKnowledgeModelToolRegistry.execute(call);
@@ -26,6 +50,9 @@ public final class DeepThoughtReadOnlyToolCoordinator {
         }
         if (InternetResearchModelToolRegistry.supports(call.toolId())) {
             return InternetResearchModelToolRegistry.execute(call);
+        }
+        if (KoilDocumentationModelToolRegistry.supports(call.toolId())) {
+            return KoilDocumentationModelToolRegistry.execute(call);
         }
         return unsupported(call);
     }

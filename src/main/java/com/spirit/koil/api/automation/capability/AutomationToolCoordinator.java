@@ -21,6 +21,7 @@ import com.spirit.koil.api.model.tool.AutomationPlanModelToolRegistry;
 import com.spirit.koil.api.model.tool.AutomationKtlSkillModelToolRegistry;
 import com.spirit.koil.api.model.tool.ProjectValidationModelToolRegistry;
 import com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry;
+import com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry;
 import net.minecraft.client.MinecraftClient;
 
 import java.util.Map;
@@ -89,6 +90,9 @@ public final class AutomationToolCoordinator {
         }
         if (InternetResearchModelToolRegistry.supports(call.toolId())) {
             return InternetResearchModelToolRegistry.execute(call);
+        }
+        if (KoilDocumentationModelToolRegistry.supports(call.toolId())) {
+            return KoilDocumentationModelToolRegistry.execute(call);
         }
         if (AutomationPlanModelToolRegistry.supports(call.toolId())) {
             return AutomationPlanModelToolRegistry.execute(call);

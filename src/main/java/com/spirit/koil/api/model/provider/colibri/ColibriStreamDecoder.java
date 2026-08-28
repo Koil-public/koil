@@ -22,6 +22,7 @@ final class ColibriStreamDecoder {
     private final List<ModelToolCall> completedTools = new ArrayList<>();
     private int promptTokens;
     private int completionTokens;
+    private int streamedOutputUnits;
     private String finishReason = "";
 
     ColibriStreamDecoder(UUID requestId, StreamingModelObserver observer) {
@@ -93,6 +94,7 @@ final class ColibriStreamDecoder {
             if (!value.isEmpty()) {
                 this.text.append(value);
                 this.observer.onTextDelta(this.requestId, value);
+                this.streamedOutputUnits++;
             }
             return;
         }
@@ -103,6 +105,7 @@ final class ColibriStreamDecoder {
                 this.tools.put(index, accumulator);
             }
             accumulator.json.append(string(delta, "partial_json", ""));
+            this.streamedOutputUnits++;
         }
     }
 
@@ -156,6 +159,10 @@ final class ColibriStreamDecoder {
                 timeToFirstTokenMillis,
                 tokensPerSecond
         );
+    }
+
+    int liveCompletionTokens() {
+        return Math.max(this.completionTokens, this.streamedOutputUnits);
     }
 
     String finishReason() {

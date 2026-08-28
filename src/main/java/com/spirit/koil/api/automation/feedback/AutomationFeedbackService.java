@@ -15,6 +15,8 @@ import java.time.Instant;
 import java.util.*;
 
 public final class AutomationFeedbackService {
+    /** The feedback backend is retained for compatibility, but its user surface is temporarily disabled. */
+    private static final boolean USER_SURFACE_ENABLED = false;
     private static final Path EVENTS = Path.of("koil/automation/feedback/events.jsonl");
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
     private static PendingFlow pending = PendingFlow.empty();
@@ -23,7 +25,12 @@ public final class AutomationFeedbackService {
     private AutomationFeedbackService() {
     }
 
+    public static boolean userSurfaceEnabled() {
+        return USER_SURFACE_ENABLED;
+    }
+
     public static synchronized boolean handleConsoleInput(String input) {
+        if (!USER_SURFACE_ENABLED) return false;
         String trimmed = input == null ? "" : input.trim();
         String lower = trimmed.toLowerCase(Locale.ROOT);
         if (trimmed.isBlank()) {
@@ -164,6 +171,7 @@ public final class AutomationFeedbackService {
     }
 
     public static synchronized boolean handleConsoleRowClick(String rowId) {
+        if (!USER_SURFACE_ENABLED) return false;
         String normalized = normalize(rowId);
         if (normalized.isBlank()) {
             return false;
@@ -193,6 +201,7 @@ public final class AutomationFeedbackService {
     }
 
     public static synchronized void openNodeFeedback(String rowOrNodeId) {
+        if (!USER_SURFACE_ENABLED) return;
         if (pending.nodes.isEmpty()) {
             startBadFlow(AutomationCliViewModel.snapshot());
         }

@@ -14,6 +14,7 @@ import com.spirit.koil.api.registry.DynamicRegistryManager;
 import com.spirit.koil.api.screen.KoilRemoteScreenServerBridge;
 import com.spirit.koil.api.stats.global.KoilGlobalActivityServer;
 import com.spirit.koil.api.util.console.log.SubFileLogger;
+import com.spirit.koil.api.util.console.log.KoilThreadLogger;
 import com.spirit.koil.api.util.file.FileSanitizer;
 import com.spirit.koil.api.util.file.KoilPackageManager;
 import com.spirit.koil.api.kpak.security.KPakPrivateKeyStore;
@@ -38,7 +39,7 @@ import static com.spirit.koil.api.util.file.jar.strings.ModIds.KOIL_ID;
 
 public class Main implements ModInitializer {
     public static final SubFileLogger SUBLOGGER;
-    public static final SubFileLogger PKG_SUBLOGGER;
+    public static final KoilThreadLogger PKG_SUBLOGGER;
     public static boolean preciseStat;
 
     private static final Path DEFAULT_CONFIG_PATH = Path.of("koil", "sys", "config.json");
@@ -78,9 +79,8 @@ public class Main implements ModInitializer {
 
     static {
         SubFileLogger.initialize("mainLogger", "koil/logs", "main");
-        SubFileLogger.initialize("packageLogger", "koil/logs/package", "package");
         SUBLOGGER = SubFileLogger.getInstance("mainLogger");
-        PKG_SUBLOGGER = SubFileLogger.getInstance("packageLogger");
+        PKG_SUBLOGGER = new KoilThreadLogger(SUBLOGGER, "Packaging Thread");
         SUBLOGGER.logI("Start-up thread", "Starting...");
         ensureDefaultConfigFile();
         preciseStat = getConfigBoolean("preciseStat", false);
@@ -226,6 +226,7 @@ public class Main implements ModInitializer {
 
     public static boolean isPlayerAllowed;
     public static boolean isBetaTesting;
+    public static boolean deBug;
     public static boolean wantsColoredFileIcons;
     public static boolean musicToastShown = false;
     public static boolean isHalloween;
@@ -444,6 +445,7 @@ public class Main implements ModInitializer {
 
     public static String currentVersion() {
         isBetaTesting = configBoolean("isBetaTesting", false);
+        deBug = configBoolean("debug", false);
         String branch = isBetaTesting ? activeBetaBranch() : "public";
         String runtimeVersion = runtimeModVersion();
         if (branch.equals(versionBranch(runtimeVersion))) {

@@ -575,19 +575,24 @@ public final class ModelGenerationHudState {
                 }
             }
             this.events.add(event);
-            while (this.events.size() > 64) {
+            while (this.events.size() > 128) {
                 this.events.remove(0);
             }
         }
 
         private String renderActivity() {
             String base = this.activity.toString().strip();
-            List<ActivityEvent> visibleEvents = this.automationRequest
-                    ? this.events.stream().filter(ModelGenerationHudState::isModelLevelAutomationEvent).toList()
-                    : this.events;
-            String timeline = ModelActivityPresentation.timeline(this.prompt, visibleEvents);
+            String timeline = ModelActivityPresentation.timeline(this.prompt, this.events, this.createdAtMillis);
+            String metrics = ModelActivityPresentation.requestMetrics(
+                    this.usage,
+                    this.createdAtMillis,
+                    this.completedAtMillis
+            );
             if (!timeline.isBlank()) {
                 base = base.isBlank() ? timeline : timeline + "\n\n" + base;
+            }
+            if (!metrics.isBlank()) {
+                base = base.isBlank() ? metrics : base + "\n" + metrics;
             }
             String planText = this.plan == null ? "" : this.plan.render();
             if (base.isBlank()) {
@@ -638,14 +643,6 @@ public final class ModelGenerationHudState {
                 pending.decision.complete(approved);
             }
         }
-    }
-
-    private static boolean isModelLevelAutomationEvent(ActivityEvent event) {
-        if (event == null) return false;
-        return switch (event.type()) {
-            case THOUGHT_SUMMARY, THOUGHT_STOPPED, PLAN_STEP, APPROVAL, REPLAN, CANCELLATION, CHECKPOINT -> true;
-            case TOOL_START, TOOL_PROGRESS, FILE, DIFF, COMMAND, VALIDATION, RESULT, FAILURE -> false;
-        };
     }
 
     private static String cleanVisibleSummary(String value) {

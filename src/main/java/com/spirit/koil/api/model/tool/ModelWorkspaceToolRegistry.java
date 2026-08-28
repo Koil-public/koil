@@ -48,6 +48,7 @@ public final class ModelWorkspaceToolRegistry {
             "workspace.mkdir",
             "workspace.create",
             "workspace.write",
+            "workspace.append",
             "workspace.replace",
             "workspace.copy",
             "workspace.move",
@@ -56,7 +57,7 @@ public final class ModelWorkspaceToolRegistry {
             "automation.ktl_apply"
     );
     private static final Map<String, ModelToolDefinition> DEFINITIONS = definitionsInternal();
-    private static final String VERSION = "model-workspace-tools-v4:"
+    private static final String VERSION = "model-workspace-tools-v5:"
             + Integer.toHexString(DEFINITIONS.keySet().hashCode());
 
     private ModelWorkspaceToolRegistry() {
@@ -165,6 +166,7 @@ public final class ModelWorkspaceToolRegistry {
             case "workspace.mkdir" -> mkdir(call);
             case "workspace.create" -> create(call);
             case "workspace.write" -> write(call);
+            case "workspace.append" -> append(call);
             case "workspace.replace" -> replace(call);
             case "workspace.copy" -> copy(call);
             case "workspace.move" -> move(call);
@@ -496,6 +498,10 @@ public final class ModelWorkspaceToolRegistry {
         output.addProperty("path", resolved.relativePath());
         output.addProperty("operation", "directory_created");
         output.addProperty("filesystemState", "directory");
+        output.addProperty("exists", true);
+        output.addProperty("pathType", "directory");
+        output.addProperty("isDirectory", true);
+        output.addProperty("isRegularFile", false);
         output.addProperty("reread", true);
         output.addProperty("validationStatus", "passed");
         return new ModelToolResult(
@@ -512,6 +518,10 @@ public final class ModelWorkspaceToolRegistry {
         ModelWorkspaceRegistry.ResolvedPath resolved = writableFile(arguments);
         if (Files.exists(resolved.path())) {
             throw new IOException("File already exists; use workspace.write or workspace.replace.");
+        }
+        Path parent = resolved.path().toAbsolutePath().normalize().getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            throw new IOException("Parent directory does not exist; create it with workspace.mkdir first.");
         }
         String content = boundedContent(arguments);
         byte[] previous = new byte[0];
@@ -530,6 +540,27 @@ public final class ModelWorkspaceToolRegistry {
         String content = boundedContent(arguments);
         atomicWrite(resolved.path(), content, true);
         return mutationResult(call, resolved, "modified", previous, content.getBytes(StandardCharsets.UTF_8), true, "written");
+    }
+
+    private static ModelToolResult append(ModelToolCall call) throws IOException {
+        JsonObject arguments = call.arguments();
+        ModelWorkspaceRegistry.ResolvedPath resolved = writableFile(arguments);
+        requireTextFile(resolved.path());
+        byte[] previous = Files.readAllBytes(resolved.path());
+        requireExpectedHash(arguments, previous);
+        String addition = boundedContent(arguments);
+        byte[] resulting = (new String(previous, StandardCharsets.UTF_8) + addition)
+            .getBytes(StandardCharsets.UTF_8);
+        if (resulting.length > MAXIMUM_FILE_BYTES) {
+            throw new IOException("Appended file exceeds the 262144 b model-tool limit.");
+        }
+        atomicWrite(resolved.path(), new String(resulting, StandardCharsets.UTF_8), true);
+        ModelToolResult result = mutationResult(
+            call, resolved, "modified", previous, resulting, true, "appended"
+        );
+        result.output().addProperty("charactersAppended", addition.length());
+        result.output().addProperty("bytesAppended", addition.getBytes(StandardCharsets.UTF_8).length);
+        return result;
     }
 
     private static ModelToolResult replace(ModelToolCall call) throws IOException {
@@ -871,6 +902,11 @@ public final class ModelWorkspaceToolRegistry {
         output.addProperty("diffTruncated", diff.truncated());
         output.addProperty("reread", reread);
         output.addProperty("filesystemState", filesystemState);
+        output.addProperty("exists", true);
+        output.addProperty("pathType", "file");
+        output.addProperty("isDirectory", false);
+        output.addProperty("isRegularFile", true);
+        output.addProperty("bytes", actual.length);
         output.addProperty("validationStatus", "passed");
         return new ModelToolResult(
                 call.id(), call.toolId(), "completed", output, "",
@@ -1059,6 +1095,13 @@ public final class ModelWorkspaceToolRegistry {
         definitions.put("workspace.write", definition(
                 "workspace.write",
                 "Atomically replace an existing permitted UTF-8 text file only when expectedHash matches its latest read revision.",
+                mutationSchema(true),
+                true,
+                Set.of("changes_file")
+        ));
+        definitions.put("workspace.append", definition(
+                "workspace.append",
+                "Append exact UTF-8 content to an existing file after reading its latest expectedHash. Use this instead of rewriting the whole file when only trailing content is needed.",
                 mutationSchema(true),
                 true,
                 Set.of("changes_file")

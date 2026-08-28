@@ -13,6 +13,8 @@ combat/core/kill_entity_iteration.ktl
 combat/core/kill_entity_until_count.ktl
 combat/semantics/combat-operations.ktl
 container/core/store_item_in_container.ktl
+container/core/store_item_in_open_container.ktl
+container/core/store_item_iteration.ktl
 container/core/take_item_from_container.ktl
 container/core/take_item_from_open_container.ktl
 container/core/take_item_iteration.ktl

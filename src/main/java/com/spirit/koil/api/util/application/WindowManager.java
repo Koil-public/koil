@@ -4,10 +4,13 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.console.ConsoleRequestBridge;
+import com.spirit.koil.api.util.console.log.KoilLog;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -105,11 +108,6 @@ public class WindowManager {
         }
         String javaBinary = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         String classPath = buildExternalClassPath();
-        Path launchLog = Path.of("koil/logs/external-console-launch.log");
-        try {
-            java.nio.file.Files.createDirectories(launchLog.getParent());
-        } catch (IOException ignored) {
-        }
         Process process = new ProcessBuilder(
                 javaBinary,
                 "-Djava.awt.headless=false",
@@ -123,11 +121,11 @@ public class WindowManager {
         )
                 .directory(Path.of(".").toAbsolutePath().normalize().toFile())
                 .redirectErrorStream(true)
-                .redirectOutput(ProcessBuilder.Redirect.appendTo(launchLog.toFile()))
                 .start();
         CONSOLE_PROCESSES.put(channel, process);
         SUBLOGGER.logI("Window-Management thread", "Launched external console process for " + channel.id());
-        monitorLaunch(channel, process, launchLog);
+        captureExternalOutput(channel, process);
+        monitorLaunch(channel, process);
     }
 
     private static String buildExternalClassPath() {
@@ -157,7 +155,23 @@ public class WindowManager {
         }
     }
 
-    private static void monitorLaunch(ConsoleChannel channel, Process process, Path launchLog) {
+    private static void captureExternalOutput(ConsoleChannel channel, Process process) {
+        Thread output = new Thread(() -> {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    KoilLog.info(KoilLog.EXTERNAL_WINDOW_THREAD, channel.id(), line);
+                }
+            } catch (IOException exception) {
+                KoilLog.warning(KoilLog.EXTERNAL_WINDOW_THREAD, channel.id(), exception.getMessage());
+            }
+        }, "koil-external-console-output-" + channel.id());
+        output.setDaemon(true);
+        output.start();
+    }
+
+    private static void monitorLaunch(ConsoleChannel channel, Process process) {
         Thread monitor = new Thread(() -> {
             try {
                 Thread.sleep(1200L);
@@ -170,7 +184,7 @@ public class WindowManager {
             CONSOLE_PROCESSES.remove(channel, process);
             REMEMBERED_OPEN_WINDOWS.remove(channel);
             persistOpenWindows();
-            String message = "External console exited early. See " + launchLog;
+            String message = "External console exited early. See koil/logs/latest.log [External Window Thread].";
             SUBLOGGER.logE("Window-Management thread", message);
             MinecraftClient client = MinecraftClient.getInstance();
             if (client != null && client.player != null) {

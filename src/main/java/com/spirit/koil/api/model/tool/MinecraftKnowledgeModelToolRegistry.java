@@ -12,8 +12,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.LinkedHashSet;
-import java.util.Locale;
 
 /** One provider-neutral, read-only tool for active Minecraft knowledge. */
 public final class MinecraftKnowledgeModelToolRegistry {
@@ -32,43 +30,49 @@ public final class MinecraftKnowledgeModelToolRegistry {
     public static final String ENCHANTMENT_TOOL_ID = "minecraft.enchantment_info";
     public static final String DIMENSION_TOOL_ID = "minecraft.dimension_info";
     public static final String NBT_TOOL_ID = "minecraft.nbt_info";
+    public static final String TAG_TOOL_ID = "minecraft.tag_info";
+    public static final String RESOURCE_TOOL_ID = "minecraft.resource_info";
+    public static final String MOD_TOOL_ID = "minecraft.mod_info";
     private static final ModelToolDefinition DEFINITION = new ModelToolDefinition(
-            TOOL_ID,
-            """
-                    Read exact data already available to the active Minecraft client. Query command syntax, item NBT/SNBT templates, player/world/context, crosshair target, registries, recipes, advancements, or structures. Use this instead of guessing vanilla, modded, datapack, or server-specific facts. It never executes or changes anything.
-                    """.strip(),
-            schema(),
-            List.of("client_available"),
-            Set.of(),
-            true,
-            Duration.ofSeconds(5),
-            false,
-            false,
-            Set.of("completed", "failed")
+        TOOL_ID,
+        """
+                Read exact data already available to the active Minecraft client. Query command syntax, item NBT/SNBT templates, player/world/context, crosshair target, registries, recipes, advancements, or structures. Use this instead of guessing vanilla, modded, datapack, or server-specific facts. It never executes or changes anything.
+                """.strip(),
+        schema(),
+        List.of("client_available"),
+        Set.of(),
+        true,
+        Duration.ofSeconds(5),
+        false,
+        false,
+        Set.of("completed", "failed")
     );
     private static final List<ModelToolDefinition> DEFINITIONS = List.of(
-            DEFINITION,
-            definition(COMMAND_TOOL_ID, "Validate and complete one Minecraft command against the active Brigadier command tree. Use this before minecraft.command; it never executes.", commandSchema()),
-            definition(PLAYER_TOOL_ID, "Read bounded current player, dimension, biome, position, inventory, effects, footing, crosshair target, riding state, elytra/rocket/boat availability, and currently executable travel modes.", stateSchema()),
-            definition(TARGET_TOOL_ID, "Inspect the exact block or entity currently under the crosshair, including namespaced registry id, mod owner, position, details, and tags.", stateSchema()),
-            definition(REGISTRY_TOOL_ID, "Search active vanilla, modded, and synchronized registry identifiers for items, blocks, entity types, effects, enchantments, sounds, biomes, structures, or dimension types.", registrySchema()),
-            definition(RECIPE_TOOL_ID, "Search synchronized recipes and return exact alternatives, outputs, and totals when they are deterministically known.", searchSchema()),
-            definition(ADVANCEMENT_TOOL_ID, "Search synchronized advancements and return ids, titles, descriptions, frames, criteria counts, and requirement groups.", searchSchema()),
-            definition(STRUCTURE_TOOL_ID, "Search the active synchronized structure registry, including modded and datapack structures.", searchSchema()),
-            definition(ITEM_TOOL_ID, "Read detailed data for one exact namespaced vanilla or modded item id, including stack limits, durability, rarity, enchantability, use behavior, and food data.", exactIdSchema("item")),
-            definition(BLOCK_TOOL_ID, "Read detailed data for one exact namespaced block id, including display data, placement item, default state, properties, luminance, and blast resistance.", exactIdSchema("block")),
-            definition(ENTITY_TOOL_ID, "Read detailed data for one exact namespaced entity type id, including display data, dimensions, spawn group, and summon/fire/save properties.", exactIdSchema("entity")),
-            definition(EFFECT_TOOL_ID, "Read detailed data for one exact namespaced vanilla or modded status-effect id.", exactIdSchema("status effect")),
-            definition(ENCHANTMENT_TOOL_ID, "Read detailed data for one exact namespaced vanilla or modded enchantment id, including levels, rarity, target, treasure, and curse state.", exactIdSchema("enchantment")),
-            definition(DIMENSION_TOOL_ID, "Search active synchronized dimension-type identifiers and report the player's current dimension through player_state when needed.", searchSchema()),
-            definition(NBT_TOOL_ID, "Read Koil's version-local item SNBT templates and grammar guidance without executing a command.", searchSchema())
+        DEFINITION,
+        definition(COMMAND_TOOL_ID, "Validate and complete one Minecraft command against the active Brigadier command tree. Use this before minecraft.command; it never executes.", commandSchema()),
+        definition(PLAYER_TOOL_ID, "Read bounded current player, dimension, biome, position, inventory, effects, footing, crosshair target, riding state, elytra/rocket/boat availability, and currently executable travel modes.", stateSchema()),
+        definition(TARGET_TOOL_ID, "Inspect the exact block or entity currently under the crosshair, including namespaced registry id, mod owner, position, details, and tags.", stateSchema()),
+        definition(REGISTRY_TOOL_ID, "Search active vanilla, modded, and synchronized registry identifiers for items, blocks, entity types, effects, enchantments, sounds, biomes, structures, or dimension types.", registrySchema()),
+        definition(RECIPE_TOOL_ID, "Search synchronized recipes and return exact alternatives, outputs, and totals when they are deterministically known.", searchSchema()),
+        definition(ADVANCEMENT_TOOL_ID, "Search synchronized advancements and return ids, titles, descriptions, frames, criteria counts, and requirement groups.", searchSchema()),
+        definition(STRUCTURE_TOOL_ID, "Search the active synchronized structure registry, including modded and datapack structures.", searchSchema()),
+        definition(ITEM_TOOL_ID, "Read detailed data for one exact namespaced vanilla or modded item id, including stack limits, durability, rarity, enchantability, use behavior, and food data.", exactIdSchema("item")),
+        definition(BLOCK_TOOL_ID, "Read detailed data for one exact namespaced block id, including display data, placement item, default state, properties, luminance, and blast resistance.", exactIdSchema("block")),
+        definition(ENTITY_TOOL_ID, "Read detailed data for one exact namespaced entity type id, including display data, dimensions, spawn group, and summon/fire/save properties.", exactIdSchema("entity")),
+        definition(EFFECT_TOOL_ID, "Read detailed data for one exact namespaced vanilla or modded status-effect id.", exactIdSchema("status effect")),
+        definition(ENCHANTMENT_TOOL_ID, "Read detailed data for one exact namespaced vanilla or modded enchantment id, including levels, rarity, target, treasure, and curse state.", exactIdSchema("enchantment")),
+        definition(DIMENSION_TOOL_ID, "Search active synchronized dimension-type identifiers and report the player's current dimension through player_state when needed.", searchSchema()),
+        definition(NBT_TOOL_ID, "Read Koil's version-local item SNBT templates and grammar guidance without executing a command.", searchSchema()),
+        definition(TAG_TOOL_ID, "Read one exact active item, block, entity-type, fluid, or biome tag and its bounded namespaced members. This includes synchronized mod/datapack tag membership.", registrySchema()),
+        definition(RESOURCE_TOOL_ID, "Search active client resource-pack JSON ids, then read one exact bounded JSON resource. Use fields to return only required top-level keys; oversized JSON is never misreported as complete.", resourceSchema()),
+        definition(MOD_TOOL_ID, "Search installed mod metadata by id or name, including exact version, environment, authors, licenses, and provided aliases.", searchSchema())
     );
 
     private MinecraftKnowledgeModelToolRegistry() {
     }
 
     public static String version() {
-        return "minecraft-knowledge-v6";
+        return "minecraft-knowledge-v7";
     }
 
     public static List<ModelToolDefinition> modelTools() {
@@ -77,37 +81,14 @@ public final class MinecraftKnowledgeModelToolRegistry {
 
     /** Smallest read-only Minecraft evidence group for normal grounded /ask. */
     public static List<ModelToolDefinition> toolsForQuestion(String prompt) {
-        String text = prompt == null ? "" : prompt.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").strip();
-        LinkedHashSet<String> ids = new LinkedHashSet<>();
-        if (has(text, "command", "syntax", "what do i type", "slash command")) ids.add(COMMAND_TOOL_ID);
-        if (has(text, "nbt", "snbt", "item data", "component")) ids.add(NBT_TOOL_ID);
-        if (has(text, "recipe", "craft", "ingredient", "smelt", "cook")) ids.add(RECIPE_TOOL_ID);
-        if (has(text, "advancement", "criterion", "criteria")) ids.add(ADVANCEMENT_TOOL_ID);
-        if (has(text, "structure", "fortress", "temple", "village")) ids.add(STRUCTURE_TOOL_ID);
-        if (has(text, "where am i", "my inventory", "my position", "standing on", "travel mode")) ids.add(PLAYER_TOOL_ID);
-        if (has(text, "looking at", "crosshair", "target")) ids.add(TARGET_TOOL_ID);
-        if (has(text, "dimension", "nether", "overworld", "the end")) ids.add(DIMENSION_TOOL_ID);
-        if (has(text, "enchantment", "enchanted")) ids.add(ENCHANTMENT_TOOL_ID);
-        if (has(text, "effect", "potion")) ids.add(EFFECT_TOOL_ID);
-        if (has(text, "entity", "mob", "creature", "summon")) ids.add(ENTITY_TOOL_ID);
-        if (has(text, "block")) ids.add(BLOCK_TOOL_ID);
-        if (has(text, "item", "tool", "weapon", "food")) ids.add(ITEM_TOOL_ID);
-        if (has(text, "registry", "identifier", " id", "modded", "datapack", "tag", "exists")) ids.add(REGISTRY_TOOL_ID);
-        if (ids.isEmpty()) ids.add(TOOL_ID);
-        if (ids.size() > 1 && !ids.contains(REGISTRY_TOOL_ID)
-                && has(text, "modded", "datapack", "namespaced", "exact id", "exists")) {
-            ids.add(REGISTRY_TOOL_ID);
-        }
-        return DEFINITIONS.stream().filter(tool -> ids.contains(tool.id())).limit(4).toList();
+        return LocalModelToolCatalog.informationToolsForPrompt(prompt).stream()
+            .filter(tool -> supports(tool.id()))
+            .limit(4)
+            .toList();
     }
 
     public static boolean supports(String toolId) {
         return DEFINITIONS.stream().anyMatch(definition -> definition.id().equals(toolId));
-    }
-
-    private static boolean has(String value, String... needles) {
-        for (String needle : needles) if (value.contains(needle)) return true;
-        return false;
     }
 
     public static CompletableFuture<ModelToolResult> execute(ModelToolCall call) {
@@ -129,10 +110,13 @@ public final class MinecraftKnowledgeModelToolRegistry {
             case ENCHANTMENT_TOOL_ID -> "enchantment";
             case DIMENSION_TOOL_ID -> "dimension";
             case NBT_TOOL_ID -> "nbt";
+            case TAG_TOOL_ID -> "tag";
+            case RESOURCE_TOOL_ID -> "resource";
+            case MOD_TOOL_ID -> "mod";
             default -> string(call.arguments(), "query", "");
         };
         String value = string(call.arguments(), "value",
-                string(call.arguments(), "id", string(call.arguments(), "command", "")));
+            string(call.arguments(), "id", string(call.arguments(), "command", "")));
         String registry = string(call.arguments(), "registry", "");
         int limit = integer(call.arguments(), "limit", 12);
         List<String> fields = strings(call.arguments(), "fields");
@@ -141,8 +125,8 @@ public final class MinecraftKnowledgeModelToolRegistry {
                 JsonObject output = new JsonObject();
                 output.addProperty("query", "command");
                 output.addProperty("command", inspection.normalizedCommand().isBlank()
-                        ? ""
-                        : "/" + inspection.normalizedCommand());
+                    ? ""
+                    : "/" + inspection.normalizedCommand());
                 output.addProperty("valid", inspection.executable());
                 output.addProperty("cursor", inspection.cursor());
                 output.addProperty("problem", inspection.problem());
@@ -154,18 +138,18 @@ public final class MinecraftKnowledgeModelToolRegistry {
                 inspection.suggestions().forEach(suggestions::add);
                 output.add("suggestions", suggestions);
                 return completed(
-                        call,
-                        output,
-                        inspection.executable()
-                                ? "The active command tree accepts this command."
-                                : "The active command tree rejected this syntax; use the problem and suggestions to repair it."
+                    call,
+                    output,
+                    inspection.executable()
+                        ? "The active command tree accepts this command."
+                        : "The active command tree rejected this syntax; use the problem and suggestions to repair it."
                 );
             });
         }
         return MinecraftKnowledgeService.query(query, value, registry, limit, fields)
-                .thenApply(result -> result.available()
-                        ? completed(call, result.output(), result.detail())
-                        : failure(call, "knowledge_unavailable", result.detail()));
+            .thenApply(result -> result.available()
+                ? completed(call, result.output(), result.detail())
+                : failure(call, "knowledge_unavailable", result.detail()));
     }
 
     private static JsonObject schema() {
@@ -177,7 +161,7 @@ public final class MinecraftKnowledgeModelToolRegistry {
         query.addProperty("type", "string");
         JsonArray queryValues = new JsonArray();
         for (String value : List.of(
-                "catalog", "command", "nbt", "player", "target", "registry", "recipe", "advancement", "structure", "item", "block", "entity", "effect", "enchantment", "biome", "dimension"
+            "catalog", "command", "nbt", "player", "target", "registry", "tag", "resource", "mod", "recipe", "advancement", "structure", "item", "block", "entity", "effect", "enchantment", "biome", "dimension"
         )) {
             queryValues.add(value);
         }
@@ -187,15 +171,15 @@ public final class MinecraftKnowledgeModelToolRegistry {
         value.addProperty("type", "string");
         value.addProperty("maxLength", 2_048);
         value.addProperty(
-                "description",
-                "Command text, item/NBT/recipe/advancement/structure name, identifier, or search fragment."
+            "description",
+            "Command text, item/NBT/recipe/advancement/structure name, identifier, or search fragment."
         );
         properties.add("value", value);
         JsonObject registry = new JsonObject();
         registry.addProperty("type", "string");
         registry.addProperty(
-                "description",
-                "For registry queries: item, block, entity_type, status_effect, enchantment, sound_event, biome, structure, or dimension_type."
+            "description",
+            "For registry queries: item, block, entity_type, status_effect, enchantment, sound_event, biome, structure, or dimension_type."
         );
         properties.add("registry", registry);
         JsonObject limit = new JsonObject();
@@ -208,8 +192,8 @@ public final class MinecraftKnowledgeModelToolRegistry {
         fields.addProperty("type", "array");
         fields.addProperty("maxItems", 24);
         fields.addProperty(
-                "description",
-                "Optional exact field names to return. Always request the smallest needed subset. Player fields include name, uuid, entityId, dimension, biome, position, facing, yaw, pitch, gameMode, health, maximumHealth, food, saturation, armor, experienceLevel, onGround, sprinting, sneaking, swimming, flying, mainHand, offHand, standingOn, effects, inventory, lookingAt. Target fields include type, title, description, registryId, modOwner, position, danger, details, tags."
+            "description",
+            "Optional exact field names to return. Always request the smallest needed subset. Player fields include name, uuid, entityId, dimension, biome, position, facing, yaw, pitch, gameMode, health, maximumHealth, food, saturation, armor, experienceLevel, onGround, sprinting, sneaking, swimming, flying, mainHand, offHand, standingOn, effects, inventory, lookingAt. Target fields include type, title, description, registryId, modOwner, position, danger, details, tags."
         );
         JsonObject fieldItems = new JsonObject();
         fieldItems.addProperty("type", "string");
@@ -225,16 +209,16 @@ public final class MinecraftKnowledgeModelToolRegistry {
 
     private static ModelToolDefinition definition(String id, String description, JsonObject schema) {
         return new ModelToolDefinition(
-                id,
-                description,
-                schema,
-                List.of("client_available"),
-                Set.of(),
-                true,
-                Duration.ofSeconds(5),
-                false,
-                false,
-                Set.of("completed", "failed")
+            id,
+            description,
+            schema,
+            List.of("client_available"),
+            Set.of(),
+            true,
+            Duration.ofSeconds(5),
+            false,
+            false,
+            Set.of("completed", "failed")
         );
     }
 
@@ -278,6 +262,17 @@ public final class MinecraftKnowledgeModelToolRegistry {
         id.addProperty("description", "Exact namespaced " + label + " id, including modded ids.");
         schema.getAsJsonObject("properties").add("id", id);
         schema.getAsJsonArray("required").add("id");
+        return schema;
+    }
+
+    private static JsonObject resourceSchema() {
+        JsonObject schema = searchSchema();
+        JsonObject fields = new JsonObject();
+        fields.addProperty("type", "array");
+        fields.addProperty("maxItems", 24);
+        fields.addProperty("description", "Optional exact top-level JSON keys to return for one exact resource id.");
+        fields.add("items", text(1, 64));
+        schema.getAsJsonObject("properties").add("fields", fields);
         return schema;
     }
 
@@ -328,10 +323,10 @@ public final class MinecraftKnowledgeModelToolRegistry {
                 return List.of();
             }
             return object.getAsJsonArray(key).asList().stream()
-                    .filter(element -> element != null && element.isJsonPrimitive())
-                    .map(element -> element.getAsString())
-                    .limit(24)
-                    .toList();
+                .filter(element -> element != null && element.isJsonPrimitive())
+                .map(element -> element.getAsString())
+                .limit(24)
+                .toList();
         } catch (RuntimeException ignored) {
             return List.of();
         }
@@ -343,12 +338,12 @@ public final class MinecraftKnowledgeModelToolRegistry {
 
     private static ModelToolResult failure(ModelToolCall call, String code, String detail) {
         return new ModelToolResult(
-                call == null ? "" : call.id(),
-                call == null ? "" : call.toolId(),
-                "failed",
-                new JsonObject(),
-                code,
-                detail
+            call == null ? "" : call.id(),
+            call == null ? "" : call.toolId(),
+            "failed",
+            new JsonObject(),
+            code,
+            detail
         );
     }
 }

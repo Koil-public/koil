@@ -103,6 +103,14 @@ public final class AutomationRouter {
                             setDeepThinking(!AutomationModeController.isDeepThinkingEnabled());
                             return 1;
                         })
+                        .then(literal("on").executes(context -> {
+                            setDeepThinking(true);
+                            return 1;
+                        }))
+                        .then(literal("off").executes(context -> {
+                            setDeepThinking(false);
+                            return 1;
+                        }))
                         .then(literal("status").executes(context -> {
                             reportModeSetting("Deep Thought", AutomationModeController.isDeepThinkingEnabled());
                             return 1;
@@ -112,6 +120,14 @@ public final class AutomationRouter {
                             setPlanningMode(!AutomationModeController.isPlanningModeEnabled());
                             return 1;
                         })
+                        .then(literal("on").executes(context -> {
+                            setPlanningMode(true);
+                            return 1;
+                        }))
+                        .then(literal("off").executes(context -> {
+                            setPlanningMode(false);
+                            return 1;
+                        }))
                         .then(literal("status").executes(context -> {
                             reportModeSetting("Planning Mode", AutomationModeController.isPlanningModeEnabled());
                             return 1;
@@ -121,6 +137,14 @@ public final class AutomationRouter {
                             setPlanningMode(!AutomationModeController.isPlanningModeEnabled());
                             return 1;
                         })
+                        .then(literal("on").executes(context -> {
+                            setPlanningMode(true);
+                            return 1;
+                        }))
+                        .then(literal("off").executes(context -> {
+                            setPlanningMode(false);
+                            return 1;
+                        }))
                         .then(literal("status").executes(context -> {
                             reportModeSetting("Planning Mode", AutomationModeController.isPlanningModeEnabled());
                             return 1;
@@ -180,40 +204,7 @@ public final class AutomationRouter {
                     AutomationImprovementService.improve();
                     return 1;
                 }))
-                .then(feedbackCommand())
                 .then(proofCommand(commandName));
-    }
-
-    private static LiteralArgumentBuilder<FabricClientCommandSource> feedbackCommand() {
-        return literal("feedback")
-                .executes(context -> handleFeedbackCommand(""))
-                .then(literal("good").executes(context -> handleFeedbackCommand("good")))
-                .then(literal("bad")
-                        .executes(context -> handleFeedbackCommand("bad"))
-                        .then(argument("input", greedyString()).executes(context ->
-                                handleFeedbackCommand("bad " + getString(context, "input")))))
-                .then(literal("cancel").executes(context -> handleFeedbackCommand("cancel")))
-                .then(literal("files").executes(context -> handleFeedbackCommand("files")))
-                .then(literal("sources").executes(context -> handleFeedbackCommand("sources")))
-                .then(literal("file").then(argument("file", greedyString()).executes(context ->
-                        handleFeedbackCommand("file " + getString(context, "file")))))
-                .then(literal("source").then(argument("source", greedyString()).executes(context ->
-                        handleFeedbackCommand("source " + getString(context, "source")))))
-                .then(literal("node").then(argument("node", greedyString()).executes(context ->
-                        handleFeedbackCommand("node " + getString(context, "node")))))
-                .then(literal("type").then(argument("failure", greedyString()).executes(context ->
-                        handleFeedbackCommand("type " + getString(context, "failure")))))
-                .then(literal("failure").then(argument("failure", greedyString()).executes(context ->
-                        handleFeedbackCommand("failure " + getString(context, "failure")))))
-                .then(literal("note").then(argument("note", greedyString()).executes(context ->
-                        handleFeedbackCommand("note " + getString(context, "note")))))
-                .then(argument("input", greedyString()).executes(context ->
-                        handleFeedbackCommand(getString(context, "input"))));
-    }
-
-    private static int handleFeedbackCommand(String child) {
-        String suffix = child == null || child.isBlank() ? "" : " " + child;
-        return AutomationFeedbackService.handleConsoleInput("/automate feedback" + suffix) ? 1 : 0;
     }
 
     private static LiteralArgumentBuilder<FabricClientCommandSource> proofCommand(String commandName) {

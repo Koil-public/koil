@@ -94,14 +94,8 @@ public final class AutomationProofSuite {
             var proof = automate.getChild("proof");
             var deep = automate.getChild("deep");
             var plan = automate.getChild("plan");
-            boolean valid = feedback != null
-                    && feedback.getChild("good") != null
-                    && feedback.getChild("bad") != null
-                    && feedback.getChild("note") != null
-                    && feedback.getChild("file") != null
-                    && feedback.getChild("node") != null
-                    && feedback.getChild("type") != null
-                    && feedback.getChild("cancel") != null
+            boolean valid = feedback == null
+                    && !AutomationFeedbackService.userSurfaceEnabled()
                     && proof != null
                     && proof.getChild("all") != null
                     && proof.getChild("cache") != null
@@ -114,10 +108,10 @@ public final class AutomationProofSuite {
                     && plan.getChild("off") != null
                     && plan.getChild("status") != null;
             if (!valid) {
-                AutomationReporter.fail("[fail]", "command.tree = feedback/proof are not real /automate children");
+                AutomationReporter.fail("[fail]", "command.tree = disabled feedback or /automate proof contract is wrong");
                 return false;
             }
-            AutomationReporter.done("[done]", "command.tree = /automate feedback + /automate proof");
+            AutomationReporter.done("[done]", "command.tree = feedback disabled + /automate proof active");
             return true;
         } catch (RuntimeException exception) {
             AutomationReporter.fail("[fail]", "command.tree threw " + messageOf(exception));

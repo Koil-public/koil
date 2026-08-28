@@ -4,7 +4,6 @@ import com.spirit.client.gui.console.ConsoleScreen;
 import com.spirit.koil.api.automation.AutomationModeController;
 import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.automation.AutomationRuntimeStatus;
-import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
 import com.spirit.koil.api.chat.ChatHudPanelVisualStyle;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -116,12 +115,7 @@ public final class AutomationChatHudRenderer {
             if (command.isBlank()) {
                 return false;
             }
-            if ("feedback_note".equals(rect.action().kind())) {
-                client.setScreen(new ChatScreen(command));
-                return true;
-            }
-            AutomationFeedbackService.handleConsoleInput(command.startsWith("/") ? command : "/" + command);
-            return true;
+            return false;
         }
         return false;
     }
@@ -136,7 +130,7 @@ public final class AutomationChatHudRenderer {
         if (!AutomationChatHudState.visible()) {
             return null;
         }
-        if (!AutomationModeController.isAutomationMode() && !isFeedbackState(AutomationChatHudState.state())) {
+        if (!AutomationModeController.isAutomationMode() && !AutomationChatHudState.visibleOutsideAutomation()) {
             AutomationChatHudState.hide();
             return null;
         }
@@ -224,7 +218,9 @@ public final class AutomationChatHudRenderer {
     }
 
     private static List<AutomationChatHudState.Action> effectiveActions() {
-        List<AutomationChatHudState.Action> configured = AutomationChatHudState.actions();
+        List<AutomationChatHudState.Action> configured = AutomationChatHudState.actions().stream()
+                .filter(action -> !action.id().startsWith("feedback") && !action.kind().startsWith("feedback"))
+                .toList();
         if (!AutomationRuntimeStatus.isTaskRunning()) return configured;
         List<AutomationChatHudState.Action> actions = new ArrayList<>(configured);
         boolean present = actions.stream().anyMatch(action -> "stop_automation".equals(action.kind()));
@@ -306,22 +302,6 @@ public final class AutomationChatHudRenderer {
     private static String compactTooltipLine(String value) {
         String clean = value == null ? "" : value.replaceAll("\\s+", " ").strip();
         return clean.length() <= 180 ? clean : clean.substring(0, 179) + "…";
-    }
-
-    private static boolean isFeedbackState(String value) {
-        String normalized = value == null ? "" : value.toLowerCase(Locale.ROOT);
-        return normalized.startsWith("feedback")
-                || normalized.equals("complete")
-                || normalized.equals("completed")
-                || normalized.equals("failed")
-                || normalized.equals("blocked")
-                || normalized.equals("partial")
-                || normalized.equals("cancelled")
-                || normalized.equals("canceled")
-                || normalized.equals("interrupted")
-                || normalized.equals("already satisfied")
-                || normalized.equals("already_satisfied")
-                || normalized.startsWith("improvement");
     }
 
     private static int withAlpha(int color, int alpha) {

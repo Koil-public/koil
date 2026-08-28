@@ -1,26 +1,28 @@
 package com.spirit.koil.api.model.catalog;
 
 /**
- * Catalog-backed performance boundary for Koil's in-depth Automation tools.
+ * Catalog-backed protocol boundary for Koil's Automation tools.
  *
- * <p>The complex-intent estimate is comparative catalog guidance, not a
- * benchmark score. Koil nevertheless needs one conservative, deterministic
- * floor before exposing actions that depend on reliable multi-step tool use.</p>
+ * <p>The catalog's complex-intent estimate is display/recommendation guidance,
+ * never a permission boundary. Automation eligibility depends on a verified
+ * tool protocol; objective validation remains responsible for correctness.</p>
  */
 public final class LocalModelAutomationEligibility {
-    public static final int REQUIRED_COMPLEX_INTENT_EXCLUSIVE = 30;
+    /** Migration-only constant retained for callers compiled against older Koil builds. */
+    @Deprecated
+    public static final int REQUIRED_COMPLEX_INTENT_EXCLUSIVE = 100;
 
     private LocalModelAutomationEligibility() {
     }
 
     public static boolean meetsThreshold(int complexIntentEstimatePercent) {
-        return complexIntentEstimatePercent > REQUIRED_COMPLEX_INTENT_EXCLUSIVE;
+        return true;
     }
 
     public static boolean supportsAutomationTools(LocalModelCatalogEntry entry) {
         return entry != null
                 && entry.toolCalling()
-                && meetsThreshold(entry.complexReasoningEstimatePercent());
+                && !LocalModelReliabilityStore.quarantined(entry);
     }
 
     public static Evaluation evaluate(LocalModelCatalogEntry entry) {
@@ -31,22 +33,23 @@ public final class LocalModelAutomationEligibility {
                     "Selected model",
                     -1,
                     "The selected model is not capable of Automation Mode because it has no verified "
-                            + "complex-intent estimate. Koil requires more than "
-                            + REQUIRED_COMPLEX_INTENT_EXCLUSIVE + "%. /ask remains available."
+                            + "verified tool protocol. /ask remains available."
             );
         }
         boolean eligible = supportsAutomationTools(entry);
         String detail;
         if (eligible) {
-            detail = entry.displayName() + " is eligible for Automation Mode at "
-                    + entry.complexReasoningEstimatePercent() + "% complex intent.";
+            detail = entry.displayName() + " is eligible for Automation Mode because its model/runtime metadata declares compatible tool calling.";
+        } else if (LocalModelReliabilityStore.quarantined(entry)) {
+            LocalModelReliabilityStore.Snapshot reliability = LocalModelReliabilityStore.snapshot(entry.modelId());
+            detail = entry.displayName() + " is temporarily blocked from Automation because Koil recorded a major runtime/tool-protocol failure"
+                    + (reliability.lastCode().isBlank() ? "." : ": " + reliability.lastCode() + ".")
+                    + " Chat remains available; inspect or reset this evidence with /model reliability.";
         } else if (!entry.toolCalling()) {
             detail = entry.displayName() + " is not capable of Automation Mode because its provider "
-                    + "does not support Koil tool calls. /ask remains available.";
+                    + "or model metadata does not declare compatible tool calls. /ask remains available.";
         } else {
-            detail = entry.displayName() + " is not capable of Automation Mode because its "
-                    + entry.complexReasoningEstimatePercent() + "% complex-intent estimate does not exceed "
-                    + "Koil's " + REQUIRED_COMPLEX_INTENT_EXCLUSIVE + "% requirement. /ask remains available.";
+            detail = entry.displayName() + " is not currently available for Automation Mode. /ask remains available.";
         }
         return new Evaluation(
                 eligible,

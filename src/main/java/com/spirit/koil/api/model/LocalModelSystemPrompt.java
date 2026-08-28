@@ -69,6 +69,18 @@ public final class LocalModelSystemPrompt {
                 """.strip();
     }
 
+    /** Compact read-only lookup round for small local models. */
+    public static String directInformationToolPrompt() {
+        return readOrCreateIdentity() + "\n\n" + """
+                Direct information-tool contract:
+                - The latest user request needs current evidence. Call exactly one supplied read-only tool now using its exact schema and the smallest useful arguments.
+                - Prefer an exact lookup over a catalog. Search before reading an unknown document/page; continue only from returned identifiers, URLs, sections, or line ranges.
+                - Never call gameplay, command submission, raw input, KTL execution, or file mutation. Never claim that an action occurred.
+                - Preserve exact commands, ids, paths, names, syntax errors, suggestions, and evidence. Do not substitute a nearby target.
+                - Return only the structured tool call. Do not write a title, plan, promise, or guessed answer before the evidence round.
+                """.strip();
+    }
+
     /**
      * Small first-round Automation contract for one exact action. It keeps the
      * selected model in control while avoiding unrelated response-format and

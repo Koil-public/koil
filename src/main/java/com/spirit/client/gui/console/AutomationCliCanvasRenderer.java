@@ -3,6 +3,7 @@ package com.spirit.client.gui.console;
 import com.spirit.koil.api.automation.cli.AutomationCliRow;
 import com.spirit.koil.api.automation.cli.AutomationCliSnapshot;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackNode;
+import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
 import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.console.ConsoleTheme;
 import net.minecraft.client.font.TextRenderer;
@@ -142,6 +143,7 @@ final class AutomationCliCanvasRenderer {
     }
 
     static AutomationFeedbackNode feedbackNodeAt(AutomationCliSnapshot snapshot, int x, int y, int width, int height, double scrollOffset, int panX, String query, int mouseX, int mouseY) {
+        if (!AutomationFeedbackService.userSurfaceEnabled()) return null;
         if (snapshot == null || snapshot.rows() == null) {
             return null;
         }

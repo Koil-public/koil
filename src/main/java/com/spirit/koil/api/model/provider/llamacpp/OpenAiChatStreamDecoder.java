@@ -26,6 +26,8 @@ final class OpenAiChatStreamDecoder {
     private int promptTokens;
     private int completionTokens;
     private int cachedTokens;
+    private int streamedOutputUnits;
+    private double reportedTokensPerSecond;
     private String finishReason = "";
 
     OpenAiChatStreamDecoder(UUID requestId, StreamingModelObserver observer) {
@@ -65,6 +67,7 @@ final class OpenAiChatStreamDecoder {
             );
         }
         readUsage(object(root, "usage"));
+        readTimings(object(root, "timings"));
         JsonArray choices = array(root, "choices");
         for (JsonElement choiceElement : choices) {
             if (!choiceElement.isJsonObject()) {
@@ -77,15 +80,23 @@ final class OpenAiChatStreamDecoder {
             }
             JsonObject delta = object(choice, "delta");
             String content = string(delta, "content", "");
+            boolean producedOutput = false;
             if (!content.isEmpty()) {
                 this.text.append(content);
                 this.observer.onTextDelta(this.requestId, content);
+                producedOutput = true;
             }
-            readToolDeltas(array(delta, "tool_calls"));
+            if (readToolDeltas(array(delta, "tool_calls"))) {
+                producedOutput = true;
+            }
+            if (producedOutput) {
+                this.streamedOutputUnits++;
+            }
         }
     }
 
-    private void readToolDeltas(JsonArray toolCalls) {
+    private boolean readToolDeltas(JsonArray toolCalls) {
+        boolean producedOutput = false;
         for (JsonElement element : toolCalls) {
             if (!element.isJsonObject()) {
                 continue;
@@ -96,17 +107,21 @@ final class OpenAiChatStreamDecoder {
             String id = string(call, "id", "");
             if (!id.isBlank()) {
                 accumulator.id = id;
+                producedOutput = true;
             }
             JsonObject function = object(call, "function");
             String name = string(function, "name", "");
             if (!name.isBlank()) {
                 accumulator.name.append(name);
+                producedOutput = true;
             }
             String arguments = string(function, "arguments", "");
             if (!arguments.isEmpty()) {
                 accumulator.arguments.append(arguments);
+                producedOutput = true;
             }
         }
+        return producedOutput;
     }
 
     private void readUsage(JsonObject usage) {
@@ -114,6 +129,16 @@ final class OpenAiChatStreamDecoder {
         this.completionTokens = integer(usage, "completion_tokens", this.completionTokens);
         JsonObject details = object(usage, "prompt_tokens_details");
         this.cachedTokens = integer(details, "cached_tokens", this.cachedTokens);
+    }
+
+    private void readTimings(JsonObject timings) {
+        this.promptTokens = integer(timings, "prompt_n", this.promptTokens);
+        this.completionTokens = integer(timings, "predicted_n", this.completionTokens);
+        this.reportedTokensPerSecond = decimal(
+                timings,
+                "predicted_per_second",
+                this.reportedTokensPerSecond
+        );
     }
 
     void finishTools() {
@@ -154,8 +179,14 @@ final class OpenAiChatStreamDecoder {
                 this.cachedTokens,
                 0L,
                 timeToFirstTokenMillis,
-                tokensPerSecond
+                this.reportedTokensPerSecond > 0.0D
+                        ? this.reportedTokensPerSecond
+                        : tokensPerSecond
         );
+    }
+
+    int liveCompletionTokens() {
+        return Math.max(this.completionTokens, this.streamedOutputUnits);
     }
 
     String finishReason() {
@@ -187,6 +218,14 @@ final class OpenAiChatStreamDecoder {
     private static int integer(JsonObject root, String key, int fallback) {
         try {
             return root != null && root.has(key) ? root.get(key).getAsInt() : fallback;
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static double decimal(JsonObject root, String key, double fallback) {
+        try {
+            return root != null && root.has(key) ? root.get(key).getAsDouble() : fallback;
         } catch (Exception ignored) {
             return fallback;
         }

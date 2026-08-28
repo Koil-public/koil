@@ -93,10 +93,61 @@ dependencies {
 
 }
 
+def bundledModelDocumentation = fileTree('docs') {
+    include 'systems/*'
+    include 'connectors/*'
+    include 'architecture/*'
+    include 'test-datapacks/**'
+    include 'file-map.md'
+    include 'project-structure.md'
+    exclude 'test-datapacks/**/*.png'
+    include 'automation-capability-test-matrix.md'
+    include 'issues-and-risks.md'
+    include 'local-model-user-test-guide.md'
+    include 'vision.md'
+}
+def bundledModelKnowledgeIndex = layout.buildDirectory.file(
+        'generated/koilModelKnowledge/koil/model/knowledge/project-docs.index'
+)
+
+tasks.register('generateBundledModelKnowledgeIndex') {
+    inputs.files(bundledModelDocumentation)
+    outputs.file(bundledModelKnowledgeIndex)
+    doLast {
+        File output = bundledModelKnowledgeIndex.get().asFile
+        output.parentFile.mkdirs()
+        def docsRoot = file('docs').toPath().toAbsolutePath().normalize()
+        def entries = bundledModelDocumentation.files.collect { source ->
+            docsRoot.relativize(source.toPath().toAbsolutePath().normalize())
+                    .toString().replace('\\', '/')
+        }.sort()
+        output.setText(entries.join('\n') + (entries.isEmpty() ? '' : '\n'), 'UTF-8')
+    }
+}
+
 processResources {
+    dependsOn tasks.named('generateBundledModelKnowledgeIndex')
     inputs.property "version", project.version
+    inputs.files bundledModelDocumentation
 
     from(sourceSets.main.resources)
+
+    from('docs') {
+        include 'systems/*'
+        include 'connectors/*'
+        include 'architecture/*'
+        include 'test-datapacks/**'
+        include 'file-map.md'
+        include 'project-structure.md'
+        exclude 'test-datapacks/**/*.png'
+        include 'automation-capability-test-matrix.md'
+        include 'issues-and-risks.md'
+        include 'local-model-user-test-guide.md'
+        include 'vision.md'
+        into 'koil/model/knowledge/project-docs'
+    }
+
+    from(layout.buildDirectory.dir('generated/koilModelKnowledge'))
 
     filesMatching("fabric.mod.json") {
         expand "version": project.version
@@ -165,6 +216,12 @@ tasks.register('runLocalModelFoundationProof', JavaExec) {
     mainClass = 'com.spirit.koil.api.model.testing.LocalModelFoundationProof'
 }
 
+tasks.register('runModelPresentationProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.testing.ModelPresentationProof'
+}
+
 tasks.register('runColibriProviderProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
@@ -177,16 +234,54 @@ tasks.register('runLocalModelCatalogProof', JavaExec) {
     mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogProof'
 }
 
+tasks.register('runLocalModelFamilySelectionProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.catalog.LocalModelFamilySelectionProof'
+}
+
 tasks.register('runLocalModelCatalogChatRowProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.spirit.koil.api.model.chat.LocalModelCatalogChatRowProof'
 }
 
+tasks.register('runLocalModelCommandBridgeProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.LocalModelCommandBridgeProof'
+}
+
 tasks.register('runLocalModelCatalogRemoteProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogRemoteProof'
+}
+
+tasks.register('runHuggingFaceDirectFileProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.catalog.HuggingFaceDirectFileProof'
+    workingDir layout.buildDirectory.dir('hugging-face-direct-file-proof').get().asFile
+    doFirst {
+        workingDir.mkdirs()
+    }
+}
+
+tasks.register('runLocalModelReliabilityProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.catalog.LocalModelReliabilityProof'
+    workingDir layout.buildDirectory.dir('local-model-reliability-proof').get().asFile
+    doFirst { workingDir.mkdirs() }
+}
+
+tasks.register('runKoilUnifiedLogProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.util.console.log.KoilUnifiedLogProof'
+    workingDir layout.buildDirectory.dir('koil-unified-log-proof').get().asFile
+    doFirst { workingDir.mkdirs() }
 }
 
 tasks.register('runLlamaCppProviderProof', JavaExec) {

@@ -7,6 +7,7 @@ import com.spirit.koil.api.model.ModelRequestState;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolDefinition;
 import com.spirit.koil.api.model.ModelToolResult;
+import com.spirit.koil.api.model.ModelUsage;
 import com.spirit.koil.api.model.StreamingModelObserver;
 import com.spirit.koil.api.model.StreamingModelRequest;
 import com.spirit.koil.api.model.StreamingModelResponse;
@@ -76,6 +77,7 @@ public final class ColibriProviderProof {
         StringBuilder streamedText = new StringBuilder();
         List<ModelRequestState> states = new ArrayList<>();
         List<ModelToolCall> calls = new ArrayList<>();
+        List<ModelUsage> liveUsage = new ArrayList<>();
         AtomicReference<StreamingModelResponse> response = new AtomicReference<>();
         AtomicReference<String> failure = new AtomicReference<>();
         StreamingModelRequest request = new StreamingModelRequest(
@@ -116,6 +118,11 @@ public final class ColibriProviderProof {
             }
 
             @Override
+            public synchronized void onUsage(UUID requestId, ModelUsage usage) {
+                liveUsage.add(usage);
+            }
+
+            @Override
             public void onComplete(StreamingModelResponse completed) {
                 response.set(completed);
                 terminal.countDown();
@@ -137,6 +144,10 @@ public final class ColibriProviderProof {
         require(response.get().usage().promptTokens() == 12, "prompt usage was not decoded");
         require(response.get().usage().completionTokens() == 4, "completion usage was not decoded");
         require(response.get().usage().queueMillis() == 17L, "queue wait header was not decoded");
+        require(liveUsage.size() >= 2
+                        && liveUsage.stream().anyMatch(usage -> usage.tokensPerSecond() > 0.0D)
+                        && liveUsage.stream().anyMatch(usage -> usage.promptTokens() == 12),
+                "Colibri stream did not publish live throughput and exact prompt occupancy updates");
         require(states.contains(ModelRequestState.PREFILLING), "prefill state was not emitted");
         require(states.contains(ModelRequestState.GENERATING), "generating state was not emitted");
         require(states.contains(ModelRequestState.SELECTING_TOOL), "tool-selection state was not emitted");

@@ -30,13 +30,15 @@ steps:
       slot.index: ${result.container.slot}
       item.id: ${item.id}
       expected.count: ${count.value}
+      state.counter: ${state.counter}
+      transfer.direction: take
   - type: run_primitive
     action: cap.state.increment_counter
     params:
       state.key: state.counter
       delta: ${result.transfer.moved_count}
-  - type: delegate
-    delegate: container/core/take_item_from_open_container.ktl item.id=${item.id} count.value=${count.value} state.counter=${state.counter}
+  - type: goto
+    scope: parent
+    goto: need_more_items
   - type: return
     label: done
-

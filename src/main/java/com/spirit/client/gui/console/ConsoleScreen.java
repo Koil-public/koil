@@ -322,7 +322,7 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
                 UiSoundHelper.playButtonClick();
                 return true;
             }
-            if (button == 1 && !rowId.isBlank()) {
+            if (button == 1 && AutomationFeedbackService.userSurfaceEnabled() && !rowId.isBlank()) {
                 AutomationFeedbackService.openNodeFeedback(rowId);
                 UiSoundHelper.playButtonClick();
                 return true;
@@ -333,7 +333,8 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
             return true;
         }
 
-        if (button == 1 && this.activeChannel == ConsoleChannel.CLI && isCliViewportClick(mouseX, mouseY)) {
+        if (button == 1 && AutomationFeedbackService.userSurfaceEnabled()
+                && this.activeChannel == ConsoleChannel.CLI && isCliViewportClick(mouseX, mouseY)) {
             AutomationFeedbackNode node = AutomationCliCanvasRenderer.feedbackNodeAt(
                     AutomationCliViewModel.snapshot(),
                     cliViewportX(),
@@ -353,7 +354,8 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
             }
         }
 
-        if (button == 1 && this.activeChannel == ConsoleChannel.CLI && isCliViewportClick(mouseX, mouseY)) {
+        if (button == 1 && AutomationFeedbackService.userSurfaceEnabled()
+                && this.activeChannel == ConsoleChannel.CLI && isCliViewportClick(mouseX, mouseY)) {
             String rowId = AutomationCliCanvasRenderer.rowIdAt(
                     AutomationCliViewModel.snapshot(),
                     cliViewportX(),
@@ -1171,9 +1173,9 @@ public class ConsoleScreen extends Screen implements ConsoleRepository.Listener 
     private Path channelLogPath(ConsoleChannel channel) {
         return switch (channel) {
             case KOIL -> Path.of("koil/logs/latest.log");
-            case PACKAGE -> Path.of("koil/logs/package/latest.log");
+            case PACKAGE -> Path.of("koil/logs/latest.log");
             case MINECRAFT -> Path.of("logs/latest.log");
-            case CLI -> Path.of("koil/logs/automate/latest.log");
+            case CLI -> Path.of("koil/logs/latest.log");
         };
     }
 

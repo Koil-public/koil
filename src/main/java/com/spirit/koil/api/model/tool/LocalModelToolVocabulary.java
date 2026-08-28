@@ -269,6 +269,9 @@ final class LocalModelToolVocabulary {
     static final Set<String> WRITE_FILES = words(
             "write", "writing", "rewrite", "rewriting", "overwrite", "overwriting", "save", "saving", "persist", "persisting"
     );
+    static final Set<String> APPEND_FILES = words(
+            "append", "appending", "appended", "add", "adding", "extend", "extending", "insert", "inserting"
+    );
     static final Set<String> DELETE_FILES = words(
             "delete", "deleting", "remove", "removing", "erase", "erasing", "rm", "unlink", "trash", "discard", "discarding"
     );
@@ -315,6 +318,18 @@ final class LocalModelToolVocabulary {
     );
     static final Set<String> INTERNET_FETCH = words(
             "fetch", "fetching", "open", "opening", "visit", "visiting", "retrieve", "retrieving", "download", "downloading", "read", "reading", "page", "article", "url"
+    );
+
+    static final Set<String> KOIL_SELF = words(
+            "koil", "model", "executor", "automation", "automate", "ktl", "kms", "kes", "kts"
+    );
+    static final Set<String> SELF_DOCUMENTATION = words(
+            "documentation", "docs", "doc", "manual", "guide", "guidance", "capability", "capabilities", "ability", "abilities",
+            "tool", "tools", "system", "systems", "workflow", "workflows", "mode", "modes", "permission", "permissions",
+            "self", "yourself", "works", "work", "operate", "operates", "operating"
+    );
+    static final Set<String> SELF_REFERENCE = words(
+            "you", "your", "yours", "yourself", "model", "executor", "koil"
     );
 
     static final Set<String> QUESTION = words(

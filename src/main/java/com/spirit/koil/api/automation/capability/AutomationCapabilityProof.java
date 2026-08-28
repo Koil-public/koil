@@ -229,6 +229,7 @@ public final class AutomationCapabilityProof {
         require(elytraPlan.request().rawInput().contains("movement/transport/elytra_flight.ktl")
                         && elytraPlan.request().rawInput().contains("elytra.item=minecraft:elytra")
                         && elytraPlan.request().rawInput().contains("rocket.item=minecraft:firework_rocket")
+                        && elytraPlan.request().rawInput().contains("flight.max_rockets=4")
                         && AutomationPrimitiveRegistry.contains("cap.transport.fly_elytra"),
                 "bounded elytra execution did not compile through verified transport primitives");
 

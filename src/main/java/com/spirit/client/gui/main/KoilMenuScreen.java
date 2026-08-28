@@ -584,10 +584,9 @@ public class KoilMenuScreen extends Screen {
         context.drawText(this.textRenderer, "Manager-level toggles and system actions live here now that the old config pane is gone.", 140, 92, new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
 
         if (debugCheckbox == null) {
-            boolean isDebugModeEnabled = JSONFileEditor.getValueFromJson(configFilePath, "debug").getAsBoolean();
             boolean designMusicisDebugModeEnabled = JSONFileEditor.getValueFromJson(configFilePath, "designMusic").getAsBoolean();
 
-            debugCheckbox = this.addDrawableChild(new CheckboxWidget(140, 118, 170, 20, Text.literal("Toggle Debug"), isDebugModeEnabled) {
+            debugCheckbox = this.addDrawableChild(new CheckboxWidget(140, 118, 170, 20, Text.literal("Toggle Debug"), deBug) {
                 @Override
                 public void onPress() {
                     boolean newDebugValue = !debugCheckbox.isChecked();

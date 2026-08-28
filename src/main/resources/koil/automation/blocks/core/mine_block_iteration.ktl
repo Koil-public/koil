@@ -22,12 +22,10 @@ steps:
   - type: delegate
     delegate: movement/interact/move_to_break_block.ktl target.id=${target.id} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
   - type: run_primitive
-    action: cap.state.increment_counter
-    params:
-      state.key: state.counter
-      delta: 1
-  - type: delegate
-    delegate: blocks/core/mine_block_until_count.ktl target.id=${target.id} target.selector=${target.selector} count.value=${count.value} state.counter=${state.counter} radius=${radius} stop.distance=${stop.distance}
+    action: cap.state.record_completed_target
+    params: {}
+  - type: goto
+    scope: parent
+    goto: need_more_blocks
   - type: return
     label: done
-

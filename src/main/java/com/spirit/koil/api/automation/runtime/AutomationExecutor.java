@@ -7,6 +7,8 @@ import com.spirit.koil.api.automation.AutomationRuntimeStatus;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.automation.capability.AutomationPrimitiveRegistry;
 import com.spirit.koil.api.automation.feedback.AutomationFailureRegistry;
+import com.spirit.koil.api.automation.input.RawPlayerInputResolver;
+import com.spirit.koil.api.f3.F3LayoutState;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.automation.navigation.BoundedNavigationPlanner;
 import com.spirit.koil.api.automation.navigation.BoundedNavigationSnapshot;
@@ -20,6 +22,7 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.network.ClientPlayerInteractionManager;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.option.Perspective;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EquipmentSlot;
@@ -58,6 +61,7 @@ import net.minecraft.world.World;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.lwjgl.glfw.GLFW;
 
 public final class AutomationExecutor {
     private static final AtomicInteger FRAME_SEQUENCE = new AtomicInteger();
@@ -113,6 +117,7 @@ public final class AutomationExecutor {
     private final KtlCompilerService compilerService;
     private final Deque<ActiveExecution> executionStack = new ArrayDeque<>();
     private final Map<String, HeldInput> heldInputs = new LinkedHashMap<>();
+    private final Map<String, RawPlayerInputResolver.ResolvedInput> rawHeldInputs = new LinkedHashMap<>();
     private final Map<String, CachedEntityRef> cachedEntities = new LinkedHashMap<>();
     private final Map<String, Long> hotStateReportTimes = new LinkedHashMap<>();
     private final RecedingHorizonNavigationController navigationPlanner = new RecedingHorizonNavigationController();
@@ -1037,6 +1042,34 @@ public final class AutomationExecutor {
                 }
                 yield true;
             }
+            case "cap.state.record_completed_target" -> {
+                String position = intState(state, "mine.target.x", 0) + ","
+                        + intState(state, "mine.target.y", 0) + ","
+                        + intState(state, "mine.target.z", 0);
+                if (!booleanState(state, "result.block.broken", false)
+                        || !"passed".equals(stringParam(state, "result.validation.status", ""))) {
+                    state.put("result.reason", "block_removal_not_verified");
+                    yield false;
+                }
+                LinkedHashSet<String> completed = new LinkedHashSet<>();
+                String encoded = stringParam(state, "collection.completed_positions", "");
+                if (!encoded.isBlank()) completed.addAll(Arrays.asList(encoded.split(";")));
+                if (!completed.add(position)) {
+                    state.put("result.reason", "duplicate_target_progress");
+                    state.put("result.retry_same_action", false);
+                    yield false;
+                }
+                int next = completed.size();
+                state.put("collection.completed_positions", String.join(";", completed));
+                state.put("state.counter", next);
+                state.put("result.completed_amount", next);
+                AutomationReporter.mem("state.counter", next);
+                AutomationReporter.mem("collection.completed_positions", String.join(";", completed));
+                if (state.containsKey("count.value")) {
+                    AutomationReporter.info("[prog]", "[ " + next + " / " + state.get("count.value") + " ]");
+                }
+                yield true;
+            }
             case "cap.state.capture_player_position" -> {
                 if (player == null) {
                     yield false;
@@ -1175,20 +1208,30 @@ public final class AutomationExecutor {
                 if (keyId.isBlank()) {
                     yield false;
                 }
-                setHeldInput(keyId, true);
-                state.put("result.action", "SUCCESS");
-                AutomationReporter.mem("result.action", "SUCCESS");
-                yield true;
+                boolean pressed = pressRawInput(keyId, client, state);
+                state.put("result.action", pressed ? "STARTED" : "FAIL");
+                if (!pressed) {
+                    state.put("result.reason", "unsupported_or_unbound_input");
+                    state.put("result.retry_same_action", false);
+                }
+                AutomationReporter.mem("result.action", state.get("result.action"));
+                yield pressed;
             }
             case "cap.input.release_key" -> {
                 String keyId = stringParam(resolvedParams, "input.key", "");
                 if (keyId.isBlank()) {
                     yield false;
                 }
-                setHeldInput(keyId, false);
-                state.put("result.action", "SUCCESS");
-                AutomationReporter.mem("result.action", "SUCCESS");
-                yield true;
+                boolean released = releaseRawInput(keyId, client);
+                captureRawInputAfter(client, state);
+                state.put("result.action", released ? "SUCCESS" : "BLOCKED");
+                state.put("result.input_released", released);
+                if (!released) {
+                    state.put("result.reason", "input_not_owned");
+                    state.put("result.retry_same_action", false);
+                }
+                AutomationReporter.mem("result.action", state.get("result.action"));
+                yield released;
             }
             case "cap.input.tap_key" -> {
                 String keyId = stringParam(resolvedParams, "input.key", "");
@@ -1196,11 +1239,11 @@ public final class AutomationExecutor {
                 if (keyId.isBlank()) {
                     yield false;
                 }
-                tapInput(keyId, ticks);
-                performImmediateTapAction(keyId, client, player);
-                state.put("result.action", "SUCCESS");
-                AutomationReporter.mem("result.action", "SUCCESS");
-                yield true;
+                boolean pressed = pressRawInput(keyId, client, state);
+                if (pressed) tapInput(keyId, ticks);
+                state.put("result.action", pressed ? "STARTED" : "FAIL");
+                AutomationReporter.mem("result.action", state.get("result.action"));
+                yield pressed;
             }
             case "cap.input.release_all" -> {
                 releaseAllInputs();
@@ -1314,7 +1357,12 @@ public final class AutomationExecutor {
                 if (itemId.isBlank()) {
                     yield false;
                 }
-                int slotIndex = findMatchingOpenScreenSlot(player, itemId, Boolean.TRUE.equals(resolvedParams.get("container.only")));
+                int slotIndex = findMatchingOpenScreenSlot(
+                        player,
+                        itemId,
+                        Boolean.TRUE.equals(resolvedParams.get("container.only")),
+                        Boolean.TRUE.equals(resolvedParams.get("player.only"))
+                );
                 state.put(resultKey, slotIndex);
                 state.put("result.found", slotIndex >= 0);
                 AutomationReporter.mem(resultKey, slotIndex);
@@ -1329,7 +1377,8 @@ public final class AutomationExecutor {
                 if (slotIndex < 0 || slotIndex >= player.currentScreenHandler.slots.size()) {
                     yield false;
                 }
-                yield startContainerTransfer(interactionManager, player, slotIndex, resolvedParams, state, "take");
+                String direction = stringParam(resolvedParams, "transfer.direction", "take");
+                yield startContainerTransfer(interactionManager, player, slotIndex, resolvedParams, state, direction);
             }
             case "cap.container.quick_move_selected_hotbar" -> {
                 if (player == null || interactionManager == null) {
@@ -1389,26 +1438,8 @@ public final class AutomationExecutor {
                 AutomationReporter.mem("result.action", matched ? "SUCCESS" : "FAIL");
                 yield matched;
             }
-            case "cap.inventory.consume_item" -> {
-                if (player == null) {
-                    yield false;
-                }
-                String itemId = stringParam(resolvedParams, "item.id", "");
-                int amount = Math.max(1, intParam(resolvedParams, "count.value", 1));
-                if (itemId.isBlank()) {
-                    yield false;
-                }
-                boolean removed = removeInventoryItems(player.getInventory(), itemId, amount);
-                if (!removed) {
-                    yield false;
-                }
-                String resultKey = stringParam(resolvedParams, "result.key", "result.consumed");
-                state.put(resultKey, amount);
-                AutomationReporter.mem(resultKey, amount);
-                yield true;
-            }
             case "cap.inventory.select_hotbar_item" -> {
-                if (player == null) {
+                if (player == null || interactionManager == null) {
                     yield false;
                 }
                 String itemId = stringParam(resolvedParams, "item.id", "");
@@ -1417,7 +1448,20 @@ public final class AutomationExecutor {
                 }
                 int slot = findHotbarSlot(player.getInventory(), itemId);
                 if (slot < 0) {
-                    slot = moveInventoryItemToSelectedHotbar(player.getInventory(), itemId);
+                    int selected = Math.max(0, Math.min(8, player.getInventory().selectedSlot));
+                    int source = findPlayerHandlerSlot(player, itemId);
+                    if (source >= 0) {
+                        interactionManager.clickSlot(
+                                player.playerScreenHandler.syncId,
+                                source,
+                                selected,
+                                SlotActionType.SWAP,
+                                player
+                        );
+                        slot = itemMatches(player.getInventory().getStack(selected), itemId)
+                                ? selected
+                                : -1;
+                    }
                 }
                 if (slot < 0) {
                     yield false;
@@ -2477,6 +2521,8 @@ public final class AutomationExecutor {
                 state.put("mine.ticks", 0);
                 state.put("mine.started", false);
                 state.put("mine.failure_reason", "");
+                state.put("result.block.broken", false);
+                state.remove("result.block.position");
                 state.put("result.action", "STARTED");
                 AutomationReporter.mem("mine.active", true);
                 AutomationReporter.mem("mine.target.x", pos.getX());
@@ -3239,6 +3285,86 @@ public final class AutomationExecutor {
         input.tapTicks = 0;
     }
 
+    private boolean pressRawInput(String keyId, MinecraftClient client, Map<String, Object> state) {
+        Optional<RawPlayerInputResolver.ResolvedInput> resolution = RawPlayerInputResolver.resolve(client, keyId);
+        if (resolution.isEmpty() || client == null || client.getWindow() == null) return false;
+        RawPlayerInputResolver.ResolvedInput input = resolution.get();
+        String canonical = RawPlayerInputResolver.normalize(keyId);
+        captureRawInputBefore(client, state, canonical);
+        dispatchRawInput(client, input.key(), true);
+        this.rawHeldInputs.put(canonical, input);
+        HeldInput held = this.heldInputs.computeIfAbsent(canonical, ignored -> new HeldInput());
+        held.pressed = true;
+        state.put("result.input.key", canonical);
+        state.put("result.input.translation_key", input.key().getTranslationKey());
+        state.put("result.input.dispatched", true);
+        return true;
+    }
+
+    private boolean releaseRawInput(String keyId, MinecraftClient client) {
+        String canonical = RawPlayerInputResolver.normalize(keyId);
+        RawPlayerInputResolver.ResolvedInput input = this.rawHeldInputs.remove(canonical);
+        if (input == null) return false;
+        if (client != null && client.getWindow() != null) dispatchRawInput(client, input.key(), false);
+        HeldInput held = this.heldInputs.get(canonical);
+        if (held != null) {
+            held.pressed = false;
+            held.tapTicks = 0;
+        }
+        return true;
+    }
+
+    private static void dispatchRawInput(MinecraftClient client, InputUtil.Key key, boolean pressed) {
+        if (key.getCategory() == InputUtil.Type.MOUSE) {
+            KeyBinding.setKeyPressed(key, pressed);
+            if (pressed) KeyBinding.onKeyPressed(key);
+            return;
+        }
+        int action = pressed ? GLFW.GLFW_PRESS : GLFW.GLFW_RELEASE;
+        client.keyboard.onKey(client.getWindow().getHandle(), key.getCode(), 0, action, 0);
+    }
+
+    private static void captureRawInputBefore(MinecraftClient client, Map<String, Object> state, String key) {
+        state.put("result.input.before.screen", client.currentScreen == null
+                ? "world" : client.currentScreen.getClass().getSimpleName());
+        state.put("result.input.before.f3_overlay", F3LayoutState.overlayVisible());
+        state.put("result.input.before.debug_enabled", client.options != null && client.options.debugEnabled);
+        if (client.player != null) {
+            state.put("result.input.before.x", client.player.getX());
+            state.put("result.input.before.y", client.player.getY());
+            state.put("result.input.before.z", client.player.getZ());
+            state.put("result.input.before.hotbar_slot", client.player.getInventory().selectedSlot);
+            state.put("result.input.before.selected_count", client.player.getMainHandStack().getCount());
+        }
+    }
+
+    private void captureRawInputAfter(MinecraftClient client, Map<String, Object> state) {
+        if (client == null) return;
+        String screen = client.currentScreen == null ? "world" : client.currentScreen.getClass().getSimpleName();
+        state.put("result.input.after.screen", screen);
+        state.put("result.input.after.f3_overlay", F3LayoutState.overlayVisible());
+        state.put("result.input.after.debug_enabled", client.options != null && client.options.debugEnabled);
+        boolean changed = !screen.equals(stringParam(state, "result.input.before.screen", screen))
+                || F3LayoutState.overlayVisible() != booleanState(state, "result.input.before.f3_overlay", F3LayoutState.overlayVisible());
+        if (client.player != null) {
+            int slot = client.player.getInventory().selectedSlot;
+            int count = client.player.getMainHandStack().getCount();
+            state.put("result.input.after.x", client.player.getX());
+            state.put("result.input.after.y", client.player.getY());
+            state.put("result.input.after.z", client.player.getZ());
+            state.put("result.input.after.hotbar_slot", slot);
+            state.put("result.input.after.selected_count", count);
+            changed |= slot != intState(state, "result.input.before.hotbar_slot", slot)
+                    || count != intState(state, "result.input.before.selected_count", count)
+                    || Math.abs(client.player.getX() - doubleState(state, "result.input.before.x", client.player.getX())) > 0.001D
+                    || Math.abs(client.player.getY() - doubleState(state, "result.input.before.y", client.player.getY())) > 0.001D
+                    || Math.abs(client.player.getZ() - doubleState(state, "result.input.before.z", client.player.getZ())) > 0.001D;
+        }
+        state.put("result.state_changed", changed);
+        state.put("result.reason", changed ? "input_dispatched_state_changed" : "input_dispatched_no_observed_change");
+        state.put("result.objective_reached", booleanState(state, "result.input.dispatched", false));
+    }
+
     private void tapInput(String keyId, int ticks) {
         HeldInput input = this.heldInputs.computeIfAbsent(normalizeInputKey(keyId), ignored -> new HeldInput());
         input.pressed = true;
@@ -3327,12 +3453,17 @@ public final class AutomationExecutor {
     }
 
     private void updateTapInputs() {
+        MinecraftClient client = MinecraftClient.getInstance();
         for (Map.Entry<String, HeldInput> entry : this.heldInputs.entrySet()) {
             HeldInput input = entry.getValue();
             if (input.tapTicks > 0) {
                 input.tapTicks--;
                 if (input.tapTicks == 0) {
                     input.pressed = false;
+                    RawPlayerInputResolver.ResolvedInput resolved = this.rawHeldInputs.remove(entry.getKey());
+                    if (resolved != null && client != null && client.getWindow() != null) {
+                        dispatchRawInput(client, resolved.key(), false);
+                    }
                 }
             }
         }
@@ -3416,6 +3547,9 @@ public final class AutomationExecutor {
         }
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null) {
+            for (RawPlayerInputResolver.ResolvedInput input : this.rawHeldInputs.values()) {
+                if (client.getWindow() != null) dispatchRawInput(client, input.key(), false);
+            }
             for (String key : ownedKeys) {
                 if (!"__mouse__".equals(key)) {
                     applyKeyState(resolveKeyBinding(client, key), false);
@@ -3427,6 +3561,7 @@ public final class AutomationExecutor {
             applyPlayerInputState(client.player);
         }
         this.automationItemUseActive = false;
+        this.rawHeldInputs.clear();
         this.heldInputs.clear();
     }
 
@@ -3699,8 +3834,16 @@ public final class AutomationExecutor {
         state.put("move.nav.allow_break_blocks", persistent || booleanParam(params, "movement.allow_break_blocks", false));
         state.put("move.nav.allow_place_blocks", persistent || booleanParam(params, "movement.allow_place_blocks", false));
         state.put("move.nav.allow_combat_clear", persistent || booleanParam(params, "movement.allow_combat_clear", false));
+        state.put("move.nav.allow_swim", booleanParam(params, "movement.allow_swim", true));
+        state.put("move.nav.allow_parkour", booleanParam(params, "movement.allow_parkour", true));
+        state.put("move.nav.allow_sprint", booleanParam(params, "movement.allow_sprint", true));
+        state.put("move.nav.allow_interactions", booleanParam(params, "movement.allow_interactions", false));
         writeStateValue(state, "move.nav.policy", policy);
         writeStateValue(state, "move.nav.persistent", persistent);
+        writeStateValue(state, "move.nav.allow_swim", state.get("move.nav.allow_swim"));
+        writeStateValue(state, "move.nav.allow_parkour", state.get("move.nav.allow_parkour"));
+        writeStateValue(state, "move.nav.allow_sprint", state.get("move.nav.allow_sprint"));
+        writeStateValue(state, "move.nav.allow_interactions", state.get("move.nav.allow_interactions"));
     }
 
     private boolean executeNamedGoal(String goalName, Map<String, Object> params, Map<String, Object> state, MinecraftClient client, ClientPlayerEntity player, ClientWorld world) {
@@ -4688,7 +4831,45 @@ public final class AutomationExecutor {
         }
 
         Vec3d navigationTarget = precisionApproach ? target : chooseNavigationWaypoint(world, player, target, state, useY, blockedTicks, stallTicks, escapeTicks);
-        NavigatorDecision decision = buildNavigationDecision(player, world, navigationTarget, state, sprint, stopDistance, blockedTicks, stallTicks, escapeTicks, escapeSide);
+        String routeTransition = precisionApproach
+                ? ""
+                : stringParam(state, "move.nav.route.transition", "").toLowerCase(Locale.ROOT);
+        NavigatorDecision decision;
+        if ("climb".equals(routeTransition) && routeClimbContext(world, player, navigationTarget)) {
+            Vec3d horizontal = new Vec3d(
+                    navigationTarget.x - player.getX(),
+                    0.0D,
+                    navigationTarget.z - player.getZ()
+            );
+            if (horizontal.lengthSquared() < 1.0E-4D) {
+                horizontal = Vec3d.fromPolar(0.0F, player.getYaw()).normalize();
+            }
+            boolean ascending = navigationTarget.y > player.getY() + 0.10D;
+            decision = new NavigatorDecision(
+                    horizontal.normalize(),
+                    navigationTarget,
+                    false,
+                    false,
+                    ascending,
+                    ascending ? "climb_up" : "climb_down",
+                    "none"
+            );
+        } else {
+            decision = buildNavigationDecision(player, world, navigationTarget, state, sprint, stopDistance, blockedTicks, stallTicks, escapeTicks, escapeSide);
+            if ("parkour".equals(routeTransition)
+                    && Boolean.TRUE.equals(state.get("move.nav.allow_parkour"))
+                    && !decision.swim()) {
+                decision = new NavigatorDecision(
+                        decision.moveDirection(),
+                        decision.lookTarget(),
+                        true,
+                        false,
+                        true,
+                        "route_parkour",
+                        decision.strafeMode()
+                );
+            }
+        }
         if (precisionApproach && !decision.swim()) {
             Vec3d direct = new Vec3d(target.x - player.getX(), 0.0D, target.z - player.getZ());
             if (direct.lengthSquared() > 1.0E-4D) {
@@ -5739,11 +5920,20 @@ public final class AutomationExecutor {
         state.put("elytra.flight.arrival_radius", doubleParam(params, "arrival.radius", 6.0D));
         state.put("elytra.flight.turn_speed", stringParam(params, "look.turn_speed", "natural"));
         state.put("elytra.flight.use_rocket", booleanParam(params, "flight.use_rocket", true));
+        state.put("elytra.flight.max_rockets", MathHelper.clamp(
+                intParam(params, "flight.max_rockets", booleanParam(params, "flight.use_rocket", true) ? 4 : 0),
+                0,
+                64
+        ));
         state.put("elytra.flight.rocket_item", stringParam(params, "rocket.item", "minecraft:firework_rocket"));
         state.put("elytra.flight.start.x", player.getX());
         state.put("elytra.flight.start.y", player.getY());
         state.put("elytra.flight.start.z", player.getZ());
         state.put("elytra.flight.rocket_used", false);
+        state.put("elytra.flight.rockets_used", 0);
+        state.put("elytra.flight.rocket_cooldown", 0);
+        state.remove("elytra.flight.rocket_pending_before");
+        state.remove("elytra.flight.rocket_pending_tick");
         state.put("elytra.arrival.status", "pending");
         state.put("result.validation.status", "pending");
         setHeldInput("forward", true);
@@ -5778,26 +5968,6 @@ public final class AutomationExecutor {
         }
         if (player.isFallFlying()) {
             state.put("elytra.flight.phase", "gliding");
-            if (Boolean.TRUE.equals(state.get("elytra.flight.use_rocket"))
-                    && !Boolean.TRUE.equals(state.get("elytra.flight.rocket_used"))) {
-                String rocketId = stringParam(state, "elytra.flight.rocket_item", "minecraft:firework_rocket");
-                if (!itemMatches(player.getMainHandStack(), rocketId)) {
-                    failTransportPhase(state, "elytra.flight.active", "exact_firework_not_selected",
-                            "The exact firework was no longer selected when fall-flying began.");
-                    return;
-                }
-                int before = countInventory(player.getInventory(), rocketId);
-                ActionResult boost = interactionManager.interactItem(player, Hand.MAIN_HAND);
-                player.swingHand(Hand.MAIN_HAND);
-                writeActionResult(state, "elytra.flight.rocket_action", boost);
-                if (boost == ActionResult.FAIL) {
-                    failTransportPhase(state, "elytra.flight.active", "firework_use_rejected",
-                            "Minecraft rejected the requested firework boost.");
-                    return;
-                }
-                state.put("elytra.flight.rocket_before", before);
-                state.put("elytra.flight.rocket_used", true);
-            }
             Vec3d target = new Vec3d(doubleState(state, "elytra.flight.target.x", player.getX()),
                     doubleState(state, "elytra.flight.target.y", player.getY()),
                     doubleState(state, "elytra.flight.target.z", player.getZ()));
@@ -5806,6 +5976,57 @@ public final class AutomationExecutor {
             double dz = target.z - player.getZ();
             double horizontal = Math.sqrt(dx * dx + dz * dz);
             double radius = doubleState(state, "elytra.flight.arrival_radius", 6.0D);
+            String rocketId = stringParam(state, "elytra.flight.rocket_item", "minecraft:firework_rocket");
+            int rocketCooldown = Math.max(0, intState(state, "elytra.flight.rocket_cooldown", 0) - 1);
+            state.put("elytra.flight.rocket_cooldown", rocketCooldown);
+            if (state.containsKey("elytra.flight.rocket_pending_before")) {
+                int pendingBefore = intState(state, "elytra.flight.rocket_pending_before", 0);
+                int pendingTick = intState(state, "elytra.flight.rocket_pending_tick", ticks);
+                int now = countInventory(player.getInventory(), rocketId);
+                if (now < pendingBefore) {
+                    state.put("elytra.flight.rockets_used", intState(state, "elytra.flight.rockets_used", 0) + (pendingBefore - now));
+                    state.put("elytra.flight.rocket_used", true);
+                    state.put("elytra.flight.rocket_after", now);
+                    state.remove("elytra.flight.rocket_pending_before");
+                    state.remove("elytra.flight.rocket_pending_tick");
+                } else if (ticks - pendingTick >= 12) {
+                    failTransportPhase(state, "elytra.flight.active", "firework_consumption_not_confirmed",
+                            "Minecraft did not confirm an inventory decrease after the approved firework use.");
+                    return;
+                }
+            }
+            int approvedRockets = intState(state, "elytra.flight.max_rockets", 0);
+            int usedRockets = intState(state, "elytra.flight.rockets_used", 0);
+            double horizontalSpeed = player.getVelocity().horizontalLength();
+            boolean needsBoost = usedRockets == 0
+                    || rocketCooldown <= 0 && horizontal > Math.max(24.0D, radius * 3.0D)
+                    && horizontalSpeed < 0.85D;
+            if (Boolean.TRUE.equals(state.get("elytra.flight.use_rocket"))
+                    && !state.containsKey("elytra.flight.rocket_pending_before")
+                    && usedRockets < approvedRockets
+                    && needsBoost) {
+                if (!itemMatches(player.getMainHandStack(), rocketId)) {
+                    failTransportPhase(state, "elytra.flight.active", "exact_firework_not_selected",
+                            "The exact firework was no longer selected when another approved boost was required.");
+                    return;
+                }
+                int before = countInventory(player.getInventory(), rocketId);
+                if (before <= 0) {
+                    state.put("elytra.flight.boost_exhausted", true);
+                } else {
+                    ActionResult boost = interactionManager.interactItem(player, Hand.MAIN_HAND);
+                    player.swingHand(Hand.MAIN_HAND);
+                    writeActionResult(state, "elytra.flight.rocket_action", boost);
+                    if (boost == ActionResult.FAIL) {
+                        failTransportPhase(state, "elytra.flight.active", "firework_use_rejected",
+                                "Minecraft rejected the requested firework boost.");
+                        return;
+                    }
+                    state.put("elytra.flight.rocket_pending_before", before);
+                    state.put("elytra.flight.rocket_pending_tick", ticks);
+                    state.put("elytra.flight.rocket_cooldown", 30);
+                }
+            }
             float desiredYaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0D);
             float desiredPitch = MathHelper.clamp((float) -Math.toDegrees(Math.atan2(dy, Math.max(0.1D, horizontal))), -22.0F, 18.0F);
             String speed = stringParam(state, "elytra.flight.turn_speed", "natural");
@@ -5815,7 +6036,11 @@ public final class AutomationExecutor {
             smoothPitchToward(player, desiredPitch, pitchStep);
             state.put("elytra.flight.distance_horizontal", round(horizontal));
             state.put("elytra.flight.distance_vertical", round(Math.abs(dy)));
+            state.put("elytra.flight.horizontal_speed", round(horizontalSpeed));
             if (horizontal <= radius && Math.abs(dy) <= Math.max(8.0D, radius)) {
+                if (state.containsKey("elytra.flight.rocket_pending_before")) {
+                    return;
+                }
                 setHeldInput("forward", false);
                 state.put("elytra.flight.active", false);
                 state.put("elytra.arrival.status", "passed");
@@ -5823,8 +6048,11 @@ public final class AutomationExecutor {
                 state.put("elytra.arrival.y", player.getY());
                 state.put("elytra.arrival.z", player.getZ());
                 state.put("elytra.arrival.fall_flying", true);
-                String rocketId = stringParam(state, "elytra.flight.rocket_item", "minecraft:firework_rocket");
                 state.put("elytra.flight.rocket_after", countInventory(player.getInventory(), rocketId));
+                int initialRockets = intState(state, "elytra.rocket.before", countInventory(player.getInventory(), rocketId));
+                int finalRockets = countInventory(player.getInventory(), rocketId);
+                state.put("result.rockets_consumed", Math.max(0, initialRockets - finalRockets));
+                state.put("result.rockets_approved_maximum", intState(state, "elytra.flight.max_rockets", 0));
                 state.put("result.action", "SUCCESS");
                 state.put("result.validation.status", "passed");
                 state.put("result.validation.fact", "The requested radius was reached while Minecraft confirmed fall-flying.");
@@ -6598,20 +6826,6 @@ public final class AutomationExecutor {
         };
     }
 
-    private boolean removeInventoryItems(PlayerInventory inventory, String itemId, int amount) {
-        int remaining = amount;
-        for (int i = 0; i < inventory.size() && remaining > 0; i++) {
-            ItemStack stack = inventory.getStack(i);
-            if (stack.isEmpty() || !itemMatches(stack, itemId)) {
-                continue;
-            }
-            int removed = Math.min(remaining, stack.getCount());
-            stack.decrement(removed);
-            remaining -= removed;
-        }
-        return remaining == 0;
-    }
-
     private int findHotbarSlot(PlayerInventory inventory, String itemId) {
         for (int i = 0; i < 9; i++) {
             ItemStack stack = inventory.getStack(i);
@@ -6622,24 +6836,17 @@ public final class AutomationExecutor {
         return -1;
     }
 
-    private int moveInventoryItemToSelectedHotbar(PlayerInventory inventory, String itemId) {
-        int selected = Math.max(0, Math.min(8, inventory.selectedSlot));
-        for (int i = 9; i < inventory.size(); i++) {
-            ItemStack stack = inventory.getStack(i);
-            if (stack.isEmpty() || !itemMatches(stack, itemId)) {
-                continue;
-            }
-            ItemStack selectedStack = inventory.getStack(selected).copy();
-            inventory.setStack(selected, stack.copy());
-            inventory.setStack(i, selectedStack);
-            return selected;
-        }
-        return -1;
-    }
-
     private boolean startContainerTransfer(ClientPlayerInteractionManager interactionManager, ClientPlayerEntity player, int slotIndex, Map<String, Object> params, Map<String, Object> state, String direction) {
         if (player == null || player.currentScreenHandler == null || interactionManager == null) {
             state.put("container.transfer.failure_reason", "no_open_container");
+            return false;
+        }
+        if (player.currentScreenHandler == player.playerScreenHandler) {
+            state.put("container.transfer.failure_reason", "container_screen_not_open");
+            return false;
+        }
+        if (slotIndex < 0 || slotIndex >= player.currentScreenHandler.slots.size()) {
+            state.put("container.transfer.failure_reason", "source_slot_out_of_range");
             return false;
         }
         Slot sourceSlot = player.currentScreenHandler.slots.get(slotIndex);
@@ -6661,31 +6868,38 @@ public final class AutomationExecutor {
             state.put("container.transfer.failure_reason", "unknown_item_id");
             return false;
         }
-        int totalSlots = player.currentScreenHandler.slots.size();
-        int playerInventoryStart = Math.max(0, totalSlots - 36);
-        boolean sourceIsPlayer = slotIndex >= playerInventoryStart;
-        boolean destinationPlayer = !sourceIsPlayer;
-        int requested = intParam(params, "count.value", 0);
+        boolean sourceIsPlayer = sourceSlot.inventory == player.getInventory();
+        String normalizedDirection = "store".equalsIgnoreCase(direction) ? "store" : "take";
+        if (("store".equals(normalizedDirection) && !sourceIsPlayer)
+                || ("take".equals(normalizedDirection) && sourceIsPlayer)) {
+            state.put("container.transfer.failure_reason", "source_region_mismatch");
+            state.put("container.transfer.expected_source_region", "store".equals(normalizedDirection) ? "player" : "container");
+            state.put("container.transfer.actual_source_region", sourceIsPlayer ? "player" : "container");
+            return false;
+        }
+        boolean destinationPlayer = "take".equals(normalizedDirection);
+        int requested = intParam(params, "expected.count", intParam(params, "count.value", 0));
         int counter = intParam(params, "state.counter", 0);
         int remaining = requested > 0 ? Math.max(1, requested - counter) : sourceStack.getCount();
         int transferCount = Math.min(sourceStack.getCount(), remaining);
         int beforeInventoryCount = countInventory(player.getInventory(), itemId);
         state.put("container.transfer.active", true);
         state.put("container.transfer.phase", "await_screen_sync");
-        state.put("container.transfer.wait_ticks", 3);
+        state.put("container.transfer.wait_ticks", 20);
+        state.put("container.transfer.elapsed_ticks", 0);
         state.put("container.transfer.slot", slotIndex);
         state.put("container.transfer.sync_id", player.currentScreenHandler.syncId);
         state.put("container.transfer.item_id", itemId);
         state.put("container.transfer.source_count", sourceStack.getCount());
         state.put("container.transfer.expected_count", transferCount);
-        state.put("container.transfer.direction", direction);
+        state.put("container.transfer.direction", normalizedDirection);
         state.put("container.transfer.before_inventory_count", beforeInventoryCount);
         state.put("container.transfer.source_region", sourceIsPlayer ? "player" : "container");
         state.put("result.action", "STARTED");
         AutomationReporter.mem("container.transfer.slot", slotIndex);
         AutomationReporter.mem("container.transfer.item_id", itemId);
         AutomationReporter.mem("container.transfer.expected_count", transferCount);
-        AutomationReporter.mem("container.transfer.direction", direction);
+        AutomationReporter.mem("container.transfer.direction", normalizedDirection);
         boolean precise = transferCount > 0 && transferCount < sourceStack.getCount();
         boolean clicked = precise
                 ? clickExactContainerTransfer(interactionManager, player, slotIndex, itemId, transferCount, destinationPlayer)
@@ -6723,11 +6937,9 @@ public final class AutomationExecutor {
 
     private int findTransferDestinationSlot(ClientPlayerEntity player, String itemId, boolean playerInventory, int count) {
         int totalSlots = player.currentScreenHandler.slots.size();
-        int playerInventoryStart = Math.max(0, totalSlots - 36);
-        int start = playerInventory ? playerInventoryStart : 0;
-        int end = playerInventory ? totalSlots : playerInventoryStart;
-        for (int i = start; i < end; i++) {
+        for (int i = 0; i < totalSlots; i++) {
             Slot slot = player.currentScreenHandler.slots.get(i);
+            if (slot == null || (slot.inventory == player.getInventory()) != playerInventory) continue;
             if (slot == null || !slot.hasStack()) {
                 continue;
             }
@@ -6736,9 +6948,9 @@ public final class AutomationExecutor {
                 return i;
             }
         }
-        for (int i = start; i < end; i++) {
+        for (int i = 0; i < totalSlots; i++) {
             Slot slot = player.currentScreenHandler.slots.get(i);
-            if (slot != null && !slot.hasStack()) {
+            if (slot != null && (slot.inventory == player.getInventory()) == playerInventory && !slot.hasStack()) {
                 return i;
             }
         }
@@ -6758,38 +6970,79 @@ public final class AutomationExecutor {
         if (!Boolean.TRUE.equals(state.get("container.transfer.active"))) {
             return;
         }
-        int remaining = intState(state, "container.transfer.wait_ticks", 0);
-        if (remaining > 0) {
-            remaining--;
-            state.put("container.transfer.wait_ticks", remaining);
-            if (execution.activeNodeId != null) {
-                AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "container.transfer.phase", "flow_phase", "[wait]", "container.transfer.phase", "await_screen_sync");
-                AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "container.transfer.wait", "flow_metric", "[info]", "container.transfer.wait_ticks", remaining);
-            }
-            return;
-        }
         String itemId = stringParam(state, "container.transfer.item_id", "");
         int before = intState(state, "container.transfer.before_inventory_count", 0);
         int expected = intState(state, "container.transfer.expected_count", 1);
         String sourceRegion = stringParam(state, "container.transfer.source_region", "");
-        int after = player == null || itemId.isBlank() ? before : countInventory(player.getInventory(), itemId);
-        int moved = "player".equals(sourceRegion) ? Math.max(0, before - after) : Math.max(0, after - before);
-        boolean success = moved >= expected;
+        int syncId = intState(state, "container.transfer.sync_id", -1);
+        int slotIndex = intState(state, "container.transfer.slot", -1);
+        if (player == null || player.currentScreenHandler == null
+                || player.currentScreenHandler == player.playerScreenHandler
+                || player.currentScreenHandler.syncId != syncId) {
+            finishContainerTransfer(execution, state, before, before, 0, expected, false,
+                    "container_screen_closed_before_sync");
+            return;
+        }
+        int after = itemId.isBlank() ? before : countInventory(player.getInventory(), itemId);
+        int inventoryMoved = "player".equals(sourceRegion) ? Math.max(0, before - after) : Math.max(0, after - before);
+        int sourceBefore = intState(state, "container.transfer.source_count", 0);
+        int sourceAfter = sourceBefore;
+        if (slotIndex >= 0 && slotIndex < player.currentScreenHandler.slots.size()) {
+            Slot slot = player.currentScreenHandler.slots.get(slotIndex);
+            sourceAfter = slot == null || !slot.hasStack() || !itemMatches(slot.getStack(), itemId)
+                    ? 0 : slot.getStack().getCount();
+        }
+        int sourceMoved = Math.max(0, sourceBefore - sourceAfter);
+        int moved = Math.min(inventoryMoved, sourceMoved);
+        int elapsed = intState(state, "container.transfer.elapsed_ticks", 0) + 1;
+        int remaining = Math.max(0, intState(state, "container.transfer.wait_ticks", 0) - 1);
+        state.put("container.transfer.elapsed_ticks", elapsed);
+        state.put("container.transfer.wait_ticks", remaining);
+        if (moved > 0 && elapsed >= 2) {
+            finishContainerTransfer(execution, state, before, after, moved, expected, true, "");
+            return;
+        }
+        if (execution.activeNodeId != null) {
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "container.transfer.phase", "flow_phase", "[wait]", "container.transfer.phase", "await_server_inventory_sync");
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "container.transfer.wait", "flow_metric", "[info]", "container.transfer.wait_ticks", remaining);
+        }
+        if (remaining > 0) return;
+        finishContainerTransfer(execution, state, before, after, moved, expected, false,
+                "server_inventory_delta_not_confirmed");
+    }
+
+    private void finishContainerTransfer(
+            ActiveExecution execution,
+            Map<String, Object> state,
+            int before,
+            int after,
+            int moved,
+            int expected,
+            boolean progressed,
+            String failureReason
+    ) {
+        boolean complete = moved >= expected;
         state.put("container.transfer.after_inventory_count", after);
         state.put("result.transfer.moved_count", moved);
-        state.put("result.action", success ? "SUCCESS" : "FAIL");
+        state.put("result.transfer.requested_count", expected);
+        state.put("result.transfer.remaining_count", Math.max(0, expected - moved));
+        state.put("result.action", complete ? "SUCCESS" : progressed ? "PARTIAL" : "FAIL");
+        state.put("result.validation.status", progressed ? "passed" : "failed");
+        state.put("result.validation.fact", progressed
+                ? "The open screen handler confirmed the source-slot and player-inventory deltas."
+                : "The open screen handler did not confirm a matching source-slot and player-inventory delta.");
         AutomationReporter.mem("container.transfer.after_inventory_count", after);
         AutomationReporter.mem("result.transfer.moved_count", moved);
-        AutomationReporter.mem("result.action", success ? "SUCCESS" : "FAIL");
+        AutomationReporter.mem("result.action", complete ? "SUCCESS" : progressed ? "PARTIAL" : "FAIL");
         if (execution.activeNodeId != null) {
             AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "container.transfer.before", "flow_metric", "[info]", "container.transfer.before_inventory_count", before);
             AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "container.transfer.after", "flow_metric", "[info]", "container.transfer.after_inventory_count", after);
-            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "container.transfer.moved", "flow_metric", success ? "[done]" : "[fail]", "container.transfer.moved_count", moved + " / " + expected);
+            AutomationCliViewModel.runtimeFlow(execution.frameId, execution.activeNodeId, "container.transfer.moved", "flow_metric", progressed ? "[done]" : "[fail]", "container.transfer.moved_count", moved + " / " + expected);
         }
         clearContainerTransferState(state);
-        if (!success) {
+        if (!progressed) {
             state.put("container.transfer.failed", true);
-            state.put("container.transfer.failure_reason", "server_inventory_delta_not_confirmed");
+            state.put("container.transfer.failure_reason", failureReason);
         }
         execution.activeNodeId = null;
         execution.activeNodeLabel = null;
@@ -6800,6 +7053,7 @@ public final class AutomationExecutor {
         state.remove("container.transfer.active");
         state.remove("container.transfer.phase");
         state.remove("container.transfer.wait_ticks");
+        state.remove("container.transfer.elapsed_ticks");
     }
 
     private boolean itemMatches(ItemStack stack, String itemId) {
@@ -7498,17 +7752,16 @@ public final class AutomationExecutor {
         return count;
     }
 
-    private int findMatchingOpenScreenSlot(ClientPlayerEntity player, String itemId, boolean containerOnly) {
+    private int findMatchingOpenScreenSlot(ClientPlayerEntity player, String itemId, boolean containerOnly, boolean playerOnly) {
         if (player == null || player.currentScreenHandler == null) {
             return -1;
         }
+        if (containerOnly && playerOnly) return -1;
         int totalSlots = player.currentScreenHandler.slots.size();
-        int playerInventoryStart = Math.max(0, totalSlots - 36);
         for (int i = 0; i < totalSlots; i++) {
-            if (containerOnly && i >= playerInventoryStart) {
-                continue;
-            }
             Slot slot = player.currentScreenHandler.slots.get(i);
+            boolean playerSlot = slot != null && slot.inventory == player.getInventory();
+            if ((containerOnly && playerSlot) || (playerOnly && !playerSlot)) continue;
             if (slot == null || !slot.hasStack()) {
                 continue;
             }
@@ -7728,7 +7981,7 @@ public final class AutomationExecutor {
                 8_000_000L,
                 escaping ? 1.05D : 1.18D,
                 1.25D,
-                true,
+                Boolean.TRUE.equals(state.get("move.nav.allow_swim")),
                 Boolean.TRUE.equals(state.get("move.nav.allow_interactions")),
                 Boolean.TRUE.equals(state.get("move.nav.allow_parkour")),
                 3,
@@ -8537,6 +8790,20 @@ public final class AutomationExecutor {
             return;
         }
 
+        if (decision.phase().startsWith("climb_")) {
+            player.setSprinting(false);
+            facePosition(player, decision.lookTarget());
+            setHeldInput("forward", true);
+            setHeldInput("back", false);
+            setHeldInput("left", false);
+            setHeldInput("right", false);
+            setHeldInput("sprint", false);
+            setHeldInput("jump", "climb_up".equals(decision.phase()));
+            setHeldInput("sneak", "climb_down".equals(decision.phase()));
+            applyPlayerInputState(player);
+            return;
+        }
+
         if (player.hasVehicle()) {
             setHeldInput("jump", decision.jump());
             player.setSprinting(false);
@@ -8554,9 +8821,13 @@ public final class AutomationExecutor {
 
     private void applySwimToward(ClientPlayerEntity player, Vec3d direction, Vec3d lookTarget) {
         Vec3d normalized = direction.lengthSquared() < 1.0E-4D ? Vec3d.ZERO : direction.normalize();
-        player.setSprinting(false);
-        setHeldInput("forward", normalized.horizontalLengthSquared() > 1.0E-4D);
-        setHeldInput("sprint", false);
+        boolean advancing = normalized.horizontalLengthSquared() > 1.0E-4D;
+        player.setSprinting(advancing);
+        setHeldInput("forward", advancing);
+        setHeldInput("back", false);
+        setHeldInput("left", false);
+        setHeldInput("right", false);
+        setHeldInput("sprint", advancing);
         facePosition(player, lookTarget);
         if (normalized.y > 0.08D) {
             setHeldInput("jump", true);
@@ -8565,6 +8836,17 @@ public final class AutomationExecutor {
         }
         setHeldInput("sneak", normalized.y < -0.08D);
         applyPlayerInputState(player);
+    }
+
+    private boolean routeClimbContext(ClientWorld world, ClientPlayerEntity player, Vec3d target) {
+        if (world == null || player == null) return false;
+        BlockPos feet = player.getBlockPos();
+        BlockPos targetFeet = BlockPos.ofFloored(target);
+        return player.isClimbing()
+                || world.getBlockState(feet).isIn(BlockTags.CLIMBABLE)
+                || world.getBlockState(feet.up()).isIn(BlockTags.CLIMBABLE)
+                || world.getBlockState(targetFeet).isIn(BlockTags.CLIMBABLE)
+                || world.getBlockState(targetFeet.up()).isIn(BlockTags.CLIMBABLE);
     }
 
     private double navigationStopDistance(Map<String, Object> params, Map<String, Object> state, double fallback) {

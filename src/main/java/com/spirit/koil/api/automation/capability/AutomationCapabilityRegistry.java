@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.spirit.koil.api.automation.AutomationRequest;
+import com.spirit.koil.api.automation.input.RawPlayerInputResolver;
 import com.spirit.koil.api.model.ModelToolDefinition;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
@@ -205,11 +206,7 @@ public final class AutomationCapabilityRegistry {
 
     private static JsonObject rawInputSchema(boolean ticks) {
         JsonObject schema = objectSchema();
-        schema.getAsJsonObject("properties").add("key", enumString(
-                "forward", "back", "left", "right", "jump", "sneak", "sprint",
-                "attack", "use", "inventory", "chat", "swap_hands", "drop",
-                "pick_block", "perspective", "w", "a", "s", "d", "space",
-                "shift", "ctrl", "left_click", "right_click", "e", "t", "f", "q"));
+        schema.getAsJsonObject("properties").add("key", string(1, 32));
         if (ticks) schema.getAsJsonObject("properties").add("ticks", number(1, 1200));
         require(schema, "key");
         return schema;
@@ -222,9 +219,12 @@ public final class AutomationCapabilityRegistry {
                 rawInputSchema(true), List.of("key"), List.of("ticks"),
                 List.of("world_loaded", "player_available", "no_conflicting_automation"),
                 Set.of("synthetic_player_input"), false, Duration.ofSeconds(10),
-                arguments -> execute("input.tap", "Tap " + stringValue(arguments, "key", ""),
-                        "flow/core/tap_input.ktl input.key=" + stringValue(arguments, "key", "")
-                                + " count.value=" + wholeNumber(arguments, "ticks", 2))
+                arguments -> {
+                    String key = validatedRawInputKey(arguments);
+                    return execute("input.tap", "Tap " + key,
+                            "flow/core/tap_input.ktl input.key=" + key
+                                    + " count.value=" + wholeNumber(arguments, "ticks", 2));
+                }
         );
     }
 
@@ -235,9 +235,12 @@ public final class AutomationCapabilityRegistry {
                 rawInputSchema(true), List.of("key"), List.of("ticks"),
                 List.of("world_loaded", "player_available", "no_conflicting_automation"),
                 Set.of("synthetic_player_input"), false, Duration.ofMinutes(1),
-                arguments -> execute("input.hold", "Hold " + stringValue(arguments, "key", ""),
-                        "flow/core/hold_input.ktl input.key=" + stringValue(arguments, "key", "")
-                                + " count.value=" + wholeNumber(arguments, "ticks", 20))
+                arguments -> {
+                    String key = validatedRawInputKey(arguments);
+                    return execute("input.hold", "Hold " + key,
+                            "flow/core/hold_input.ktl input.key=" + key
+                                    + " count.value=" + wholeNumber(arguments, "ticks", 20));
+                }
         );
     }
 
@@ -247,8 +250,11 @@ public final class AutomationCapabilityRegistry {
                 "Release one Koil-owned normal Minecraft player input through KTL.",
                 rawInputSchema(false), List.of("key"), List.of(),
                 List.of("player_available"), Set.of("releases_automation_input"), false, Duration.ofSeconds(5),
-                arguments -> execute("input.release", "Release " + stringValue(arguments, "key", ""),
-                        "flow/core/release_input.ktl input.key=" + stringValue(arguments, "key", ""))
+                arguments -> {
+                    String key = validatedRawInputKey(arguments);
+                    return execute("input.release", "Release " + key,
+                            "flow/core/release_input.ktl input.key=" + key);
+                }
         );
     }
 
@@ -474,6 +480,7 @@ public final class AutomationCapabilityRegistry {
         properties.add("elytra", string(3, 128));
         properties.add("rocket", string(3, 128));
         properties.add("use_rocket", bool());
+        properties.add("max_rockets", number(0, 64));
         properties.add("x", number(-30_000_000.0D, 30_000_000.0D));
         properties.add("y", number(-2048.0D, 2048.0D));
         properties.add("z", number(-30_000_000.0D, 30_000_000.0D));
@@ -482,10 +489,10 @@ public final class AutomationCapabilityRegistry {
         require(schema, "x", "y", "z");
         return confirmedDefinition(
                 "transport.elytra_flight",
-                "Equip a verified usable elytra, launch through the normal fall-flying action, optionally use one exact firework rocket, and steer with bounded camera easing until the requested target radius is reached.",
+                "Equip a verified usable elytra, launch through the normal fall-flying action, optionally use up to the approved number of exact firework rockets when speed requires another boost, and steer with bounded camera easing until the requested target radius is reached.",
                 schema,
                 List.of("x", "y", "z"),
-                List.of("elytra", "rocket", "use_rocket", "arrival_radius", "turn_speed"),
+                List.of("elytra", "rocket", "use_rocket", "max_rockets", "arrival_radius", "turn_speed"),
                 List.of("world_loaded", "player_available", "usable_elytra_available", "launch_clearance"),
                 Set.of("changes_equipment", "moves_player", "glides_player", "may_consume_firework", "changes_player_orientation"),
                 false,
@@ -494,10 +501,14 @@ public final class AutomationCapabilityRegistry {
                     String elytra = arguments.has("elytra") ? resourceId(arguments, "elytra") : "minecraft:elytra";
                     String rocket = arguments.has("rocket") ? resourceId(arguments, "rocket") : "minecraft:firework_rocket";
                     boolean useRocket = booleanValue(arguments, "use_rocket", true);
+                    int maxRockets = arguments.has("max_rockets")
+                            ? Math.max(0, Math.min(64, arguments.get("max_rockets").getAsInt()))
+                            : useRocket ? 4 : 0;
                     String invocation = "movement/transport/elytra_flight.ktl"
                             + " elytra.item=" + elytra
                             + " rocket.item=" + rocket
                             + " flight.use_rocket=" + useRocket
+                            + " flight.max_rockets=" + maxRockets
                             + " target.x=" + decimal(arguments.get("x").getAsDouble())
                             + " target.y=" + decimal(arguments.get("y").getAsDouble())
                             + " target.z=" + decimal(arguments.get("z").getAsDouble())
@@ -1271,6 +1282,17 @@ public final class AutomationCapabilityRegistry {
             throw new AutomationCapabilityException("invalid_command", "Minecraft command is empty.");
         }
         return command;
+    }
+
+    private static String validatedRawInputKey(JsonObject arguments) {
+        String key = RawPlayerInputResolver.normalize(stringValue(arguments, "key", ""));
+        if (!RawPlayerInputResolver.syntacticallySupported(key)) {
+            throw new AutomationCapabilityException(
+                    "unsupported_input",
+                    "'" + key + "' is not a supported keyboard, mouse, or semantic player input."
+            );
+        }
+        return key;
     }
 
     private static String decimal(double value) {

@@ -3,6 +3,7 @@ package com.spirit.koil.api.chat;
 import com.spirit.koil.api.design.uiColorVal;
 import com.spirit.koil.api.model.chat.ModelChatIdentity;
 import com.spirit.koil.api.model.chat.ModelActivityPresentation;
+import com.spirit.koil.api.model.chat.ModelRequestMetricsPresentation;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
@@ -132,10 +133,7 @@ public final class ModelChatMessageBridge {
         TextRenderer renderer = client.textRenderer;
         int targetWidth = Math.max(180, Math.min(460, client.getWindow().getScaledWidth() - 24));
         List<Text> tooltip = new ArrayList<>(trace.size() + 1);
-        MutableText title = Text.literal("Activity trace").formatted(net.minecraft.util.Formatting.WHITE);
-        while (renderer.getWidth(title) < targetWidth) {
-            title.append(Text.literal(" "));
-        }
+        MutableText title = traceTitle(renderer, targetWidth, indicator);
         tooltip.add(title);
         for (Text line : trace) {
             for (net.minecraft.text.OrderedText wrapped : renderer.wrapLines(line, targetWidth)) {
@@ -147,6 +145,25 @@ public final class ModelChatMessageBridge {
         context.drawTooltip(renderer, tooltip, Optional.empty(), mouseX, mouseY);
         context.getMatrices().pop();
         return true;
+    }
+
+    private static MutableText traceTitle(TextRenderer renderer, int targetWidth, MessageIndicator indicator) {
+        MutableText title = Text.literal("Activity trace").formatted(net.minecraft.util.Formatting.WHITE);
+        ModelActivityPresentation.TraceSnapshot trace;
+        synchronized (TRACE_LOCK) {
+            trace = TYPED_TRACES.get(indicator);
+        }
+        if (trace == null) return title;
+        long end = trace.completedAtMillis() > 0L ? trace.completedAtMillis() : trace.createdAtMillis();
+        String metrics = ModelRequestMetricsPresentation.tokensPerSecondLabel(trace.usage())
+                + "  " + ModelRequestMetricsPresentation.formatElapsedMillis(trace.createdAtMillis(), end);
+        int desiredGap = Math.max(renderer.getWidth("  "),
+                targetWidth - renderer.getWidth(title) - renderer.getWidth(metrics));
+        StringBuilder gap = new StringBuilder();
+        while (renderer.getWidth(gap.toString()) < desiredGap) gap.append(' ');
+        title.append(Text.literal(gap.toString()))
+                .append(Text.literal(metrics).formatted(net.minecraft.util.Formatting.GRAY));
+        return title;
     }
 
     private static Text fromOrderedText(net.minecraft.text.OrderedText ordered) {

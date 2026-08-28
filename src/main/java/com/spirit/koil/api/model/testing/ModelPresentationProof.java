@@ -6,6 +6,8 @@ import com.spirit.koil.api.model.ModelActivityState;
 import com.spirit.koil.api.model.ModelAgentCapabilityProfile;
 import com.spirit.koil.api.model.ModelSemanticPalette;
 import com.spirit.koil.api.model.chat.ModelGenerationChatPanel;
+import com.spirit.koil.api.model.chat.ModelActivityPresentation;
+import com.spirit.koil.api.model.chat.ModelGenerationHudState;
 import com.spirit.koil.api.model.chat.ModelPopupScrollbar;
 import com.spirit.koil.api.model.chat.ModelRequestStatusPresentation;
 import com.spirit.koil.api.model.ModelRequestState;
@@ -18,10 +20,12 @@ import com.spirit.koil.api.automation.AutomationRuntimeStatus;
 import com.spirit.koil.api.model.presence.ModelPresenceState;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolResult;
+import com.spirit.koil.api.model.ModelUsage;
 import com.google.gson.JsonObject;
 import net.minecraft.text.Text;
 
 import java.util.Map;
+import java.util.List;
 
 /** Cross-surface contract proofs that do not require a running world. */
 public final class ModelPresentationProof {
@@ -34,6 +38,7 @@ public final class ModelPresentationProof {
         provesScrollbarGeometry();
         provesLifetimeCounters();
         provesExecutorToolStatusStyling();
+        provesCompleteStructuredThoughtEvidence();
         provesGroundedAskBoundary();
         provesFinalFormatting();
         System.out.println("Model presentation proof passed");
@@ -136,6 +141,20 @@ public final class ModelPresentationProof {
                 "Executor tool activity did not use the shared thinking-tree branch");
         require(json.contains("\"text\":\" | \"") && json.contains("\"color\":\"dark_gray\""),
                 "Executor tool separator inherited the failure color");
+        AutomationRuntimeStatus.idle("");
+        JsonObject searchArguments = new JsonObject();
+        searchArguments.addProperty("query", "container transfer");
+        AutomationChatHudState.toolStarted(new ModelToolCall(
+                "workspace-proof", "workspace.search", searchArguments));
+        require(AutomationChatHudState.executorStatusLine().getString().contains("Searching")
+                        && AutomationChatHudState.executorStatusLine().getString().contains("Workspace Search"),
+                "Executor popup did not expose the live semantic status of a non-KTL tool");
+        AutomationChatHudState.toolFinished(
+                new ModelToolCall("workspace-proof", "workspace.search", searchArguments),
+                new ModelToolResult("workspace-proof", "workspace.search", "completed", new JsonObject(), "", "found 2 matches")
+        );
+        require(AutomationChatHudState.executorStatusLine().getString().isBlank(),
+                "Executor popup retained a live status after the non-KTL tool finished");
         ModelPresenceState.updateAutomation(false, "idle");
         AutomationRuntimeStatus.idle("");
         require(AutomationChatHudState.executorStatusLine().getString().isBlank(),
@@ -172,6 +191,71 @@ public final class ModelPresentationProof {
             require(tool.sideEffects().isEmpty(), "grounded /ask received side effects: " + tool.id());
             require(!tool.confirmationRequired(), "read-only grounded tool unexpectedly requires approval");
         });
+    }
+
+    private static void provesCompleteStructuredThoughtEvidence() {
+        JsonObject arguments = new JsonObject();
+        arguments.addProperty("target", "12 64 -8");
+        JsonObject started = new JsonObject();
+        started.addProperty("toolId", "movement.move_to");
+        started.add("arguments", arguments);
+        JsonObject metrics = new JsonObject();
+        metrics.addProperty("distance_traveled", 12.5D);
+        metrics.addProperty("distance_remaining", 7.5D);
+        JsonObject before = new JsonObject();
+        before.addProperty("position", "0 64 0");
+        JsonObject after = new JsonObject();
+        after.addProperty("position", "12 64 -8");
+        JsonObject structured = new JsonObject();
+        structured.add("before", before);
+        structured.add("after", after);
+        structured.add("metrics", metrics);
+        structured.addProperty("objective_reached", false);
+        JsonObject finished = new JsonObject();
+        finished.addProperty("toolId", "movement.move_to");
+        finished.addProperty("status", "partial");
+        finished.addProperty("detail", "movement progressed");
+        finished.add("structuredResult", structured);
+        finished.addProperty("content", "bounded provider payload that is summarized rather than dumped");
+        String timeline = ModelActivityPresentation.timeline(
+                "Reach the destination",
+                List.of(
+                        new ModelGenerationHudState.ActivityEvent(
+                                ModelGenerationHudState.ActivityEventType.TOOL_START,
+                                ModelActivityState.NAVIGATING,
+                                "Move To",
+                                1_100L,
+                                "tool-1",
+                                started
+                        ),
+                        new ModelGenerationHudState.ActivityEvent(
+                                ModelGenerationHudState.ActivityEventType.RESULT,
+                                ModelActivityState.OBSERVING,
+                                "movement.move_to — partial",
+                                1_600L,
+                                "result-1",
+                                finished
+                        )
+                ),
+                1_000L
+        );
+        require(timeline.contains("Structured Result / Metrics / Distance traveled")
+                        && timeline.contains("12.5")
+                        && timeline.contains("Structured Result / Before / Position")
+                        && timeline.contains("Objective reached")
+                        && timeline.contains("Content") && timeline.contains("characters")
+                        && timeline.contains("Event") && timeline.contains("result-1")
+                        && timeline.contains("Time") && timeline.contains("+600ms"),
+                "thought tree did not retain bounded structured tool evidence and timing");
+        String requestMetrics = ModelActivityPresentation.requestMetrics(
+                new ModelUsage(120, 30, 80, 40L, 250L, 15.25D),
+                1_000L,
+                3_000L
+        );
+        require(requestMetrics.contains("Prompt tokens") && requestMetrics.contains("120")
+                        && requestMetrics.contains("Average speed") && requestMetrics.contains("15.25")
+                        && requestMetrics.contains("Elapsed") && requestMetrics.contains("2.000s"),
+                "thought tree request metrics did not explain the displayed numbers");
     }
 
     private static void provesFinalFormatting() {

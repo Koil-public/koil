@@ -229,8 +229,8 @@ public final class ModelRequestMetricsPresentation {
         appendValue(line, Integer.toString(tools));
         appendValue(line, Long.toString(ttft));
         appendValue(line, ModelContextWindowState.from(usage, maximumContextTokens)
-                .map(state -> " " + state.remainingPercent() + "%")
-                .orElse("100%"));
+                .map(state -> state.remainingPercent() + "%")
+                .orElse("--"));
         return line;
     }
 
@@ -286,6 +286,17 @@ public final class ModelRequestMetricsPresentation {
                 ? snapshot.completedAtMillis()
                 : Math.max(snapshot.createdAtMillis(), nowMillis);
         return formatElapsedMillis(snapshot.createdAtMillis(), end);
+    }
+
+    /** Average generated tokens per second, intentionally shown as a bare number. */
+    public static String tokensPerSecondLabel(ModelUsage usage) {
+        double value = usage == null ? 0.0D : Math.max(0.0D, usage.tokensPerSecond());
+        return value <= 0.0D ? "0" : String.format(java.util.Locale.ROOT, "%.2f", value);
+    }
+
+    public static String compactRateAndElapsed(ModelGenerationHudState.Snapshot snapshot, long nowMillis) {
+        ModelUsage usage = snapshot == null ? ModelUsage.empty() : snapshot.usage();
+        return tokensPerSecondLabel(usage) + "  " + elapsedLabel(snapshot, nowMillis);
     }
 
     public static String formatElapsedMillis(long startedAtMillis, long endedAtMillis) {

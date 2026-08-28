@@ -24,6 +24,7 @@ import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.model.planning.AutomationThinkingPolicy;
 import com.spirit.koil.api.model.planning.AutomationToolCallLatencyPolicy;
+import com.spirit.koil.api.model.planning.InformationToolCallLatencyPolicy;
 import com.spirit.koil.api.model.prompt.LocalModelAutomationPrompt;
 import com.spirit.koil.api.model.tool.ModelWorkspaceRegistry;
 import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
@@ -40,6 +41,8 @@ import com.spirit.koil.api.model.ModelConversation;
 import com.spirit.koil.api.model.ModelContextWindowState;
 import com.spirit.koil.api.model.ModelMessage;
 import com.spirit.koil.api.model.ModelRequestState;
+import com.spirit.koil.api.model.ModelActivityState;
+import com.spirit.koil.api.model.ModelExecutionEvent;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolResult;
 import com.spirit.koil.api.model.ModelUsage;
@@ -92,6 +95,10 @@ public final class LocalModelFoundationProof {
                         && "01:05".equals(ModelRequestMetricsPresentation.formatElapsedMillis(1_000L, 66_000L))
                         && "1:01:01".equals(ModelRequestMetricsPresentation.formatElapsedMillis(1_000L, 3_662_000L)),
                 "bottom model elapsed timer formatting was not stable across minute/hour boundaries");
+        require("18.75".equals(ModelRequestMetricsPresentation.tokensPerSecondLabel(
+                        new ModelUsage(100, 25, 0, 0, 0, 18.75D)))
+                        && "0".equals(ModelRequestMetricsPresentation.tokensPerSecondLabel(ModelUsage.empty())),
+                "model popup token-rate label did not preserve the provider average");
         require(ModelGenerationChatPanel.statusHighlightPixelOffset("Thinking", true) == -1
                         && ModelGenerationChatPanel.statusHighlightPixelOffset("Starting", true) == -1
                         && ModelGenerationChatPanel.statusHighlightPixelOffset("Thinking", false) == 0
@@ -108,6 +115,15 @@ public final class LocalModelFoundationProof {
                 "final model message indicator did not retain a styled safe activity hierarchy");
         UUID elapsedRequest = UUID.randomUUID();
         ModelGenerationHudState.begin(elapsedRequest, "elapsed timer proof");
+        require(ModelRequestMetricsPresentation.bottomHeader(
+                        ModelGenerationHudState.visibleSnapshot(), "proof", 0, 1_000
+                ).getString().endsWith(" | --"),
+                "unknown provider context was falsely presented as a full 100% window");
+        ModelGenerationHudState.usage(elapsedRequest, new ModelUsage(100, 25, 0, 0, 0, 18.75D));
+        require(ModelRequestMetricsPresentation.bottomHeader(
+                        ModelGenerationHudState.visibleSnapshot(), "proof", 0, 1_000
+                ).getString().endsWith(" | 88%"),
+                "provider-reported context occupancy was not retained in the live header");
         ModelGenerationHudState.state(elapsedRequest, ModelRequestState.COMPLETED, "done");
         var elapsedSnapshot = ModelGenerationHudState.visibleSnapshot();
         require(elapsedSnapshot != null
@@ -118,7 +134,9 @@ public final class LocalModelFoundationProof {
                         ).equals(ModelRequestMetricsPresentation.formatElapsedMillis(
                                 elapsedSnapshot.createdAtMillis(),
                                 elapsedSnapshot.completedAtMillis()
-                        )),
+                        ))
+                        && ModelRequestMetricsPresentation.compactRateAndElapsed(
+                                elapsedSnapshot, elapsedSnapshot.completedAtMillis()).startsWith("18.75  "),
                 "bottom model elapsed timer did not freeze at the terminal timestamp");
         ModelGenerationHudState.dismiss(elapsedRequest);
         String compactAutomationPrompt = LocalModelAutomationPrompt.rules(false, false);
@@ -281,7 +299,7 @@ public final class LocalModelFoundationProof {
         );
         require(!fittedBottomHeader.getString().contains(oversizedModelId)
                         && fittedBottomHeader.getString().startsWith("Model | session kms-")
-                        && fittedBottomHeader.getString().endsWith("| 0 | 0 | 0 | 0 | 100%"),
+                        && fittedBottomHeader.getString().endsWith("| 0 | 0 | 0 | 0 | --"),
                 "narrow bottom metrics culled session/numeric values before the model id");
         Text fittedTopLine = ModelRequestMetricsPresentation.automationTopLineFitted(
                 ModelGenerationHudState.visibleSnapshot(),
@@ -297,7 +315,7 @@ public final class LocalModelFoundationProof {
                         && !fittedTopLine.getString().contains("kms-")
                         && !fittedTopLine.getString().contains("kes-")
                         && fittedTopLine.getString().contains("D-T | Plan")
-                        && fittedTopLine.getString().endsWith("| 0 | 0 | 0 | 0 | 100%"),
+                        && fittedTopLine.getString().endsWith("| 0 | 0 | 0 | 0 | --"),
                 "narrow Automation metrics culled mode/numeric values before the model id");
         Text sessionLine = ModelRequestMetricsPresentation.automationSessionLine(
                 ModelGenerationHudState.visibleSnapshot(),
@@ -387,6 +405,8 @@ public final class LocalModelFoundationProof {
                 "workspace read tool was not registered");
         require(ModelWorkspaceToolRegistry.supports("workspace.write"),
                 "workspace write tool was not registered");
+        require(ModelWorkspaceToolRegistry.supports("workspace.append"),
+                "workspace append tool was not registered");
         require(ModelWorkspaceToolRegistry.supports("workspace.stat")
                         && ModelWorkspaceToolRegistry.supports("workspace.mkdir")
                         && ModelWorkspaceToolRegistry.supports("workspace.copy")
@@ -468,6 +488,10 @@ public final class LocalModelFoundationProof {
                         && LocalModelSystemPrompt.directAutomationResultPrompt().contains("latest structured tool result")
                         && LocalModelSystemPrompt.directAutomationResultPrompt().contains("§aCompleted§r"),
                 "verified direct-action final response lost its compact evidence/formatting contract");
+        require(LocalModelSystemPrompt.directInformationToolPrompt().length() < 1_800
+                        && LocalModelSystemPrompt.directInformationToolPrompt().contains("exactly one supplied read-only tool")
+                        && LocalModelSystemPrompt.directInformationToolPrompt().contains("Never claim that an action occurred"),
+                "small-model read-only lookup prompt lost its compact permission/evidence contract");
         var jumpThinking = AutomationThinkingPolicy.evaluate("jump", false);
         var jumpTools = LocalModelToolCatalog.toolsForPrompt("jump", jumpThinking.includePlanTool());
         var jumpLatency = AutomationToolCallLatencyPolicy.evaluate(
@@ -557,6 +581,9 @@ public final class LocalModelFoundationProof {
                         "Create a folder, copy a file, then rename a file")
                         .containsAll(java.util.Set.of("workspace.mkdir", "workspace.copy", "workspace.move")),
                 "multi-action file management objective lost required operations");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("append this line to the log file")
+                        .contains("workspace.append"),
+                "append intent did not expose the narrow existing-file append operation");
         require(LocalModelToolCatalog.toolsForPrompt("Tell me about this modded item").stream()
                         .anyMatch(tool -> MinecraftKnowledgeModelToolRegistry.ITEM_TOOL_ID.equals(tool.id())),
                 "modded item detail request lost exact active-registry inspection");
@@ -701,6 +728,184 @@ public final class LocalModelFoundationProof {
         require(LocalModelToolCatalog.toolsForPrompt("Build a 4 by 4 square of oak planks").stream()
                         .anyMatch(tool -> "block.build_pattern".equals(tool.id())),
                 "square-building objective did not expose block.build_pattern");
+        require(LocalModelToolCatalog.toolsForPrompt("vault").stream()
+                        .anyMatch(tool -> "player.jump".equals(tool.id())),
+                "single-word jump synonym did not expose player.jump");
+        require(LocalModelToolCatalog.toolsForPrompt("excavate deepslate").stream()
+                        .anyMatch(tool -> "block.mine".equals(tool.id())),
+                "single-word mining synonym did not expose block.mine");
+        require(LocalModelToolCatalog.toolsForPrompt("loot chest").stream()
+                        .map(com.spirit.koil.api.model.ModelToolDefinition::id)
+                        .filter(id -> id.startsWith("container."))
+                        .toList().equals(java.util.List.of("container.take_item")),
+                "container vocabulary exposed unrelated container mutations");
+        require(LocalModelToolCatalog.toolsForPrompt("stash diamonds chest").stream()
+                        .anyMatch(tool -> "container.store_item".equals(tool.id())),
+                "single-word storage intent did not expose container.store_item");
+        require(LocalModelToolCatalog.toolsForPrompt("eliminate zombie").stream()
+                        .anyMatch(tool -> "entity.kill".equals(tool.id())),
+                "single-word combat synonym did not expose entity.kill");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("grep sessionId java")
+                        .contains("workspace.search"),
+                "workspace shorthand did not become a required search operation");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("cp file mv file")
+                        .containsAll(java.util.Set.of("workspace.copy", "workspace.move")),
+                "filesystem shorthand did not expose copy/move operations");
+        require(LocalModelToolCatalog.toolsForPrompt("github latest docs").stream()
+                        .anyMatch(tool -> com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry.SEARCH.equals(tool.id()))
+                        && LocalModelToolCatalog.toolsForPrompt("github latest docs").stream()
+                        .anyMatch(tool -> com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry.FETCH.equals(tool.id()))
+                        && LocalModelToolCatalog.toolsForPrompt("open https://example.com/docs").stream()
+                        .anyMatch(tool -> com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry.FETCH.equals(tool.id())),
+                "internet routing did not stage search before exact-URL fetch");
+        require(LocalModelToolCatalog.toolsForPrompt("roots").stream()
+                        .anyMatch(tool -> "workspace.roots".equals(tool.id())),
+                "workspace root shorthand did not expose workspace.roots");
+        require(LocalModelToolCatalog.toolsForPrompt("plan").stream()
+                        .anyMatch(tool -> AutomationPlanModelToolRegistry.TOOL_ID.equals(tool.id())),
+                "explicit planning word did not expose automation.plan");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("release")
+                        .contains("input.release_all"),
+                "single-word release did not expose safe input cleanup");
+        require(LocalModelToolCatalog.informationToolsForPrompt("modded item info").stream()
+                        .map(com.spirit.koil.api.model.ModelToolDefinition::id)
+                        .collect(java.util.stream.Collectors.toSet())
+                        .containsAll(java.util.Set.of(
+                                MinecraftKnowledgeModelToolRegistry.ITEM_TOOL_ID,
+                                MinecraftKnowledgeModelToolRegistry.REGISTRY_TOOL_ID)),
+                "shared read-only selector lost active-registry item evidence");
+        require(LocalModelToolCatalog.informationToolsForPrompt("jump").isEmpty(),
+                "read-only selector leaked an action capability into normal model questions");
+        var koilDocs = LocalModelToolCatalog.informationToolsForPrompt("What tools can you use in Koil?");
+        require(koilDocs.stream().anyMatch(tool ->
+                        com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.TOOL_ID.equals(tool.id()))
+                        && koilDocs.stream().noneMatch(tool -> tool.confirmationRequired()
+                        || !tool.sideEffects().isEmpty()),
+                "Koil self-knowledge did not route to the read-only bundled documentation capability");
+        require(InformationToolCallLatencyPolicy.evaluate(
+                        3.0D,
+                        ConversationalReasoningPolicy.evaluate(
+                                "What tools can you use in Koil?", 0,
+                                new com.spirit.koil.api.model.ModelAgentCapabilityProfile(
+                                        "proof", "proof",
+                                        com.spirit.koil.api.model.ModelAgentCapabilityProfile.ToolReliability.WEAK,
+                                        false, false, 4,
+                                        com.spirit.koil.api.model.ModelAgentCapabilityProfile.PlanningReliability.WEAK,
+                                        32_768, false, true, false, 2, "proof", true
+                                ),
+                                false
+                        ),
+                        koilDocs,
+                        true
+                ).directToolDecision()
+                        && !InformationToolCallLatencyPolicy.evaluate(
+                        7.0D,
+                        directAsk,
+                        koilDocs,
+                        true
+                ).directToolDecision(),
+                "read-only tool latency policy did not stay limited to small-model first rounds");
+        JsonObject docsSearchArguments = new JsonObject();
+        docsSearchArguments.addProperty("operation", "search");
+        docsSearchArguments.addProperty("query", "workspace append expectedHash");
+        ModelToolResult docsSearch = com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.execute(
+                new ModelToolCall(
+                        "docs-proof",
+                        com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.TOOL_ID,
+                        docsSearchArguments
+                )
+        ).join();
+        require("completed".equals(docsSearch.status())
+                        && docsSearch.output().get("resultCount").getAsInt() > 0
+                        && docsSearch.output().get("readOnly").getAsBoolean(),
+                "bundled Koil documentation search did not return bounded read-only evidence");
+        JsonObject docsCatalogArguments = new JsonObject();
+        docsCatalogArguments.addProperty("operation", "catalog");
+        ModelToolResult docsCatalog = com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.execute(
+                new ModelToolCall(
+                        "docs-catalog-proof",
+                        com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.TOOL_ID,
+                        docsCatalogArguments
+                )
+        ).join();
+        require("completed".equals(docsCatalog.status())
+                        && docsCatalog.output().get("documentCount").getAsInt() > 4
+                        && docsCatalog.output().get("catalogSummarized").getAsBoolean()
+                        && docsCatalog.output().getAsJsonArray("coreDocuments").size() == 4,
+                "bundled documentation catalog was missing or dumped the full project index");
+        JsonObject rootDocsSearchArguments = new JsonObject();
+        rootDocsSearchArguments.addProperty("operation", "search");
+        rootDocsSearchArguments.addProperty("query", "project structure");
+        ModelToolResult rootDocsSearch = com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.execute(
+                new ModelToolCall(
+                        "root-docs-search-proof",
+                        com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.TOOL_ID,
+                        rootDocsSearchArguments
+                )
+        ).join();
+        require(rootDocsSearch.output().getAsJsonArray("results").asList().stream()
+                        .anyMatch(element -> element.getAsJsonObject().get("document").getAsString()
+                                .equals("docs/project-structure")),
+                "root project-structure documentation was not bundled into model knowledge");
+        JsonObject guideDocsSearchArguments = new JsonObject();
+        guideDocsSearchArguments.addProperty("operation", "search");
+        guideDocsSearchArguments.addProperty("query", "local model user test guide");
+        ModelToolResult guideDocsSearch = com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.execute(
+                new ModelToolCall(
+                        "guide-docs-search-proof",
+                        com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.TOOL_ID,
+                        guideDocsSearchArguments
+                )
+        ).join();
+        require(guideDocsSearch.output().getAsJsonArray("results").asList().stream()
+                        .anyMatch(element -> element.getAsJsonObject().get("document").getAsString()
+                                .equals("docs/local-model-user-test-guide")),
+                "allowlisted root model guide was indexed but unavailable to model knowledge");
+        JsonObject datapackDocsSearchArguments = new JsonObject();
+        datapackDocsSearchArguments.addProperty("operation", "search");
+        datapackDocsSearchArguments.addProperty("query", "koil registry test");
+        ModelToolResult datapackDocsSearch = com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.execute(
+                new ModelToolCall(
+                        "datapack-docs-search-proof",
+                        com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.TOOL_ID,
+                        datapackDocsSearchArguments
+                )
+        ).join();
+        require(datapackDocsSearch.output().getAsJsonArray("results").asList().stream()
+                        .anyMatch(element -> element.getAsJsonObject().get("document").getAsString()
+                                .startsWith("docs/test-datapacks/")),
+                "test-datapack documentation was not bundled into model knowledge");
+        JsonObject generatedDocsSearchArguments = new JsonObject();
+        generatedDocsSearchArguments.addProperty("operation", "search");
+        generatedDocsSearchArguments.addProperty("query", "LocalModelFamilySelection");
+        ModelToolResult generatedDocsSearch = com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.execute(
+                new ModelToolCall(
+                        "generated-docs-search-proof",
+                        com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.TOOL_ID,
+                        generatedDocsSearchArguments
+                )
+        ).join();
+        require(generatedDocsSearch.output().getAsJsonArray("results").asList().stream()
+                        .anyMatch(element -> element.getAsJsonObject().get("document").getAsString()
+                                .equals("docs/systems/local-model-runtime")),
+                "generated system/connector/architecture documentation was not searchable through the bundled index");
+        JsonObject generatedDocsReadArguments = new JsonObject();
+        generatedDocsReadArguments.addProperty("operation", "read");
+        generatedDocsReadArguments.addProperty("document", "docs/systems/local-model-runtime");
+        generatedDocsReadArguments.addProperty("section", "Compact information tools and bundled self-knowledge");
+        generatedDocsReadArguments.addProperty("maxLines", 12);
+        ModelToolResult generatedDocsRead = com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.execute(
+                new ModelToolCall(
+                        "generated-docs-read-proof",
+                        com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry.TOOL_ID,
+                        generatedDocsReadArguments
+                )
+        ).join();
+        require("completed".equals(generatedDocsRead.status())
+                        && generatedDocsRead.output().get("text").getAsString()
+                        .contains("InformationToolCallLatencyPolicy")
+                        && generatedDocsRead.output().get("readOnly").getAsBoolean(),
+                "bounded section read could not retrieve current generated Koil system documentation");
         require(LocalModelToolCatalog.toolsForPrompt("perform an unfamiliar supported objective").size() == all.size(),
                 "unknown prompt did not retain the safe full-catalog fallback");
 
@@ -733,11 +938,36 @@ public final class LocalModelFoundationProof {
         UUID hudRequest = UUID.randomUUID();
         ModelGenerationHudState.begin(hudRequest, "inspect command", true);
         ModelGenerationHudState.appendActivity(hudRequest, "**Thought Process**\nInspect the active command tree.");
+        JsonObject toolData = new JsonObject();
+        toolData.addProperty("toolId", "minecraft.knowledge");
+        JsonObject toolArguments = new JsonObject();
+        toolArguments.addProperty("query", "command tree");
+        toolData.add("arguments", toolArguments);
+        ModelGenerationHudState.appendEvent(hudRequest, new ModelExecutionEvent(
+                hudRequest, "proof", "tool-proof", ModelExecutionEvent.Type.TOOL_STARTED,
+                ModelRequestState.INSPECTING, ModelActivityState.INSPECTING,
+                "Minecraft Knowledge", toolData, System.currentTimeMillis()
+        ));
+        JsonObject resultData = new JsonObject();
+        resultData.addProperty("toolId", "minecraft.knowledge");
+        resultData.addProperty("status", "completed");
+        resultData.addProperty("detail", "active command tree inspected");
+        ModelGenerationHudState.appendEvent(hudRequest, new ModelExecutionEvent(
+                hudRequest, "proof", "result-proof", ModelExecutionEvent.Type.TOOL_RESULT,
+                ModelRequestState.OBSERVING_RESULT, ModelActivityState.OBSERVING,
+                "minecraft.knowledge — completed", resultData, System.currentTimeMillis()
+        ));
         var snapshot = ModelGenerationHudState.visibleSnapshot();
         require(snapshot != null && snapshot.automationRequest(),
                 "generation HUD lost the request mode");
         require(snapshot.activity().contains("Inspect the active command tree"),
                 "generation HUD did not preserve visible activity");
+        require(snapshot.activity().contains("Tool")
+                        && snapshot.activity().contains("Minecraft Knowledge")
+                        && snapshot.activity().contains("Request")
+                        && snapshot.activity().contains("Result")
+                        && snapshot.activity().contains("active command tree inspected"),
+                "Automation thought tree filtered out the historical tool/result hierarchy");
         ModelGenerationHudState.messagePresented(hudRequest);
         require(ModelGenerationHudState.visibleSnapshot() == null,
                 "model popup remained visible after the final response entered chat");

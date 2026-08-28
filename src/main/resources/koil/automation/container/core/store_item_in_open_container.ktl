@@ -1,0 +1,27 @@
+version: 2
+kind: task_template
+id: template.container_core_store_item_in_open_container
+template_id: container/core/store_item_in_open_container
+semantic_operation: sem.task.store_item_in_container
+params: [item.id, count.value, state.counter]
+metadata:
+  semantic_operations: [sem.task.store_item_in_container]
+  target_kinds: [block]
+  required_params: [item.id]
+  optional_params: [count.value, state.counter]
+  tags: [container, store, open_screen, loop]
+  description: Store Item In Open Container
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input, screen, inventory]
+  side_effects: [changes_inventory, uses_screen]
+  timeout_ticks: 2400
+  failure_policy: fail
+steps:
+  - type: branch
+    label: need_more_items
+    condition: counter_lt_target
+    then_input: container/core/store_item_iteration.ktl item.id=${item.id} count.value=${count.value} state.counter=${state.counter}
+  - type: return
+    label: done
+

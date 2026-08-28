@@ -2,13 +2,17 @@ package com.spirit.koil.api.model.catalog;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+
+import static com.spirit.koil.api.model.catalog.LocalModelCanonicalMetadata.Architecture;
+import static com.spirit.koil.api.model.catalog.LocalModelCanonicalMetadata.Maturity;
 
 public final class LocalModelCatalog {
         private static final long GIB = 1024L * 1024L * 1024L;
         private static final String PROVIDER = "llama_cpp";
         private static final String RUNTIME = "llama.cpp-b10173";
-        private static final List<LocalModelCatalogEntry> ENTRIES = List.of(
+        private static final List<LocalModelCatalogEntry> BUILT_IN_ENTRIES = List.of(
                 qwen(
                         "qwen1.5-0.5b-q4",
                         "Qwen1.5 0.5B Chat",
@@ -1326,6 +1330,3001 @@ public final class LocalModelCatalog {
                                 63_387_346_208L,
                                 "582bd40f6886200101f4c4ed9f25f3fe80cc14c86e9e2b37746cd8904a0c622d"
                         )
+                ),
+
+                // Canonical local-model roster beyond Koil's baseline verified downloads.
+                // Text models use the same localTextModel path as the original catalog. A model becomes runnable
+                // only when an exact llama.cpp-compatible GGUF artifact is pinned by byte size and SHA-256.
+                // Non-text models remain typed local specialized models until Koil has their matching runtime.
+
+                // Qwen language, coding, agent, research, and reasoning families.
+                localTextModel(
+                        "Qwen3.5",
+                        "0.8B",
+                        .8,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.5-0.8B",
+                        Maturity.SUPPORTED,
+                        "qwen3_5",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.5",
+                        "2B",
+                        2,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.5-2B",
+                        Maturity.SUPPORTED,
+                        "qwen3_5",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.5",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.5-4B",
+                        Maturity.SUPPORTED,
+                        "qwen3_5",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.5",
+                        "9B",
+                        9,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.5-9B",
+                        Maturity.SUPPORTED,
+                        "qwen3_5",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.5",
+                        "27B",
+                        27,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.5-27B",
+                        Maturity.SUPPORTED,
+                        "qwen3_5",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8", "GPTQ INT4"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.5",
+                        "35B-A3B",
+                        35,
+                        3,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.5-35B-A3B",
+                        Maturity.SUPPORTED,
+                        "qwen3_5",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8", "GPTQ INT4"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.5",
+                        "122B-A10B",
+                        122,
+                        10,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.5-122B-A10B",
+                        Maturity.FRONTIER,
+                        "qwen3_5",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8", "GPTQ INT4"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.5",
+                        "397B-A17B",
+                        397,
+                        17,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.5-397B-A17B",
+                        Maturity.FRONTIER,
+                        "qwen3_5",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8", "GPTQ INT4"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.6",
+                        "27B",
+                        27,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.6-27B",
+                        Maturity.SUPPORTED,
+                        "qwen3_6",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.6",
+                        "35B-A3B",
+                        35,
+                        3,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.6-35B-A3B",
+                        Maturity.SUPPORTED,
+                        "qwen3_6",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.8",
+                        "27B",
+                        27.8,
+                        0,
+                        Architecture.DENSE,
+                        "Thinking",
+                        List.of("Uncensored"),
+                        List.of("text", "vision"),
+                        "orcarouter/Qwen3.8-27B-Uncensored-FP8",
+                        Maturity.EXPERIMENTAL,
+                        "qwen3_8",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("FP8", "MLX"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.8",
+                        "27B",
+                        27.8,
+                        0,
+                        Architecture.DENSE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.8-27B",
+                        Maturity.SUPPORTED,
+                        "qwen3_8",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144,
+                        artifact(
+                                "ggml-org/Qwen3.8-27B-GGUF",
+                                "Qwen3.8-27B-Q4_K_M.gguf",
+                                18_973_870_432L,
+                                "31629f53165ab6a7dad8c9847dcfd1fdf55829dac1e6e748f4a68581b0033d34"
+                        )
+                ),
+                localTextModel(
+                        "Qwen3.8",
+                        "180B",
+                        180,
+                        0,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of("Flash-Next"),
+                        List.of("text", "vision"),
+                        "Qwen/Qwen3.8-Flash-Next",
+                        Maturity.FRONTIER,
+                        "qwen3_8",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3.8",
+                        "2.4T-A95B",
+                        2_446,
+                        95,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/Qwen3.8-2.4T-A95B",
+                        Maturity.FRONTIER,
+                        "qwen3_8",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3-Next",
+                        "80B-A3B",
+                        80,
+                        3,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/Qwen3-Next-80B-A3B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "qwen3_next",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3-Next",
+                        "80B-A3B",
+                        80,
+                        3,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/Qwen3-Next-80B-A3B-Thinking",
+                        Maturity.SPECIALIZED,
+                        "qwen3_next",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3-Coder",
+                        "30B-A3B",
+                        30,
+                        3,
+                        Architecture.MOE,
+                        "Coder",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "qwen3_coder",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors", "GGUF"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3-Coder",
+                        "480B-A35B",
+                        480,
+                        35,
+                        Architecture.MOE,
+                        "Coder",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+                        Maturity.FRONTIER,
+                        "qwen3_coder",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3-Coder-Next",
+                        "80B-A3B",
+                        80,
+                        3,
+                        Architecture.MOE,
+                        "Coder",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/Qwen3-Coder-Next",
+                        Maturity.SPECIALIZED,
+                        "qwen3_coder_next",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors", "GGUF"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen-AgentWorld",
+                        "35B-A3B",
+                        35,
+                        3,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/Qwen-AgentWorld-35B-A3B",
+                        Maturity.EXPERIMENTAL,
+                        "qwen_agentworld",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen-WebWorld",
+                        "8B",
+                        8,
+                        0,
+                        Architecture.DENSE,
+                        "Research",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/WebWorld-8B",
+                        Maturity.EXPERIMENTAL,
+                        "qwen_webworld",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen-WebWorld",
+                        "14B",
+                        14,
+                        0,
+                        Architecture.DENSE,
+                        "Research",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/WebWorld-14B",
+                        Maturity.EXPERIMENTAL,
+                        "qwen_webworld",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen-WebWorld",
+                        "32B",
+                        32,
+                        0,
+                        Architecture.DENSE,
+                        "Research",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/WebWorld-32B",
+                        Maturity.EXPERIMENTAL,
+                        "qwen_webworld",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "QwQ",
+                        "32B",
+                        32,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "Qwen/QwQ-32B",
+                        Maturity.SPECIALIZED,
+                        "qwen",
+                        "qwen_native",
+                        "",
+                        List.of("Safetensors", "GGUF"),
+                        131_072
+                ),
+                localTextModel(
+                        "QVQ",
+                        "72B",
+                        72,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "Qwen/QVQ-72B-Preview",
+                        Maturity.EXPERIMENTAL,
+                        "qwen_vl",
+                        "qwen_native",
+                        "",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+
+                // Qwen multimodal, vision, audio, image, embedding, and reranking families.
+                localTextModel(
+                        "Qwen3-VL",
+                        "2B",
+                        2,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-2B-Instruct",
+                        Maturity.SUPPORTED,
+                        "qwen_vl",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "2B",
+                        2,
+                        0,
+                        Architecture.DENSE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-2B-Thinking",
+                        Maturity.SUPPORTED,
+                        "qwen_vl",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-4B-Instruct",
+                        Maturity.SUPPORTED,
+                        "qwen_vl",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.DENSE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-4B-Thinking",
+                        Maturity.SUPPORTED,
+                        "qwen_vl",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "8B",
+                        8,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-8B-Instruct",
+                        Maturity.SUPPORTED,
+                        "qwen_vl",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "8B",
+                        8,
+                        0,
+                        Architecture.DENSE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-8B-Thinking",
+                        Maturity.SUPPORTED,
+                        "qwen_vl",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "30B-A3B",
+                        30,
+                        3,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "qwen_vl",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "30B-A3B",
+                        30,
+                        3,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-30B-A3B-Thinking",
+                        Maturity.SPECIALIZED,
+                        "qwen_vl",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "32B",
+                        32,
+                        0,
+                        Architecture.DENSE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-32B-Thinking",
+                        Maturity.SPECIALIZED,
+                        "qwen_vl",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "32B",
+                        32,
+                        0,
+                        Architecture.DENSE,
+                        "Vision",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-32B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "qwen_vl",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "235B-A22B",
+                        235,
+                        22,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-235B-A22B-Instruct",
+                        Maturity.FRONTIER,
+                        "qwen_vl",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-VL",
+                        "235B-A22B",
+                        235,
+                        22,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "Qwen/Qwen3-VL-235B-A22B-Thinking",
+                        Maturity.FRONTIER,
+                        "qwen_vl",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Qwen3-Omni",
+                        "30B-A3B",
+                        30,
+                        3,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision", "audio", "video"),
+                        "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "qwen_omni",
+                        "",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+                localTextModel(
+                        "Qwen3-Omni",
+                        "30B-A3B",
+                        30,
+                        3,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision", "audio", "video"),
+                        "Qwen/Qwen3-Omni-30B-A3B-Thinking",
+                        Maturity.SPECIALIZED,
+                        "qwen_omni",
+                        "qwen_native",
+                        "qwen_tools",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+                localTextModel(
+                        "Qwen3-Omni",
+                        "30B-A3B",
+                        30,
+                        3,
+                        Architecture.MOE,
+                        "Captioner",
+                        List.of(),
+                        List.of("audio", "text"),
+                        "Qwen/Qwen3-Omni-30B-A3B-Captioner",
+                        Maturity.SPECIALIZED,
+                        "qwen_omni",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+                localSpecializedModel(
+                        "Qwen-Image",
+                        "20B",
+                        20,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of(),
+                        List.of("image_generation", "image_editing"),
+                        "Qwen/Qwen-Image",
+                        Maturity.SPECIALIZED,
+                        "diffusers",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+                localSpecializedModel(
+                        "Qwen-Image",
+                        "20B",
+                        20,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Edit"),
+                        List.of("image_generation", "image_editing"),
+                        "Qwen/Qwen-Image-Edit",
+                        Maturity.SPECIALIZED,
+                        "diffusers",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+                localSpecializedModel(
+                        "Qwen3-ASR",
+                        "0.6B",
+                        .6,
+                        0,
+                        Architecture.AUDIO,
+                        "ASR",
+                        List.of(),
+                        List.of("audio", "text"),
+                        "Qwen/Qwen3-ASR-0.6B",
+                        Maturity.SPECIALIZED,
+                        "qwen_asr",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+                localSpecializedModel(
+                        "Qwen3-ASR",
+                        "1.7B",
+                        1.7,
+                        0,
+                        Architecture.AUDIO,
+                        "ASR",
+                        List.of(),
+                        List.of("audio", "text"),
+                        "Qwen/Qwen3-ASR-1.7B",
+                        Maturity.SPECIALIZED,
+                        "qwen_asr",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+                localSpecializedModel(
+                        "Qwen3-TTS",
+                        "1.7B",
+                        1.7,
+                        0,
+                        Architecture.AUDIO,
+                        "TTS",
+                        List.of(),
+                        List.of("text", "audio"),
+                        "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+                        Maturity.SPECIALIZED,
+                        "qwen_tts",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+                localSpecializedModel(
+                        "Qwen3-Embedding",
+                        "0.6B",
+                        .6,
+                        0,
+                        Architecture.EMBEDDING,
+                        "Embedding",
+                        List.of(),
+                        List.of("text", "embedding"),
+                        "Qwen/Qwen3-Embedding-0.6B",
+                        Maturity.SPECIALIZED,
+                        "embedding",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+                localSpecializedModel(
+                        "Qwen3-Embedding",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.EMBEDDING,
+                        "Embedding",
+                        List.of(),
+                        List.of("text", "embedding"),
+                        "Qwen/Qwen3-Embedding-4B",
+                        Maturity.SPECIALIZED,
+                        "embedding",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+                localSpecializedModel(
+                        "Qwen3-Embedding",
+                        "8B",
+                        8,
+                        0,
+                        Architecture.EMBEDDING,
+                        "Embedding",
+                        List.of(),
+                        List.of("text", "embedding"),
+                        "Qwen/Qwen3-Embedding-8B",
+                        Maturity.SPECIALIZED,
+                        "embedding",
+                        "",
+                        "",
+                        List.of("Safetensors", "GGUF"),
+                        32_768
+                ),
+                localSpecializedModel(
+                        "Qwen3-Reranker",
+                        "0.6B",
+                        .6,
+                        0,
+                        Architecture.RERANKER,
+                        "Reranker",
+                        List.of(),
+                        List.of("text", "reranking"),
+                        "Qwen/Qwen3-Reranker-0.6B",
+                        Maturity.SPECIALIZED,
+                        "reranker",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+                localSpecializedModel(
+                        "Qwen3-Reranker",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.RERANKER,
+                        "Reranker",
+                        List.of(),
+                        List.of("text", "reranking"),
+                        "Qwen/Qwen3-Reranker-4B",
+                        Maturity.SPECIALIZED,
+                        "reranker",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+                localSpecializedModel(
+                        "Qwen3-Reranker",
+                        "8B",
+                        8,
+                        0,
+                        Architecture.RERANKER,
+                        "Reranker",
+                        List.of(),
+                        List.of("text", "reranking"),
+                        "Qwen/Qwen3-Reranker-8B",
+                        Maturity.SPECIALIZED,
+                        "reranker",
+                        "",
+                        "",
+                        List.of("Safetensors", "GGUF"),
+                        32_768
+                ),
+
+                // Mistral AI general, reasoning, coding, multimodal, and speech families.
+                localTextModel(
+                        "Ministral 3",
+                        "3B",
+                        3.8,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "mistralai/Ministral-3-3B-Reasoning-2512",
+                        Maturity.SUPPORTED,
+                        "mistral3",
+                        "mistral",
+                        "mistral",
+                        List.of("Safetensors", "BF16"),
+                        262_144
+                ),
+                localTextModel(
+                        "Ministral 3",
+                        "8B",
+                        9,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "mistralai/Ministral-3-8B-Reasoning-2512",
+                        Maturity.SUPPORTED,
+                        "mistral3",
+                        "mistral",
+                        "mistral",
+                        List.of("Safetensors", "BF16"),
+                        262_144
+                ),
+                localTextModel(
+                        "Ministral 3",
+                        "14B",
+                        14,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "mistralai/Ministral-3-14B-Reasoning-2512",
+                        Maturity.SUPPORTED,
+                        "mistral3",
+                        "mistral",
+                        "mistral",
+                        List.of("Safetensors", "BF16"),
+                        262_144
+                ),
+                localTextModel(
+                        "Devstral 2",
+                        "24B",
+                        24,
+                        0,
+                        Architecture.DENSE,
+                        "Coder",
+                        List.of("Small"),
+                        List.of("text", "vision"),
+                        "mistralai/Devstral-Small-2-24B-Instruct-2512",
+                        Maturity.SPECIALIZED,
+                        "mistral3",
+                        "",
+                        "mistral",
+                        List.of("Safetensors", "FP8"),
+                        393_216
+                ),
+                localTextModel(
+                        "Devstral 2",
+                        "123B",
+                        125,
+                        0,
+                        Architecture.DENSE,
+                        "Coder",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "mistralai/Devstral-2-123B-Instruct-2512",
+                        Maturity.SPECIALIZED,
+                        "mistral3",
+                        "",
+                        "mistral",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Mistral Small 4",
+                        "119B-A6.5B",
+                        119,
+                        6.5,
+                        Architecture.MOE,
+                        "Instruct/Reasoning",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "mistralai/Mistral-Small-4-119B-2603",
+                        Maturity.SPECIALIZED,
+                        "mistral3",
+                        "mistral",
+                        "mistral",
+                        List.of("Safetensors", "FP8", "NVFP4"),
+                        262_144,
+                        1_048_576
+                ),
+                localTextModel(
+                        "Mistral Medium 3.5",
+                        "128B",
+                        128,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct/Reasoning",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "mistralai/Mistral-Medium-3.5-128B",
+                        Maturity.FRONTIER,
+                        "mistral3",
+                        "mistral",
+                        "mistral",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Mistral Large 3",
+                        "675B-A41B",
+                        675,
+                        41,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "mistralai/Mistral-Large-3-675B-Instruct-2512",
+                        Maturity.FRONTIER,
+                        "mistral3",
+                        "",
+                        "mistral",
+                        List.of("Safetensors", "FP8", "NVFP4", "BF16"),
+                        294_912
+                ),
+                localSpecializedModel(
+                        "Voxtral",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.AUDIO,
+                        "ASR",
+                        List.of("Realtime"),
+                        List.of("audio", "text"),
+                        "mistralai/Voxtral-Mini-4B-Realtime-2602",
+                        Maturity.SPECIALIZED,
+                        "voxtral",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+                localSpecializedModel(
+                        "Voxtral",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.AUDIO,
+                        "TTS",
+                        List.of(),
+                        List.of("text", "audio"),
+                        "mistralai/Voxtral-4B-TTS-2603",
+                        Maturity.SPECIALIZED,
+                        "voxtral",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+
+                // Meta Llama families.
+                localTextModel(
+                        "Llama 3.2",
+                        "1B",
+                        1,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "meta-llama/Llama-3.2-1B-Instruct",
+                        Maturity.SUPPORTED,
+                        "llama3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Llama 3.2",
+                        "3B",
+                        3,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "meta-llama/Llama-3.2-3B-Instruct",
+                        Maturity.SUPPORTED,
+                        "llama3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Llama 3.3",
+                        "70B",
+                        70,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "meta-llama/Llama-3.3-70B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "llama3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Llama 4",
+                        "109B-A17B",
+                        109,
+                        17,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of("Scout"),
+                        List.of("text", "vision"),
+                        "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+                        Maturity.FRONTIER,
+                        "llama4",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        10_000_000
+                ),
+                localTextModel(
+                        "Llama 4",
+                        "400B-A17B",
+                        400,
+                        17,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of("Maverick"),
+                        List.of("text", "vision"),
+                        "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+                        Maturity.FRONTIER,
+                        "llama4",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        1_000_000
+                ),
+
+                // Google Gemma families.
+                localTextModel(
+                        "Gemma 3",
+                        "270M",
+                        .27,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "google/gemma-3-270m-it",
+                        Maturity.SUPPORTED,
+                        "gemma3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+                localTextModel(
+                        "Gemma 3",
+                        "1B",
+                        1,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "google/gemma-3-1b-it",
+                        Maturity.SUPPORTED,
+                        "gemma3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        32_768,
+                        artifact(
+                                "ggml-org/gemma-3-1b-it-GGUF",
+                                "gemma-3-1b-it-Q4_K_M.gguf",
+                                806_058_240L,
+                                "8ccc5cd1f1b3602548715ae25a66ed73fd5dc68a210412eea643eb20eb75a135"
+                        )
+                ),
+                localTextModel(
+                        "Gemma 3",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "google/gemma-3-4b-it",
+                        Maturity.SUPPORTED,
+                        "gemma3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        131_072,
+                        artifact(
+                                "ggml-org/gemma-3-4b-it-GGUF",
+                                "gemma-3-4b-it-Q4_K_M.gguf",
+                                2_489_757_856L,
+                                "882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863"
+                        )
+                ),
+                localTextModel(
+                        "Gemma 3",
+                        "12B",
+                        12,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "google/gemma-3-12b-it",
+                        Maturity.SUPPORTED,
+                        "gemma3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        131_072,
+                        artifact(
+                                "ggml-org/gemma-3-12b-it-GGUF",
+                                "gemma-3-12b-it-Q4_K_M.gguf",
+                                7_300_574_976L,
+                                "7bb69bff3f48a7b642355d64a90e481182a7794707b3133890646b1efa778ff5"
+                        )
+                ),
+                localTextModel(
+                        "Gemma 3",
+                        "27B",
+                        27,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "google/gemma-3-27b-it",
+                        Maturity.SUPPORTED,
+                        "gemma3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        131_072,
+                        artifact(
+                                "ggml-org/gemma-3-27b-it-GGUF",
+                                "gemma-3-27b-it-Q4_K_M.gguf",
+                                16_546_404_736L,
+                                "edc9aff4d811a285b9157618130b08688b0768d94ee5355b02dc0cb713012e15"
+                        )
+                ),
+
+                // Microsoft Phi families.
+                localTextModel(
+                        "Phi-4",
+                        "3.8B",
+                        3.8,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of("Mini"),
+                        List.of("text"),
+                        "microsoft/Phi-4-mini-instruct",
+                        Maturity.SUPPORTED,
+                        "phi4",
+                        "",
+                        "phi_tools",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Phi-4",
+                        "3.8B",
+                        3.8,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of("Mini"),
+                        List.of("text"),
+                        "microsoft/Phi-4-mini-reasoning",
+                        Maturity.SUPPORTED,
+                        "phi4",
+                        "phi_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Phi-4",
+                        "5.6B",
+                        5.6,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of("Multimodal"),
+                        List.of("text", "vision", "audio"),
+                        "microsoft/Phi-4-multimodal-instruct",
+                        Maturity.SPECIALIZED,
+                        "phi4",
+                        "",
+                        "phi_tools",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Phi-4",
+                        "14B",
+                        14,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "microsoft/phi-4",
+                        Maturity.SUPPORTED,
+                        "phi4",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        16_384
+                ),
+                localTextModel(
+                        "Phi-4",
+                        "14B",
+                        14,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "microsoft/Phi-4-reasoning",
+                        Maturity.SPECIALIZED,
+                        "phi4",
+                        "phi_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        32_768
+                ),
+
+                // Black Forest Labs image generation and editing families.
+                localSpecializedModel(
+                        "FLUX.1",
+                        "12B",
+                        12,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Dev"),
+                        List.of("image_generation"),
+                        "black-forest-labs/FLUX.1-dev",
+                        Maturity.SPECIALIZED,
+                        "diffusers_flux",
+                        "",
+                        "",
+                        List.of("Safetensors", "FP8", "NVFP4", "ONNX"),
+                        0
+                ),
+                localSpecializedModel(
+                        "FLUX.1",
+                        "12B",
+                        12,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Kontext Dev"),
+                        List.of("image_generation", "image_editing"),
+                        "black-forest-labs/FLUX.1-Kontext-dev",
+                        Maturity.SPECIALIZED,
+                        "diffusers_flux",
+                        "",
+                        "",
+                        List.of("Safetensors", "NVFP4", "ONNX"),
+                        0
+                ),
+                localSpecializedModel(
+                        "FLUX.1",
+                        "12B",
+                        12,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Krea Dev"),
+                        List.of("image_generation"),
+                        "black-forest-labs/FLUX.1-Krea-dev",
+                        Maturity.SPECIALIZED,
+                        "diffusers_flux",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+                localSpecializedModel(
+                        "FLUX.1",
+                        "12B",
+                        12,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Schnell"),
+                        List.of("image_generation"),
+                        "black-forest-labs/FLUX.1-schnell",
+                        Maturity.SPECIALIZED,
+                        "diffusers_flux",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        0
+                ),
+                localSpecializedModel(
+                        "FLUX.2",
+                        "4B",
+                        4,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Klein"),
+                        List.of("image_generation", "image_editing"),
+                        "black-forest-labs/FLUX.2-klein-4B",
+                        Maturity.SPECIALIZED,
+                        "diffusers_flux2",
+                        "",
+                        "",
+                        List.of("Safetensors", "FP8", "NVFP4"),
+                        0
+                ),
+                localSpecializedModel(
+                        "FLUX.2",
+                        "9B",
+                        9,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Klein"),
+                        List.of("image_generation", "image_editing"),
+                        "black-forest-labs/FLUX.2-klein-9B",
+                        Maturity.SPECIALIZED,
+                        "diffusers_flux2",
+                        "",
+                        "",
+                        List.of("Safetensors", "FP8", "NVFP4"),
+                        0
+                ),
+                localSpecializedModel(
+                        "FLUX.2",
+                        "9B",
+                        9,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Klein KV"),
+                        List.of("image_generation", "image_editing"),
+                        "black-forest-labs/FLUX.2-klein-9b-kv",
+                        Maturity.EXPERIMENTAL,
+                        "diffusers_flux2",
+                        "",
+                        "",
+                        List.of("Safetensors", "FP8"),
+                        0
+                ),
+                localSpecializedModel(
+                        "FLUX.2",
+                        "32B",
+                        32,
+                        0,
+                        Architecture.DIFFUSION,
+                        "Image",
+                        List.of("Dev"),
+                        List.of("image_generation", "image_editing"),
+                        "black-forest-labs/FLUX.2-dev",
+                        Maturity.SPECIALIZED,
+                        "diffusers_flux2",
+                        "",
+                        "",
+                        List.of("Safetensors", "NVFP4"),
+                        0
+                ),
+
+                // Efficient local, coding, experimental-performance, and IBM Granite families.
+                localTextModel(
+                        "Bonsai",
+                        "27B",
+                        27,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of("Compressed"),
+                        List.of("text"),
+                        "prism-ml/Bonsai-27B-gguf",
+                        Maturity.EXPERIMENTAL,
+                        "model_native",
+                        "",
+                        "model_native",
+                        List.of("GGUF", "MLX"),
+                        131_072
+                ),
+                localTextModel(
+                        "Granite 4.2",
+                        "3B",
+                        3,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "ibm-granite/granite-4.2-3b",
+                        Maturity.SUPPORTED,
+                        "granite4_2",
+                        "granite_reasoning",
+                        "granite_tools",
+                        List.of("Safetensors", "GGUF", "FP8", "MXFP4", "NVFP4"),
+                        131_072,
+                        524_288,
+                        artifact(
+                                "ibm-granite/granite-4.2-3b-GGUF",
+                                "granite-4.2-3b-Q4_K_M.gguf",
+                                2_244_012_160L,
+                                "20e436143017578687f7f848225cc6c6038126c84149192229c7dff6e4e0f427"
+                        )
+                ),
+                localTextModel(
+                        "Granite 4.2",
+                        "8B",
+                        8,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "ibm-granite/granite-4.2-8b",
+                        Maturity.SUPPORTED,
+                        "granite4_2",
+                        "granite_reasoning",
+                        "granite_tools",
+                        List.of("Safetensors", "GGUF", "FP8", "MXFP4", "NVFP4"),
+                        131_072,
+                        524_288,
+                        artifact(
+                                "ibm-granite/granite-4.2-8b-GGUF",
+                                "granite-4.2-8b-Q4_K_M.gguf",
+                                5_347_917_952L,
+                                "16a9369d0805f80b7377d25d87f937a90c05dc04ad79173a52001e42c9aab311"
+                        )
+                ),
+                localTextModel(
+                        "Granite 4.2",
+                        "30B",
+                        30,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "ibm-granite/granite-4.2-30b",
+                        Maturity.SUPPORTED,
+                        "granite4_2",
+                        "granite_reasoning",
+                        "granite_tools",
+                        List.of("Safetensors", "GGUF", "FP8", "MXFP4", "NVFP4"),
+                        131_072,
+                        524_288,
+                        artifact(
+                                "ibm-granite/granite-4.2-30b-GGUF",
+                                "granite-4.2-30b-Q4_K_M.gguf",
+                                17_721_455_328L,
+                                "f299dace85d77ee0e24ca0b6720bd211b1f4cd1f65b9c0a2111e79692e29c9be"
+                        )
+                ),
+                localTextModel(
+                        "KAT-Coder 2.5",
+                        "35B-A3B",
+                        35,
+                        3,
+                        Architecture.MOE,
+                        "Coder",
+                        List.of("Dev"),
+                        List.of("text"),
+                        "Kwaipilot/KAT-Coder-V2.5-Dev",
+                        Maturity.SPECIALIZED,
+                        "kat_coder",
+                        "",
+                        "model_native",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "LFM2.5",
+                        "230M",
+                        .23,
+                        0,
+                        Architecture.HYBRID,
+                        "Base",
+                        List.of(),
+                        List.of("text"),
+                        "LiquidAI/LFM2.5-230M",
+                        Maturity.SUPPORTED,
+                        "lfm2_5",
+                        "",
+                        "",
+                        List.of("Safetensors", "GGUF"),
+                        32_768
+                ),
+                localTextModel(
+                        "LFM2.5",
+                        "350M",
+                        .35,
+                        0,
+                        Architecture.HYBRID,
+                        "Base",
+                        List.of(),
+                        List.of("text"),
+                        "LiquidAI/LFM2.5-350M",
+                        Maturity.SUPPORTED,
+                        "lfm2_5",
+                        "",
+                        "",
+                        List.of("Safetensors", "GGUF"),
+                        32_768
+                ),
+                localTextModel(
+                        "LFM2.5",
+                        "1.2B",
+                        1.2,
+                        0,
+                        Architecture.HYBRID,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "LiquidAI/LFM2.5-1.2B-Instruct",
+                        Maturity.SUPPORTED,
+                        "lfm2_5",
+                        "",
+                        "model_native",
+                        List.of("Safetensors", "GGUF", "MLX", "ONNX"),
+                        32_768
+                ),
+                localTextModel(
+                        "LFM2.5",
+                        "1.2B",
+                        1.2,
+                        0,
+                        Architecture.HYBRID,
+                        "Thinking",
+                        List.of(),
+                        List.of("text"),
+                        "LiquidAI/LFM2.5-1.2B-Thinking",
+                        Maturity.SUPPORTED,
+                        "lfm2_5",
+                        "model_native",
+                        "model_native",
+                        List.of("Safetensors", "GGUF", "MLX", "ONNX"),
+                        32_768
+                ),
+                localTextModel(
+                        "LFM2.5",
+                        "2.6B",
+                        2.6,
+                        0,
+                        Architecture.HYBRID,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "LiquidAI/LFM2.5-2.6B",
+                        Maturity.SUPPORTED,
+                        "lfm2_5",
+                        "",
+                        "model_native",
+                        List.of("Safetensors", "GGUF", "MLX", "ONNX", "NVFP4"),
+                        32_768
+                ),
+                localTextModel(
+                        "LFM2.5",
+                        "8B-A1B",
+                        8,
+                        1,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "LiquidAI/LFM2.5-8B-A1B",
+                        Maturity.SUPPORTED,
+                        "lfm2_5",
+                        "",
+                        "model_native",
+                        List.of("Safetensors", "GGUF", "MLX"),
+                        32_768
+                ),
+                localTextModel(
+                        "MiniCPM5",
+                        "1B",
+                        1,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "openbmb/MiniCPM5-1B",
+                        Maturity.SUPPORTED,
+                        "minicpm5",
+                        "model_native",
+                        "model_native",
+                        List.of("Safetensors", "GGUF", "MLX"),
+                        131_072
+                ),
+                localTextModel(
+                        "Ornith 1.0",
+                        "35B",
+                        35,
+                        0,
+                        Architecture.DENSE,
+                        "Agent",
+                        List.of("Coder"),
+                        List.of("text"),
+                        "ornith-ai/Ornith-1.0-35B",
+                        Maturity.SPECIALIZED,
+                        "ornith",
+                        "",
+                        "model_native",
+                        List.of("Safetensors", "GGUF", "MLX"),
+                        131_072
+                ),
+                localTextModel(
+                        "Ornith 1.5",
+                        "9B",
+                        9,
+                        0,
+                        Architecture.DENSE,
+                        "Agent",
+                        List.of("Coder"),
+                        List.of("text"),
+                        "ornith-ai/Ornith-1.5-9B",
+                        Maturity.SPECIALIZED,
+                        "ornith",
+                        "",
+                        "model_native",
+                        List.of("Safetensors", "GGUF", "MLX"),
+                        131_072
+                ),
+                localTextModel(
+                        "Ornith 1.5",
+                        "35B-A3B",
+                        35,
+                        3,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of("Coder"),
+                        List.of("text"),
+                        "ornith-ai/Ornith-1.5-35B-A3B",
+                        Maturity.SPECIALIZED,
+                        "ornith",
+                        "",
+                        "model_native",
+                        List.of("Safetensors", "GGUF", "MLX", "FP8", "NVFP4"),
+                        131_072
+                ),
+                localTextModel(
+                        "Ring",
+                        "Lite",
+                        16.8,
+                        2.75,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text"),
+                        "inclusionAI/Ring-lite",
+                        Maturity.EXPERIMENTAL,
+                        "ring",
+                        "ring_native",
+                        "ring_tools",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Ternary Bonsai",
+                        "27B",
+                        27,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of("Ternary"),
+                        List.of("text"),
+                        "prism-ml/Ternary-Bonsai-27B-gguf",
+                        Maturity.EXPERIMENTAL,
+                        "model_native",
+                        "",
+                        "model_native",
+                        List.of("GGUF", "MLX", "Ternary"),
+                        131_072
+                ),
+
+                // Hugging Face SmolLM families.
+                localTextModel(
+                        "SmolLM3",
+                        "3B",
+                        3,
+                        0,
+                        Architecture.DENSE,
+                        "Base",
+                        List.of(),
+                        List.of("text"),
+                        "HuggingFaceTB/SmolLM3-3B-Base",
+                        Maturity.SUPPORTED,
+                        "smollm3",
+                        "",
+                        "",
+                        List.of("Safetensors", "GGUF"),
+                        65_536,
+                        131_072
+                ),
+                localTextModel(
+                        "SmolLM3",
+                        "3B",
+                        3,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "HuggingFaceTB/SmolLM3-3B",
+                        Maturity.SUPPORTED,
+                        "smollm3",
+                        "smollm3_thinking",
+                        "",
+                        List.of("Safetensors", "GGUF"),
+                        65_536,
+                        131_072
+                ),
+
+                // Technology Innovation Institute Falcon hybrid families.
+                localTextModel(
+                        "Falcon H1 Tiny",
+                        "90M",
+                        0.091,
+                        0,
+                        Architecture.HYBRID,
+                        "Tool",
+                        List.of(),
+                        List.of("text"),
+                        "tiiuae/Falcon-H1-Tiny-Tool-Calling-90M",
+                        Maturity.EXPERIMENTAL,
+                        "falcon_h1",
+                        "",
+                        "falcon_h1_tools",
+                        List.of("Safetensors", "GGUF"),
+                        262_144
+                ),
+                localTextModel(
+                        "Falcon H1 Tiny",
+                        "0.6B",
+                        0.6,
+                        0,
+                        Architecture.HYBRID,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "tiiuae/Falcon-H1-Tiny-R-0.6B",
+                        Maturity.EXPERIMENTAL,
+                        "falcon_h1",
+                        "falcon_h1_reasoning",
+                        "",
+                        List.of("Safetensors", "GGUF"),
+                        262_144
+                ),
+                localTextModel(
+                        "Falcon H1",
+                        "0.5B",
+                        0.5,
+                        0,
+                        Architecture.HYBRID,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "tiiuae/Falcon-H1-0.5B-Instruct",
+                        Maturity.SUPPORTED,
+                        "falcon_h1",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        16_384
+                ),
+                localTextModel(
+                        "Falcon H1",
+                        "1.5B",
+                        1.5,
+                        0,
+                        Architecture.HYBRID,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "tiiuae/Falcon-H1-1.5B-Instruct",
+                        Maturity.SUPPORTED,
+                        "falcon_h1",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Falcon H1",
+                        "3B",
+                        3,
+                        0,
+                        Architecture.HYBRID,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "tiiuae/Falcon-H1-3B-Instruct",
+                        Maturity.SUPPORTED,
+                        "falcon_h1",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Falcon H1",
+                        "7B",
+                        7,
+                        0,
+                        Architecture.HYBRID,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "tiiuae/Falcon-H1-7B-Instruct",
+                        Maturity.SUPPORTED,
+                        "falcon_h1",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Falcon H1",
+                        "34B",
+                        34,
+                        0,
+                        Architecture.HYBRID,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "tiiuae/Falcon-H1-34B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "falcon_h1",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        262_144
+                ),
+                localTextModel(
+                        "Falcon H1R",
+                        "7B",
+                        8,
+                        0,
+                        Architecture.HYBRID,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "tiiuae/Falcon-H1R-7B",
+                        Maturity.SUPPORTED,
+                        "falcon_h1",
+                        "falcon_h1_reasoning",
+                        "",
+                        List.of("Safetensors", "FP8", "GGUF"),
+                        262_144
+                ),
+
+                // Ai2 OLMo open language model families.
+                localTextModel(
+                        "OLMo 3",
+                        "7B",
+                        7,
+                        0,
+                        Architecture.DENSE,
+                        "Base",
+                        List.of(),
+                        List.of("text"),
+                        "allenai/Olmo-3-1025-7B",
+                        Maturity.SUPPORTED,
+                        "olmo3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        65_536
+                ),
+                localTextModel(
+                        "OLMo 3",
+                        "7B",
+                        7,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "allenai/Olmo-3-7B-Instruct",
+                        Maturity.SUPPORTED,
+                        "olmo3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        65_536
+                ),
+                localTextModel(
+                        "OLMo 3",
+                        "7B",
+                        7,
+                        0,
+                        Architecture.DENSE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text"),
+                        "allenai/Olmo-3-7B-Think",
+                        Maturity.SUPPORTED,
+                        "olmo3",
+                        "olmo3_thinking",
+                        "",
+                        List.of("Safetensors"),
+                        65_536
+                ),
+                localTextModel(
+                        "OLMo 3",
+                        "32B",
+                        32,
+                        0,
+                        Architecture.DENSE,
+                        "Base",
+                        List.of(),
+                        List.of("text"),
+                        "allenai/Olmo-3-1125-32B",
+                        Maturity.SPECIALIZED,
+                        "olmo3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        65_536
+                ),
+                localTextModel(
+                        "OLMo 3",
+                        "32B",
+                        32,
+                        0,
+                        Architecture.DENSE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text"),
+                        "allenai/Olmo-3-32B-Think",
+                        Maturity.SPECIALIZED,
+                        "olmo3",
+                        "olmo3_thinking",
+                        "",
+                        List.of("Safetensors"),
+                        65_536
+                ),
+
+                // Cohere Labs Command families.
+                localTextModel(
+                        "Command A",
+                        "111B",
+                        111,
+                        0,
+                        Architecture.DENSE,
+                        "Agent",
+                        List.of(),
+                        List.of("text"),
+                        "CohereLabs/c4ai-command-a-03-2025",
+                        Maturity.SPECIALIZED,
+                        "cohere2",
+                        "",
+                        "cohere_tools",
+                        List.of("Safetensors"),
+                        131_072,
+                        262_144
+                ),
+                localTextModel(
+                        "Command A Vision",
+                        "112B",
+                        112,
+                        0,
+                        Architecture.DENSE,
+                        "Vision",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "CohereLabs/command-a-vision-07-2025",
+                        Maturity.SPECIALIZED,
+                        "cohere2_vision",
+                        "",
+                        "cohere_tools",
+                        List.of("Safetensors"),
+                        32_768,
+                        131_072
+                ),
+
+                // MiniMax agentic and multimodal families.
+                localTextModel(
+                        "MiniMax M2",
+                        "230B-A10B",
+                        230,
+                        10,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text"),
+                        "MiniMaxAI/MiniMax-M2",
+                        Maturity.FRONTIER,
+                        "minimax_m2",
+                        "",
+                        "minimax_m2_tools",
+                        List.of("Safetensors", "FP8"),
+                        196_608
+                ),
+                localTextModel(
+                        "MiniMax M2.1",
+                        "229B-A10B",
+                        229,
+                        10,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text"),
+                        "MiniMaxAI/MiniMax-M2.1",
+                        Maturity.FRONTIER,
+                        "minimax_m2",
+                        "",
+                        "minimax_m2_tools",
+                        List.of("Safetensors", "FP8"),
+                        196_608
+                ),
+                localTextModel(
+                        "MiniMax M2.5",
+                        "229B-A10B",
+                        229,
+                        10,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text"),
+                        "MiniMaxAI/MiniMax-M2.5",
+                        Maturity.FRONTIER,
+                        "minimax_m2",
+                        "",
+                        "minimax_m2_tools",
+                        List.of("Safetensors", "FP8"),
+                        196_608
+                ),
+                localTextModel(
+                        "MiniMax M2.7",
+                        "230B-A10B",
+                        230,
+                        10,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text"),
+                        "MiniMaxAI/MiniMax-M2.7",
+                        Maturity.FRONTIER,
+                        "minimax_m2",
+                        "",
+                        "minimax_m2_tools",
+                        List.of("Safetensors", "FP8"),
+                        204_800
+                ),
+                localTextModel(
+                        "MiniMax M3",
+                        "428B-A23B",
+                        428,
+                        23,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "MiniMaxAI/MiniMax-M3",
+                        Maturity.FRONTIER,
+                        "minimax_m3",
+                        "",
+                        "minimax_m3_tools",
+                        List.of("Safetensors", "BF16"),
+                        1_048_576
+                ),
+
+                // Tencent Hunyuan families.
+                localTextModel(
+                        "Hunyuan",
+                        "A13B",
+                        80,
+                        13,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "tencent/Hunyuan-A13B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "hunyuan",
+                        "hunyuan_fast_slow",
+                        "hunyuan_tools",
+                        List.of("Safetensors", "GGUF"),
+                        262_144
+                ),
+
+                // ByteDance Seed families.
+                localTextModel(
+                        "Seed-OSS",
+                        "36B",
+                        36,
+                        0,
+                        Architecture.DENSE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "ByteDance-Seed/Seed-OSS-36B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "seed_oss",
+                        "reasoning_budget",
+                        "seed_tools",
+                        List.of("Safetensors", "GGUF"),
+                        512_000
+                ),
+
+                // DeepSeek reasoning and frontier families.
+                localTextModel(
+                        "DeepSeek R1",
+                        "671B-A37B",
+                        671,
+                        37,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-R1",
+                        Maturity.FRONTIER,
+                        "deepseek",
+                        "deepseek_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "DeepSeek R1 Distill",
+                        "1.5B",
+                        1.5,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of("Qwen"),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+                        Maturity.SPECIALIZED,
+                        "deepseek_distill",
+                        "deepseek_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "DeepSeek R1 Distill",
+                        "7B",
+                        7,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of("Qwen"),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+                        Maturity.SPECIALIZED,
+                        "deepseek_distill",
+                        "deepseek_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "DeepSeek R1 Distill",
+                        "8B",
+                        8,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of("Llama"),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+                        Maturity.SPECIALIZED,
+                        "deepseek_distill",
+                        "deepseek_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "DeepSeek R1 Distill",
+                        "14B",
+                        14,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of("Qwen"),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B",
+                        Maturity.SPECIALIZED,
+                        "deepseek_distill",
+                        "deepseek_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "DeepSeek R1 Distill",
+                        "32B",
+                        32,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of("Qwen"),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+                        Maturity.SPECIALIZED,
+                        "deepseek_distill",
+                        "deepseek_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "DeepSeek R1 Distill",
+                        "70B",
+                        70,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of("Llama"),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+                        Maturity.SPECIALIZED,
+                        "deepseek_distill",
+                        "deepseek_reasoning",
+                        "",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "DeepSeek V3.2",
+                        "685B",
+                        685,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-V3.2",
+                        Maturity.FRONTIER,
+                        "deepseek_v32",
+                        "deepseek_reasoning",
+                        "deepseek_tools",
+                        List.of("Safetensors", "FP8"),
+                        163_840
+                ),
+                localTextModel(
+                        "DeepSeek V4",
+                        "Flash",
+                        304.2,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Flash"),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-V4-Flash-0731",
+                        Maturity.FRONTIER,
+                        "deepseek_v4",
+                        "deepseek_reasoning",
+                        "deepseek_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "DeepSeek V4",
+                        "Pro",
+                        1_598.8,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Pro"),
+                        List.of("text"),
+                        "deepseek-ai/DeepSeek-V4-Pro",
+                        Maturity.FRONTIER,
+                        "deepseek_v4",
+                        "deepseek_reasoning",
+                        "deepseek_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+
+                // StepFun reasoning and multimodal-capable families.
+                localTextModel(
+                        "Step 3.5",
+                        "Flash",
+                        196,
+                        11,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Flash"),
+                        List.of("text"),
+                        "stepfun-ai/Step-3.5-Flash",
+                        Maturity.FRONTIER,
+                        "step",
+                        "step_reasoning",
+                        "step_tools",
+                        List.of("Safetensors", "FP8", "NVFP4", "GGUF"),
+                        256_000
+                ),
+                localTextModel(
+                        "Step 3.7",
+                        "Flash",
+                        196,
+                        11,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Flash"),
+                        List.of("text"),
+                        "stepfun-ai/Step-3.7-Flash",
+                        Maturity.FRONTIER,
+                        "step",
+                        "step_reasoning",
+                        "step_tools",
+                        List.of("Safetensors", "FP8", "NVFP4", "GGUF"),
+                        256_000
+                ),
+
+                // Z.ai GLM reasoning and agent families.
+                localTextModel(
+                        "GLM-4.7",
+                        "Flash",
+                        30,
+                        3,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Flash"),
+                        List.of("text"),
+                        "zai-org/GLM-4.7-Flash",
+                        Maturity.SUPPORTED,
+                        "glm4",
+                        "glm_reasoning",
+                        "glm_tools",
+                        List.of("Safetensors", "GGUF"),
+                        202_752
+                ),
+                localTextModel(
+                        "GLM-4.7",
+                        "358B",
+                        358,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "zai-org/GLM-4.7",
+                        Maturity.FRONTIER,
+                        "glm4",
+                        "glm_reasoning",
+                        "glm_tools",
+                        List.of("Safetensors", "FP8"),
+                        202_752
+                ),
+                localTextModel(
+                        "GLM-5",
+                        "754B",
+                        754,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "zai-org/GLM-5",
+                        Maturity.FRONTIER,
+                        "glm5",
+                        "glm_reasoning",
+                        "glm_tools",
+                        List.of("Safetensors", "FP8"),
+                        202_752
+                ),
+                localTextModel(
+                        "GLM-5.1",
+                        "754B",
+                        754,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "zai-org/GLM-5.1",
+                        Maturity.FRONTIER,
+                        "glm5",
+                        "glm_reasoning",
+                        "glm_tools",
+                        List.of("Safetensors", "FP8"),
+                        202_752
+                ),
+                localTextModel(
+                        "GLM-5.2",
+                        "753B",
+                        753.3,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "zai-org/GLM-5.2",
+                        Maturity.FRONTIER,
+                        "glm5",
+                        "glm_reasoning",
+                        "glm_tools",
+                        List.of("Safetensors", "FP8"),
+                        202_752
+                ),
+
+                // Xiaomi MiMo reasoning and agent families.
+                localTextModel(
+                        "MiMo V2",
+                        "Flash",
+                        309.8,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Flash"),
+                        List.of("text"),
+                        "XiaomiMiMo/MiMo-V2-Flash",
+                        Maturity.FRONTIER,
+                        "mimo_v2",
+                        "mimo_reasoning",
+                        "mimo_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "MiMo V2.5",
+                        "310.8B",
+                        310.8,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "XiaomiMiMo/MiMo-V2.5",
+                        Maturity.FRONTIER,
+                        "mimo_v2_5",
+                        "mimo_reasoning",
+                        "mimo_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "MiMo V2.5",
+                        "1.02T-A42B",
+                        1020,
+                        42,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of("Pro"),
+                        List.of("text"),
+                        "XiaomiMiMo/MiMo-V2.5-Pro",
+                        Maturity.FRONTIER,
+                        "mimo_v2_5",
+                        "mimo_reasoning",
+                        "mimo_tools",
+                        List.of("Safetensors", "FP8"),
+                        1_048_576
+                ),
+
+                // NVIDIA Nemotron reasoning, agent, and multimodal families.
+                localTextModel(
+                        "Nemotron 3",
+                        "Nano-4B",
+                        4,
+                        0,
+                        Architecture.HYBRID,
+                        "Reasoning",
+                        List.of("Nano"),
+                        List.of("text"),
+                        "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+                        Maturity.SUPPORTED,
+                        "nemotron3",
+                        "nemotron_reasoning",
+                        "nemotron_tools",
+                        List.of("BF16"),
+                        262_144
+                ),
+                localTextModel(
+                        "Nemotron 3",
+                        "Nano-30B-A3B",
+                        30,
+                        3,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Nano"),
+                        List.of("text"),
+                        "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+                        Maturity.SUPPORTED,
+                        "nemotron3",
+                        "nemotron_reasoning",
+                        "nemotron_tools",
+                        List.of("BF16", "FP8", "NVFP4", "GGUF"),
+                        1_000_000
+                ),
+                localTextModel(
+                        "Nemotron 3",
+                        "Nano-30B-A3B",
+                        31,
+                        3,
+                        Architecture.HYBRID,
+                        "Reasoning",
+                        List.of("Omni"),
+                        List.of("text", "vision", "audio", "video"),
+                        "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16",
+                        Maturity.SPECIALIZED,
+                        "nemotron3",
+                        "nemotron_reasoning",
+                        "nemotron_tools",
+                        List.of("BF16", "FP8", "NVFP4"),
+                        262_144
+                ),
+                localTextModel(
+                        "Nemotron 3",
+                        "Super-120B-A12B",
+                        120,
+                        12,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Super"),
+                        List.of("text"),
+                        "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16",
+                        Maturity.FRONTIER,
+                        "nemotron3",
+                        "nemotron_reasoning",
+                        "nemotron_tools",
+                        List.of("BF16", "FP8", "NVFP4"),
+                        1_000_000
+                ),
+                localTextModel(
+                        "Nemotron 3",
+                        "Ultra-550B-A55B",
+                        550,
+                        55,
+                        Architecture.HYBRID,
+                        "Reasoning",
+                        List.of("Ultra"),
+                        List.of("text"),
+                        "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16",
+                        Maturity.FRONTIER,
+                        "nemotron3",
+                        "nemotron_reasoning",
+                        "nemotron_tools",
+                        List.of("BF16", "NVFP4"),
+                        1_048_576
+                ),
+                localTextModel(
+                        "Nemotron 3.5",
+                        "Lightning-30B-A3B",
+                        30,
+                        3,
+                        Architecture.HYBRID,
+                        "Reasoning",
+                        List.of("Lightning"),
+                        List.of("text"),
+                        "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+                        Maturity.SPECIALIZED,
+                        "nemotron3_5",
+                        "nemotron_reasoning",
+                        "nemotron_tools",
+                        List.of("BF16", "NVFP4"),
+                        262_144,
+                        1_048_576
+                ),
+
+                // OpenAI open-weight GPT-OSS families.
+                localTextModel(
+                        "GPT-OSS",
+                        "20B-A3.6B",
+                        21,
+                        3.6,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "openai/gpt-oss-20b",
+                        Maturity.PREFERRED,
+                        "openai_harmony",
+                        "harmony_analysis",
+                        "harmony_tools",
+                        List.of("Safetensors", "MXFP4", "GGUF"),
+                        131_072
+                ),
+                localTextModel(
+                        "GPT-OSS",
+                        "120B-A5.1B",
+                        117,
+                        5.1,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text"),
+                        "openai/gpt-oss-120b",
+                        Maturity.FRONTIER,
+                        "openai_harmony",
+                        "harmony_analysis",
+                        "harmony_tools",
+                        List.of("Safetensors", "MXFP4", "GGUF"),
+                        131_072
+                ),
+
+                // Moonshot/Kimi agent, coding, multimodal, and efficient-attention families.
+                localTextModel(
+                        "Moonlight",
+                        "16B-A3B",
+                        16,
+                        3,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "moonshotai/Moonlight-16B-A3B-Instruct",
+                        Maturity.SUPPORTED,
+                        "deepseek_v3",
+                        "",
+                        "",
+                        List.of("Safetensors"),
+                        8192
+                ),
+                localTextModel(
+                        "Kimi Linear",
+                        "48B-A3B",
+                        48,
+                        3,
+                        Architecture.HYBRID,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "moonshotai/Kimi-Linear-48B-A3B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "kimi_linear",
+                        "",
+                        "kimi_tools",
+                        List.of("Safetensors"),
+                        1_048_576
+                ),
+                localTextModel(
+                        "Kimi VL",
+                        "16B-A3B",
+                        16,
+                        3,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "moonshotai/Kimi-VL-A3B-Instruct",
+                        Maturity.SPECIALIZED,
+                        "kimi_vl",
+                        "",
+                        "kimi_tools",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Kimi VL",
+                        "16B-A3B",
+                        16,
+                        3,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "moonshotai/Kimi-VL-A3B-Thinking",
+                        Maturity.SPECIALIZED,
+                        "kimi_vl",
+                        "kimi_reasoning",
+                        "kimi_tools",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Kimi K2",
+                        "1T-A32B",
+                        1_000,
+                        32,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "moonshotai/Kimi-K2-Instruct",
+                        Maturity.FRONTIER,
+                        "kimi_k2",
+                        "",
+                        "kimi_tools",
+                        List.of("Safetensors", "FP8", "GGUF"),
+                        131_072
+                ),
+                localTextModel(
+                        "Kimi K2",
+                        "1T-A32B",
+                        1_000,
+                        32,
+                        Architecture.MOE,
+                        "Thinking",
+                        List.of(),
+                        List.of("text"),
+                        "moonshotai/Kimi-K2-Thinking",
+                        Maturity.FRONTIER,
+                        "kimi_k2",
+                        "kimi_reasoning",
+                        "kimi_tools",
+                        List.of("Safetensors", "FP8"),
+                        131_072
+                ),
+                localTextModel(
+                        "Kimi K2.5",
+                        "1T-A32B",
+                        1000,
+                        32,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "moonshotai/Kimi-K2.5",
+                        Maturity.FRONTIER,
+                        "kimi_k2_5",
+                        "kimi_reasoning",
+                        "kimi_tools",
+                        List.of("Safetensors", "INT4"),
+                        262_144
+                ),
+                localTextModel(
+                        "Kimi K2.6",
+                        "1T-A32B",
+                        1000,
+                        32,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "moonshotai/Kimi-K2.6",
+                        Maturity.FRONTIER,
+                        "kimi_k2_6",
+                        "kimi_reasoning",
+                        "kimi_tools",
+                        List.of("Safetensors", "INT4"),
+                        262_144
+                ),
+                localTextModel(
+                        "Kimi K2.7",
+                        "Code",
+                        1_000,
+                        32,
+                        Architecture.MOE,
+                        "Coder",
+                        List.of(),
+                        List.of("text"),
+                        "moonshotai/Kimi-K2.7-Code",
+                        Maturity.FRONTIER,
+                        "kimi_k2_7",
+                        "",
+                        "kimi_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+                localTextModel(
+                        "Kimi K3",
+                        "2.8T-A104B",
+                        2_800,
+                        104,
+                        Architecture.MOE,
+                        "Agent",
+                        List.of(),
+                        List.of("text", "vision", "video"),
+                        "moonshotai/Kimi-K3",
+                        Maturity.FRONTIER,
+                        "kimi_k3",
+                        "kimi_reasoning",
+                        "kimi_tools",
+                        List.of("Safetensors", "MXFP4", "MXFP8"),
+                        1_048_576
+                ),
+
+                // InternLM Intern-S reasoning and multimodal families.
+                localTextModel(
+                        "Intern-S1",
+                        "Mini",
+                        8,
+                        0,
+                        Architecture.DENSE,
+                        "Reasoning",
+                        List.of("Mini"),
+                        List.of("text", "vision"),
+                        "internlm/Intern-S1-mini",
+                        Maturity.SUPPORTED,
+                        "intern_s",
+                        "intern_reasoning",
+                        "intern_tools",
+                        List.of("Safetensors"),
+                        131_072
+                ),
+                localTextModel(
+                        "Intern-S1",
+                        "241B-A28B",
+                        241,
+                        28,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of(),
+                        List.of("text", "vision"),
+                        "internlm/Intern-S1",
+                        Maturity.FRONTIER,
+                        "intern_s",
+                        "intern_reasoning",
+                        "intern_tools",
+                        List.of("Safetensors", "FP8"),
+                        131_072
+                ),
+                localTextModel(
+                        "Intern-S1",
+                        "917B",
+                        917,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Pro"),
+                        List.of("text", "vision"),
+                        "internlm/Intern-S1-Pro-BF16",
+                        Maturity.FRONTIER,
+                        "intern_s",
+                        "intern_reasoning",
+                        "intern_tools",
+                        List.of("BF16"),
+                        131_072
+                ),
+                localTextModel(
+                        "Intern-S2",
+                        "35B",
+                        36,
+                        0,
+                        Architecture.HYBRID,
+                        "Reasoning",
+                        List.of("Mobius"),
+                        List.of("text", "vision"),
+                        "internlm/Intern-S2-Mobius",
+                        Maturity.EXPERIMENTAL,
+                        "intern_s2",
+                        "qwen3",
+                        "qwen3_coder",
+                        List.of("Safetensors", "BF16"),
+                        262_144
+                ),
+                localTextModel(
+                        "Intern-S2",
+                        "397B",
+                        397,
+                        0,
+                        Architecture.MOE,
+                        "Reasoning",
+                        List.of("Preview"),
+                        List.of("text", "vision"),
+                        "internlm/Intern-S2-Preview-397B",
+                        Maturity.FRONTIER,
+                        "intern_s2",
+                        "intern_reasoning",
+                        "intern_tools",
+                        List.of("Safetensors", "FP8"),
+                        262_144
+                ),
+
+                // Explicitly experimental or incomplete repositories. Keep text models on the
+                // same local-text path so a future compatible GGUF can be resolved without code changes.
+                localTextModel(
+                        "ox-alpha",
+                        "Unknown",
+                        0,
+                        0,
+                        Architecture.UNKNOWN,
+                        "Experimental",
+                        List.of(),
+                        List.of("text"),
+                        "brokenshards/ox-alpha",
+                        Maturity.EXPERIMENTAL,
+                        "unknown",
+                        "unknown",
+                        "unknown",
+                        List.of("Safetensors"),
+                        0
                 )
         );
 
@@ -1333,14 +4332,517 @@ public final class LocalModelCatalog {
         }
 
         public static List<LocalModelCatalogEntry> entries() {
-                return ENTRIES;
+                return HuggingFaceLocalModelDiscovery.merge(BUILT_IN_ENTRIES);
+        }
+
+        public static List<LocalModelCatalogEntry> builtInEntries() {
+                return BUILT_IN_ENTRIES;
         }
 
         public static Optional<LocalModelCatalogEntry> find(String id) {
                 if (id == null) {
                         return Optional.empty();
                 }
-                return ENTRIES.stream().filter(entry -> entry.id().equals(id.trim())).findFirst();
+                String normalized = id.trim();
+                return entries().stream().filter(entry -> entry.id().equals(normalized)).findFirst();
+        }
+
+        public static java.util.concurrent.CompletableFuture<HuggingFaceLocalModelDiscovery.RefreshResult> refreshRemote(boolean force) {
+                return HuggingFaceLocalModelDiscovery.refresh(BUILT_IN_ENTRIES, force);
+        }
+
+        public static java.util.concurrent.CompletableFuture<HuggingFaceLocalModelDiscovery.SearchResult> searchRemote(String query) {
+                return HuggingFaceLocalModelDiscovery.search(query, BUILT_IN_ENTRIES);
+        }
+
+        public static java.util.concurrent.CompletableFuture<HuggingFaceLocalModelDiscovery.DirectFileResult> registerDirectFile(String url) {
+                return HuggingFaceLocalModelDiscovery.registerDirectFile(url, BUILT_IN_ENTRIES);
+        }
+
+        public static boolean canResolveForInstall(LocalModelCatalogEntry entry) {
+                return HuggingFaceLocalModelDiscovery.canResolve(entry);
+        }
+
+        public static java.util.concurrent.CompletableFuture<Optional<LocalModelCatalogEntry>> resolveForInstall(String id) {
+                LocalModelCatalogEntry entry = find(id).orElse(null);
+                if (entry == null) {
+                        return java.util.concurrent.CompletableFuture.completedFuture(Optional.empty());
+                }
+                if (entry.runnable()) {
+                        return java.util.concurrent.CompletableFuture.completedFuture(Optional.of(entry));
+                }
+                return HuggingFaceLocalModelDiscovery.resolveForInstall(entry, BUILT_IN_ENTRIES);
+        }
+
+
+        private static LocalModelCatalogEntry localTextModel(
+                String family,
+                String capability,
+                double total,
+                double active,
+                Architecture architecture,
+                String type,
+                List<String> modifiers,
+                List<String> modalities,
+                String repository,
+                Maturity maturity,
+                String template,
+                String reasoning,
+                String tools,
+                List<String> formats,
+                int context,
+                ModelArtifact... artifacts
+        ) {
+                return localTextModel(
+                        family,
+                        capability,
+                        total,
+                        active,
+                        architecture,
+                        type,
+                        modifiers,
+                        modalities,
+                        repository,
+                        maturity,
+                        template,
+                        reasoning,
+                        tools,
+                        formats,
+                        context,
+                        context,
+                        artifacts
+                );
+        }
+
+        private static LocalModelCatalogEntry localTextModel(
+                String family,
+                String capability,
+                double total,
+                double active,
+                Architecture architecture,
+                String type,
+                List<String> modifiers,
+                List<String> modalities,
+                String repository,
+                Maturity maturity,
+                String template,
+                String reasoning,
+                String tools,
+                List<String> formats,
+                int context,
+                int extendedContext,
+                ModelArtifact... artifacts
+        ) {
+                return canonicalLocalModel(
+                        family,
+                        capability,
+                        total,
+                        active,
+                        architecture,
+                        type,
+                        modifiers,
+                        modalities,
+                        repository,
+                        maturity,
+                        template,
+                        reasoning,
+                        tools,
+                        formats,
+                        context,
+                        extendedContext,
+                        true,
+                        artifacts
+                );
+        }
+
+        private static LocalModelCatalogEntry localSpecializedModel(
+                String family,
+                String capability,
+                double total,
+                double active,
+                Architecture architecture,
+                String type,
+                List<String> modifiers,
+                List<String> modalities,
+                String repository,
+                Maturity maturity,
+                String template,
+                String reasoning,
+                String tools,
+                List<String> formats,
+                int context
+        ) {
+                return localSpecializedModel(
+                        family,
+                        capability,
+                        total,
+                        active,
+                        architecture,
+                        type,
+                        modifiers,
+                        modalities,
+                        repository,
+                        maturity,
+                        template,
+                        reasoning,
+                        tools,
+                        formats,
+                        context,
+                        context
+                );
+        }
+
+        private static LocalModelCatalogEntry localSpecializedModel(
+                String family,
+                String capability,
+                double total,
+                double active,
+                Architecture architecture,
+                String type,
+                List<String> modifiers,
+                List<String> modalities,
+                String repository,
+                Maturity maturity,
+                String template,
+                String reasoning,
+                String tools,
+                List<String> formats,
+                int context,
+                int extendedContext
+        ) {
+                return canonicalLocalModel(
+                        family,
+                        capability,
+                        total,
+                        active,
+                        architecture,
+                        type,
+                        modifiers,
+                        modalities,
+                        repository,
+                        maturity,
+                        template,
+                        reasoning,
+                        tools,
+                        formats,
+                        context,
+                        extendedContext,
+                        false
+                );
+        }
+
+        private static LocalModelCatalogEntry canonicalLocalModel(
+                String family,
+                String capability,
+                double total,
+                double active,
+                Architecture architecture,
+                String type,
+                List<String> modifiers,
+                List<String> modalities,
+                String repository,
+                Maturity maturity,
+                String template,
+                String reasoning,
+                String tools,
+                List<String> formats,
+                int context,
+                int extendedContext,
+                boolean textRuntime,
+                ModelArtifact... artifacts
+        ) {
+                List<ModelArtifact> artifactList = artifacts == null ? List.of() : List.of(artifacts);
+                boolean runnable = textRuntime && !artifactList.isEmpty();
+
+                String id = "hf-" + repository.toLowerCase(Locale.ROOT)
+                        .replaceAll("[^a-z0-9]+", "-")
+                        .replaceAll("(^-|-$)", "");
+                String displayName = family + " " + capability
+                        + ("Base".equals(type) ? "" : " " + type)
+                        + (modifiers.isEmpty() ? "" : " " + String.join(" ", modifiers));
+
+                List<String> runtimeFormats = canonicalRuntimeFormats(formats, artifactList);
+                LocalModelCanonicalMetadata canonical = new LocalModelCanonicalMetadata(
+                        family,
+                        family,
+                        capability,
+                        total,
+                        active,
+                        architecture,
+                        type,
+                        modifiers,
+                        modalities,
+                        context,
+                        extendedContext,
+                        repository,
+                        "",
+                        maturity,
+                        template,
+                        reasoning,
+                        tools,
+                        runtimeFormats,
+                        runnable,
+                        runnable ? "" : unavailableReason(textRuntime, modalities, runtimeFormats)
+                );
+
+                List<LocalModelCapabilityTag> capabilityTags = new java.util.ArrayList<>();
+                if (textRuntime && modalities.contains("text")) {
+                        capabilityTags.add(LocalModelCapabilityTag.CHAT);
+                        if (!tools.isBlank() && !"unknown".equals(tools)) {
+                                capabilityTags.add(LocalModelCapabilityTag.AUTOMATION_TOOLS);
+                        }
+                        if ("Coder".equals(type)) {
+                                capabilityTags.add(LocalModelCapabilityTag.CODE);
+                        }
+                }
+
+                long downloadBytes = artifactList.stream()
+                        .mapToLong(ModelArtifact::sizeBytes)
+                        .sum();
+                long minimumMemory = runnable ? roundedGiB(downloadBytes + (2L * GIB)) : 0L;
+                long recommendedMemory = runnable
+                        ? roundedGiB(downloadBytes + Math.max(4L * GIB, downloadBytes / 4L))
+                        : 0L;
+
+                String summary = runnable
+                        ? "Verified local llama.cpp GGUF implementation pinned by exact size and SHA-256."
+                        : textRuntime
+                        ? "Canonical local text model. Koil can resolve a verified GGUF implementation dynamically from Hugging Face."
+                        : "Canonical local specialized model. It remains unavailable until Koil has a verified matching specialized runtime.";
+
+                if (textRuntime) {
+                        return localTextModelEntry(
+                                id,
+                                displayName,
+                                id,
+                                parameterLabel(total, active, capability),
+                                quantizationLabel(artifactList),
+                                licenseFor(repository),
+                                runnable ? Math.min(32_768, Math.max(512, context)) : Math.max(512, context),
+                                minimumMemory,
+                                recommendedMemory,
+                                reasoningEstimate(type),
+                                !tools.isBlank() && !"unknown".equals(tools),
+                                capabilityTags,
+                                summary,
+                                artifactList,
+                                canonical
+                        );
+                }
+                return new LocalModelCatalogEntry(
+                        id,
+                        displayName,
+                        "catalog_metadata",
+                        "unavailable",
+                        id,
+                        parameterLabel(total, active, capability),
+                        "",
+                        licenseFor(repository),
+                        Math.max(0, context),
+                        0L,
+                        0L,
+                        reasoningEstimate(type),
+                        false,
+                        capabilityTags,
+                        summary,
+                        List.of(),
+                        canonical
+                );
+        }
+
+        static LocalModelCatalogEntry dynamicLocalTextModel(
+                String id,
+                String displayName,
+                String modelId,
+                String parameterCount,
+                String quantization,
+                String license,
+                int contextTokens,
+                long minimumMemory,
+                long recommendedMemory,
+                int reasoningEstimate,
+                boolean toolCalling,
+                List<LocalModelCapabilityTag> capabilityTags,
+                String summary,
+                List<ModelArtifact> artifacts,
+                LocalModelCanonicalMetadata canonical
+        ) {
+                return localTextModelEntry(
+                        id,
+                        displayName,
+                        modelId,
+                        parameterCount,
+                        quantization,
+                        license,
+                        contextTokens,
+                        minimumMemory,
+                        recommendedMemory,
+                        reasoningEstimate,
+                        toolCalling,
+                        capabilityTags,
+                        summary,
+                        artifacts,
+                        canonical
+                );
+        }
+
+        private static LocalModelCatalogEntry localTextModelEntry(
+                String id,
+                String displayName,
+                String modelId,
+                String parameterCount,
+                String quantization,
+                String license,
+                int contextTokens,
+                long minimumMemory,
+                long recommendedMemory,
+                int reasoningEstimate,
+                boolean toolCalling,
+                List<LocalModelCapabilityTag> capabilityTags,
+                String summary,
+                List<ModelArtifact> artifacts,
+                LocalModelCanonicalMetadata canonical
+        ) {
+                return new LocalModelCatalogEntry(
+                        id,
+                        displayName,
+                        PROVIDER,
+                        RUNTIME,
+                        modelId,
+                        parameterCount,
+                        quantization,
+                        license,
+                        Math.max(512, Math.min(32_768, contextTokens)),
+                        minimumMemory,
+                        recommendedMemory,
+                        reasoningEstimate,
+                        toolCalling,
+                        capabilityTags,
+                        summary,
+                        artifacts,
+                        canonical
+                );
+        }
+
+        private static List<String> canonicalRuntimeFormats(
+                List<String> formats,
+                List<ModelArtifact> artifacts
+        ) {
+                java.util.LinkedHashSet<String> values = new java.util.LinkedHashSet<>(
+                        formats == null ? List.of() : formats
+                );
+                if (!artifacts.isEmpty()) {
+                        values.add("GGUF");
+                        String quantization = quantizationLabel(artifacts);
+                        if (!quantization.isBlank() && !"GGUF".equals(quantization)) {
+                                values.add(quantization);
+                        }
+                }
+                return List.copyOf(values);
+        }
+
+        private static String quantizationLabel(List<ModelArtifact> artifacts) {
+                if (artifacts == null || artifacts.isEmpty()) {
+                        return "";
+                }
+                String name = artifacts.get(0).fileName().toUpperCase(Locale.ROOT);
+                for (String value : List.of(
+                        "Q2_K", "Q3_K_M", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0",
+                        "MXFP4", "NVFP4", "FP8", "BF16", "FP16"
+                )) {
+                        if (name.contains(value)) {
+                                return value;
+                        }
+                }
+                return name.endsWith(".GGUF") ? "GGUF" : "";
+        }
+
+        private static String licenseFor(String repository) {
+                String value = repository == null ? "" : repository.toLowerCase(Locale.ROOT);
+                if (value.startsWith("qwen/")) {
+                        return "Apache-2.0";
+                }
+                if (value.startsWith("google/gemma")) {
+                        return "Gemma";
+                }
+                if (value.startsWith("openai/gpt-oss")) {
+                        return "Apache-2.0";
+                }
+                if (value.startsWith("ibm-granite/")) {
+                        return "Apache-2.0";
+                }
+                return "See official model card";
+        }
+
+        private static int reasoningEstimate(String type) {
+                return switch (type == null ? "" : type) {
+                        case "Thinking", "Reasoning" -> 90;
+                        case "Agent" -> 85;
+                        case "Coder" -> 78;
+                        case "Research" -> 72;
+                        case "Instruct" -> 65;
+                        case "Vision" -> 60;
+                        case "Base" -> 50;
+                        default -> 55;
+                };
+        }
+
+        private static long roundedGiB(long bytes) {
+                if (bytes <= 0L) {
+                        return 0L;
+                }
+                long gib = (bytes + GIB - 1L) / GIB;
+                return gib * GIB;
+        }
+
+        private static String unavailableReason(
+                boolean textRuntime,
+                List<String> modalities,
+                List<String> formats
+        ) {
+                if (textRuntime) {
+                        return "No verified llama.cpp GGUF artifact is pinned for this local text model yet.";
+                }
+                if (modalities.stream().anyMatch(value -> value.startsWith("image_"))) {
+                        return "Koil has no verified local diffusion runtime for this model yet.";
+                }
+                if (modalities.contains("audio")) {
+                        return "Koil has no verified local audio runtime for this model yet.";
+                }
+                if (modalities.contains("embedding")) {
+                        return "Koil has no verified local embedding runtime for this model yet.";
+                }
+                if (modalities.contains("reranking")) {
+                        return "Koil has no verified local reranking runtime for this model yet.";
+                }
+                return "No verified Koil runtime/artifact pair is registered for " + String.join("/", formats) + ".";
+        }
+
+        private static String parameterLabel(double total, double active, String fallback) {
+                if (total <= 0) {
+                        return fallback;
+                }
+
+                String totalLabel = formatB(total);
+                return active > 0 && active < total
+                        ? totalLabel + " / " + formatB(active) + " active"
+                        : totalLabel;
+        }
+
+        private static String formatB(double value) {
+                if (value >= 1_000) {
+                        return trim(value / 1_000) + "T";
+                }
+                return trim(value) + "B";
+        }
+
+        private static String trim(double value) {
+                if (Math.rint(value) == value) {
+                        return Long.toString((long) value);
+                }
+                return String.format(Locale.ROOT, "%.2f", value)
+                        .replaceAll("0+$", "")
+                        .replaceAll("\\.$", "");
         }
 
         private static LocalModelCatalogEntry qwen(
@@ -1411,11 +4913,17 @@ public final class LocalModelCatalog {
                 String summary,
                 ModelArtifact... artifacts
         ) {
-                return new LocalModelCatalogEntry(
+                List<ModelArtifact> artifactList = List.of(artifacts);
+                LocalModelCanonicalMetadata canonical = LocalModelCanonicalMetadata.legacy(
+                        displayName,
+                        parameters,
+                        quantization,
+                        32_768,
+                        !artifactList.isEmpty()
+                );
+                return localTextModelEntry(
                         id,
                         displayName,
-                        PROVIDER,
-                        RUNTIME,
                         modelId,
                         parameters,
                         quantization,
@@ -1430,7 +4938,8 @@ public final class LocalModelCatalog {
                                 LocalModelCapabilityTag.AUTOMATION_TOOLS
                         ),
                         summary,
-                        List.of(artifacts)
+                        artifactList,
+                        canonical
                 );
         }
 

@@ -656,7 +656,7 @@ public class FirstLaunchTermsScreen extends Screen {
             ContentRow.tableHeader("Stored item", "Current behavior"),
             ContentRow.tableRow("Configuration and API key", "koil/sys/model/local-model.json; generated key is stored in plaintext JSON and POSIX owner-only permissions are attempted where supported"),
             ContentRow.tableRow("Model selection", "selected provider, model and local runtime/model paths are persisted for later sessions"),
-            ContentRow.tableRow("Runtime log", "koil/sys/model/logs/local-model-runtime.log stores event summaries such as startup, request completion and context-size metadata"),
+            ContentRow.tableRow("Runtime log", "koil/logs/latest.log stores local-model and Automation events under [Automation Thread]; package and development-bridge events use their own named thread groups in the same Koil log"),
             ContentRow.tableRow("Deep Thought", "up to 64 JSON session files per scope are loaded; each checkpoint may be up to 64 MB and remains until explicitly deleted or otherwise cleaned"),
             ContentRow.tableRow("Conversation memory", "current general and automation conversations are bounded in process memory; the generated config records persistentConversationHistory and persistentAssociativeMemory as false"),
             ContentRow.tableRow("Controls", "/model cancel, stop, restart, reset, uninstall, queue editing, Answer Now, Deep Thought pause/resume and Automation off/exit provide different cancellation or clearing actions"),

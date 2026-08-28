@@ -188,11 +188,32 @@ public final class ModelAgentPlatformProof {
         require("stale".equals(rejected.status()) && rejected.retryable(), "stale mutation was not rejected structurally");
 
         String currentHash = written.output().get("resultingContentHash").getAsString();
+        JsonObject append = args("instance", path);
+        append.addProperty("content", "delta\n");
+        append.addProperty("expectedHash", currentHash);
+        ModelToolResult appended = execute("workspace.append", append);
+        require(appended.completedAndValidated()
+                        && appended.output().get("bytesAppended").getAsInt() == 6
+                        && "file".equals(appended.output().get("pathType").getAsString())
+                        && appended.output().get("isRegularFile").getAsBoolean(),
+                "revision-checked append did not return verified file evidence");
+        currentHash = appended.output().get("resultingContentHash").getAsString();
+
+        String missingParent = "proof/missing-" + UUID.randomUUID();
+        JsonObject invalidCreate = args("instance", missingParent + "/file.txt");
+        invalidCreate.addProperty("content", "must not be created");
+        ModelToolResult invalidCreateResult = execute("workspace.create", invalidCreate);
+        require("failed".equals(invalidCreateResult.status())
+                        && invalidCreateResult.detail().contains("workspace.mkdir")
+                        && !Files.exists(ModelWorkspaceRegistry.resolve("instance", missingParent, false).path()),
+                "file creation silently created a missing parent instead of requiring workspace.mkdir");
 
         String directory = "proof/manage-" + UUID.randomUUID();
         ModelToolResult madeDirectory = execute("workspace.mkdir", args("instance", directory));
         require(madeDirectory.completedAndValidated()
-                        && "directory".equals(madeDirectory.output().get("filesystemState").getAsString()),
+                        && "directory".equals(madeDirectory.output().get("filesystemState").getAsString())
+                        && madeDirectory.output().get("isDirectory").getAsBoolean()
+                        && !madeDirectory.output().get("isRegularFile").getAsBoolean(),
                 "workspace directory creation was not verified");
         JsonObject stat = args("instance", path);
         ModelToolResult inspected = execute("workspace.stat", stat);

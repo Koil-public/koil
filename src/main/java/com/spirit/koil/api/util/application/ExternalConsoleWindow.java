@@ -1133,9 +1133,9 @@ public final class ExternalConsoleWindow extends JFrame implements ConsoleReposi
     private Path channelLogPath(ConsoleChannel channel) {
         return switch (channel) {
             case KOIL -> Path.of("koil/logs/latest.log");
-            case PACKAGE -> Path.of("koil/logs/package/latest.log");
+            case PACKAGE -> Path.of("koil/logs/latest.log");
             case MINECRAFT -> Path.of("logs/latest.log");
-            case CLI -> Path.of("koil/logs/automate/latest.log");
+            case CLI -> Path.of("koil/logs/latest.log");
         };
     }
 

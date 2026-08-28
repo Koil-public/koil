@@ -424,7 +424,7 @@ public final class ModelGenerationChatPanel implements ChatHudPanel {
             MinecraftClient client,
             ModelGenerationHudState.Snapshot snapshot
     ) {
-        String elapsed = ModelRequestMetricsPresentation.elapsedLabel(snapshot, System.currentTimeMillis());
+        String elapsed = ModelRequestMetricsPresentation.compactRateAndElapsed(snapshot, System.currentTimeMillis());
         int color = RichChatStructuralStyleRegistry.color(
                 RichChatStructuralStyleRegistry.Role.SUBTEXT,
                 0xFF555555

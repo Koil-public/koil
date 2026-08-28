@@ -14,7 +14,24 @@ public record LocalModelCompatibility(Level level, String label, String detail) 
             HardwareCapabilityReport report,
             long remainingDownloadBytes
     ) {
-        if (entry == null || report == null) {
+        if (entry == null) {
+            return new LocalModelCompatibility(Level.UNKNOWN, "Unknown", "Run /model diagnostics.");
+        }
+        if (!entry.runnable()) {
+            if (LocalModelCatalog.canResolveForInstall(entry)) {
+                return new LocalModelCompatibility(
+                        Level.UNKNOWN,
+                        "Resolvable",
+                        "Koil can resolve a verified GGUF implementation from Hugging Face when installation is requested."
+                );
+            }
+            return new LocalModelCompatibility(
+                    Level.UNAVAILABLE,
+                    "Catalog only",
+                    entry.canonical().unavailableReason()
+            );
+        }
+        if (report == null) {
             return new LocalModelCompatibility(Level.UNKNOWN, "Unknown", "Run /model diagnostics.");
         }
         if (report.freeStorageBytes() > 0L && remainingDownloadBytes > report.freeStorageBytes()) {
@@ -53,6 +70,7 @@ public record LocalModelCompatibility(Level level, String label, String detail) 
         SUPPORTED_WITH_LIMITS,
         NOT_RECOMMENDED,
         STORAGE_BLOCKED,
+        UNAVAILABLE,
         UNKNOWN
     }
 }

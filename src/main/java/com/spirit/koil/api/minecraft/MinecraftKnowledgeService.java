@@ -19,12 +19,21 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Item;
 import net.minecraft.recipe.Ingredient;
 import net.minecraft.recipe.Recipe;
+import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.registry.entry.RegistryEntryList;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKeys;
+import net.minecraft.registry.tag.TagKey;
+import net.minecraft.resource.Resource;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+import net.fabricmc.loader.api.FabricLoader;
+import net.fabricmc.loader.api.ModContainer;
 
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -43,6 +52,7 @@ import java.util.concurrent.CompletableFuture;
 public final class MinecraftKnowledgeService {
     private static final int MAXIMUM_RESULTS = 32;
     private static final int MAXIMUM_ALTERNATIVES = 12;
+    private static final int MAXIMUM_RESOURCE_BYTES = 32 * 1024;
 
     private MinecraftKnowledgeService() {
     }
@@ -76,6 +86,9 @@ public final class MinecraftKnowledgeService {
                     case "player" -> player(client, limit, fields);
                     case "target" -> target(client, fields);
                     case "registry" -> registry(client, registryKind, needle, limit);
+                    case "tag", "tags" -> tag(client, registryKind, needle, limit);
+                    case "resource", "json", "resource_json" -> resource(client, needle, limit, fields);
+                    case "mod", "mods", "mod_info" -> mods(needle, limit);
                     case "recipe", "recipes" -> recipes(client, needle, limit);
                     case "advancement", "advancements" -> advancements(client, needle, limit);
                     case "block", "block_info" -> blockInfo(needle);
@@ -102,7 +115,7 @@ public final class MinecraftKnowledgeService {
                     default -> new Result(
                             false,
                             new JsonObject(),
-                            "Unknown knowledge query. Use catalog, player, target, registry, item, block, entity, effect, enchantment, biome, dimension, recipe, advancement, structure, command, or nbt."
+                            "Unknown knowledge query. Use catalog, player, target, registry, tag, resource, mod, item, block, entity, effect, enchantment, biome, dimension, recipe, advancement, structure, command, or nbt."
                     );
                 });
             } catch (RuntimeException failure) {
@@ -154,6 +167,27 @@ public final class MinecraftKnowledgeService {
                         "item", "block", "entity_type", "status_effect", "enchantment",
                         "sound_event", "biome", "structure"
                 )
+        );
+        addCategory(
+                categories,
+                "tag",
+                true,
+                "active static and synchronized registry tag membership",
+                List.of("registry", "id", "members", "memberCount", "truncated")
+        );
+        addCategory(
+                categories,
+                "resource",
+                client.getResourceManager() != null,
+                "active client resource-pack JSON with bounded exact reads",
+                List.of("id", "pack", "json", "topLevelKeys", "byteCount", "truncated")
+        );
+        addCategory(
+                categories,
+                "mod",
+                true,
+                "installed Fabric Loader metadata",
+                List.of("id", "name", "version", "environment", "description", "authors", "licenses", "provides")
         );
         addCategory(
                 categories,
@@ -699,6 +733,165 @@ public final class MinecraftKnowledgeService {
                     "Unknown registry. Use item, block, entity_type, status_effect, enchantment, sound_event, biome, structure, or dimension_type."
             );
         };
+    }
+
+    private static Result tag(MinecraftClient client, String kind, String query, int limit) {
+        Identifier id = Identifier.tryParse(query);
+        if (id == null) {
+            return unavailable("An exact namespaced tag id is required, such as minecraft:logs.");
+        }
+        return switch (kind) {
+            case "item", "items" -> tagEntries("item", Registries.ITEM, RegistryKeys.ITEM, id, limit);
+            case "block", "blocks" -> tagEntries("block", Registries.BLOCK, RegistryKeys.BLOCK, id, limit);
+            case "entity", "entity_type", "entities" ->
+                    tagEntries("entity_type", Registries.ENTITY_TYPE, RegistryKeys.ENTITY_TYPE, id, limit);
+            case "fluid", "fluids" -> tagEntries("fluid", Registries.FLUID, RegistryKeys.FLUID, id, limit);
+            case "biome", "biomes" -> {
+                if (client.getNetworkHandler() == null) {
+                    yield unavailable("A connection with synchronized biome tags is required.");
+                }
+                Registry<?> registry = client.getNetworkHandler().getRegistryManager().get(RegistryKeys.BIOME);
+                yield tagEntriesUnchecked("biome", registry, RegistryKeys.BIOME, id, limit);
+            }
+            default -> unavailable("Unsupported tag registry. Use item, block, entity_type, fluid, or biome.");
+        };
+    }
+
+    private static <T> Result tagEntries(
+            String kind,
+            Registry<T> registry,
+            RegistryKey<? extends Registry<T>> registryKey,
+            Identifier id,
+            int limit
+    ) {
+        TagKey<T> tag = TagKey.of(registryKey, id);
+        java.util.Optional<RegistryEntryList.Named<T>> entries = registry.getEntryList(tag);
+        if (entries.isEmpty()) {
+            return unavailable("No active " + kind + " tag matches '" + id + "'.");
+        }
+        List<String> members = entries.get().stream()
+                .map(RegistryEntry::getKey)
+                .flatMap(java.util.Optional::stream)
+                .map(key -> key.getValue().toString())
+                .sorted()
+                .toList();
+        JsonObject output = new JsonObject();
+        output.addProperty("registry", kind);
+        output.addProperty("id", id.toString());
+        output.addProperty("memberCount", members.size());
+        output.addProperty("truncated", members.size() > limit);
+        JsonArray encoded = new JsonArray();
+        members.stream().limit(limit).forEach(encoded::add);
+        output.add("members", encoded);
+        return success(output, "Tag membership was read from the active registry.");
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static Result tagEntriesUnchecked(
+            String kind,
+            Registry registry,
+            RegistryKey registryKey,
+            Identifier id,
+            int limit
+    ) {
+        return tagEntries(kind, registry, registryKey, id, limit);
+    }
+
+    private static Result resource(
+            MinecraftClient client,
+            String query,
+            int limit,
+            List<String> fields
+    ) {
+        if (client.getResourceManager() == null) {
+            return unavailable("The active client resource manager is unavailable.");
+        }
+        String needle = normalize(query);
+        Map<Identifier, Resource> matches = client.getResourceManager().findResources(
+                "",
+                id -> id.getPath().endsWith(".json")
+                        && (needle.isBlank() || contains(id.toString(), needle))
+        );
+        List<Identifier> ids = matches.keySet().stream().sorted().toList();
+        Identifier exact = Identifier.tryParse(query);
+        if (exact != null && matches.containsKey(exact)) {
+            Resource selected = matches.get(exact);
+            try (InputStream input = selected.getInputStream()) {
+                byte[] bytes = input.readNBytes(MAXIMUM_RESOURCE_BYTES + 1);
+                boolean truncated = bytes.length > MAXIMUM_RESOURCE_BYTES;
+                int byteCount = truncated ? MAXIMUM_RESOURCE_BYTES : bytes.length;
+                JsonObject output = new JsonObject();
+                output.addProperty("id", exact.toString());
+                output.addProperty("pack", selected.getResourcePackName());
+                output.addProperty("byteCount", byteCount);
+                output.addProperty("truncated", truncated);
+                if (truncated) {
+                    output.addProperty("contentAvailable", false);
+                    return success(output, "The exact JSON resource exists but exceeds the bounded read limit; no partial JSON was presented as complete.");
+                }
+                com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(
+                        new String(bytes, StandardCharsets.UTF_8)
+                );
+                if (!fields.isEmpty() && parsed.isJsonObject()) {
+                    output.add("json", selectFields(parsed.getAsJsonObject(), fields));
+                } else {
+                    output.add("json", parsed);
+                }
+                JsonArray keys = new JsonArray();
+                if (parsed.isJsonObject()) parsed.getAsJsonObject().keySet().forEach(keys::add);
+                output.add("topLevelKeys", keys);
+                return success(output, fields.isEmpty()
+                        ? "The exact bounded JSON resource was read from the active client resource stack."
+                        : "Only the requested top-level JSON fields were returned from the exact active resource.");
+            } catch (Exception failure) {
+                return unavailable("The exact active resource could not be decoded as bounded JSON: "
+                        + (failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage()));
+            }
+        }
+        JsonObject output = new JsonObject();
+        output.addProperty("query", query == null ? "" : query);
+        output.addProperty("matchCount", ids.size());
+        output.addProperty("truncated", ids.size() > limit);
+        JsonArray resources = new JsonArray();
+        ids.stream().limit(limit).forEach(id -> resources.add(id.toString()));
+        output.add("resources", resources);
+        return success(output, "Matching JSON resource identifiers were listed; read one exact id for content.");
+    }
+
+    private static Result mods(String query, int limit) {
+        String needle = normalize(query);
+        List<ModContainer> matches = FabricLoader.getInstance().getAllMods().stream()
+                .filter(mod -> needle.isBlank()
+                        || contains(mod.getMetadata().getId(), needle)
+                        || contains(mod.getMetadata().getName(), needle))
+                .sorted(Comparator.comparing(mod -> mod.getMetadata().getId()))
+                .toList();
+        JsonArray rows = new JsonArray();
+        for (ModContainer mod : matches.stream().limit(limit).toList()) {
+            JsonObject encoded = new JsonObject();
+            encoded.addProperty("id", mod.getMetadata().getId());
+            encoded.addProperty("name", mod.getMetadata().getName());
+            encoded.addProperty("version", mod.getMetadata().getVersion().getFriendlyString());
+            encoded.addProperty("environment", mod.getMetadata().getEnvironment().toString());
+            String description = mod.getMetadata().getDescription();
+            encoded.addProperty("description", description == null ? "" : description.substring(0, Math.min(512, description.length())));
+            JsonArray authors = new JsonArray();
+            mod.getMetadata().getAuthors().stream().limit(12).forEach(person -> authors.add(person.getName()));
+            encoded.add("authors", authors);
+            JsonArray licenses = new JsonArray();
+            mod.getMetadata().getLicense().stream().limit(12).forEach(licenses::add);
+            encoded.add("licenses", licenses);
+            JsonArray provides = new JsonArray();
+            mod.getMetadata().getProvides().stream().limit(16).forEach(provides::add);
+            encoded.add("provides", provides);
+            rows.add(encoded);
+        }
+        JsonObject output = new JsonObject();
+        output.addProperty("query", query == null ? "" : query);
+        output.addProperty("matchCount", matches.size());
+        output.addProperty("truncated", matches.size() > limit);
+        output.add("mods", rows);
+        return success(output, "Installed mod metadata was read from Fabric Loader without opening mod files.");
     }
 
     private static <T> Result staticRegistry(String kind, Registry<T> registry, String query, int limit) {

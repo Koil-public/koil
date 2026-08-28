@@ -4,6 +4,8 @@ import com.spirit.client.gui.model.LocalModelSetupScreen;
 import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
 import com.spirit.koil.api.model.catalog.LocalModelCompatibility;
+import com.spirit.koil.api.model.catalog.LocalModelCatalogView;
+import com.spirit.koil.api.model.catalog.LocalModelReliabilityStore;
 import com.spirit.koil.api.model.chat.LocalModelCatalogChatRow;
 import com.spirit.koil.api.model.chat.LocalModelControlChatFeedback;
 import com.spirit.koil.api.model.hardware.HardwareCapabilityReport;
@@ -15,12 +17,17 @@ import com.spirit.koil.api.model.voice.ModelVoiceService;
 import com.spirit.koil.api.model.tool.LocalModelToolCatalog;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
+import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ConfirmScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.command.CommandSource;
 import net.minecraft.screen.ScreenTexts;
+import net.minecraft.text.ClickEvent;
+import net.minecraft.text.HoverEvent;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 
@@ -28,6 +35,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import static com.mojang.brigadier.arguments.IntegerArgumentType.getInteger;
+import static com.mojang.brigadier.arguments.IntegerArgumentType.integer;
 import static com.mojang.brigadier.arguments.StringArgumentType.getString;
 import static com.mojang.brigadier.arguments.StringArgumentType.greedyString;
 import static com.mojang.brigadier.arguments.StringArgumentType.word;
@@ -35,6 +44,8 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.arg
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
 
 public final class LocalModelCommandBridge {
+    private static final int CATALOG_PAGE_SIZE = 10;
+
     private LocalModelCommandBridge() {
     }
 
@@ -77,10 +88,38 @@ public final class LocalModelCommandBridge {
                             showHelp();
                             return 1;
                         }))
-                        .then(literal("list").executes(context -> {
-                            showCatalog();
-                            return 1;
-                        }))
+                        .then(literal("list")
+                                .executes(context -> {
+                                    showCatalog(1, "model");
+                                    return 1;
+                                })
+                                .then(argument("page", integer(1))
+                                        .executes(context -> {
+                                            showCatalog(getInteger(context, "page"), "model");
+                                            return 1;
+                                        })))
+                        .then(literal("catalog")
+                                .then(literal("refresh").executes(context -> {
+                                    refreshModelCatalog();
+                                    return 1;
+                                }))
+                                .then(literal("search")
+                                        .then(argument("query", greedyString())
+                                                .executes(context -> {
+                                                    searchModelCatalog(getString(context, "query"), 1, true);
+                                                    return 1;
+                                                })))
+                                .then(literal("search-page")
+                                        .then(argument("page", integer(1))
+                                                .then(argument("query", greedyString())
+                                                        .executes(context -> {
+                                                            searchModelCatalog(
+                                                                    getString(context, "query"),
+                                                                    getInteger(context, "page"),
+                                                                    false
+                                                            );
+                                                            return 1;
+                                                        })))))
                         .then(literal("installed").executes(context -> {
                             showInstalled();
                             return 1;
@@ -92,6 +131,12 @@ public final class LocalModelCommandBridge {
                                     installModel(getString(context, "catalog_id"), false);
                                     return 1;
                                 })))
+                        .then(literal("install-url")
+                                .then(argument("url", greedyString())
+                                        .executes(context -> {
+                                            installDirectUrl(getString(context, "url"));
+                                            return 1;
+                                        })))
                         .then(literal("use")
                                 .then(argument("catalog_id", word())
                                         .suggests((context, builder) -> suggestInstalledModels(builder, false))
@@ -181,9 +226,25 @@ public final class LocalModelCommandBridge {
                                     return 1;
                                 })))
                         .then(literal("logs").executes(context -> {
-                            info("Local model log: koil/sys/model/logs/local-model-runtime.log");
+                            info("Local model and Automation log: koil/logs/latest.log | Automation Thread");
                             return 1;
                         }))
+                        .then(literal("reliability")
+                                .executes(context -> {
+                                    showReliability(LocalModelService.selectedCatalogId());
+                                    return 1;
+                                })
+                                .then(literal("reset")
+                                        .executes(context -> {
+                                            resetReliability(LocalModelService.selectedCatalogId());
+                                            return 1;
+                                        })
+                                        .then(argument("catalog_id", word())
+                                                .suggests((context, builder) -> suggestInstalledModels(builder, true))
+                                                .executes(context -> {
+                                                    resetReliability(getString(context, "catalog_id"));
+                                                    return 1;
+                                                }))))
                         .then(literal("prompt").executes(context -> {
                             showPromptLocation();
                             return 1;
@@ -214,6 +275,59 @@ public final class LocalModelCommandBridge {
                                                 }))))
                 )
         );
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+                dispatcher.register(modelsCommand())
+        );
+    }
+
+    static LiteralArgumentBuilder<FabricClientCommandSource> modelsCommand() {
+        return literal("models")
+                        .executes(context -> {
+                            openSetup();
+                            return 1;
+                        })
+                        .then(literal("setup").executes(context -> {
+                            openSetup();
+                            return 1;
+                        }))
+                        .then(literal("list")
+                                .executes(context -> {
+                                    showCatalog(1, "models");
+                                    return 1;
+                                })
+                                .then(argument("page", integer(1))
+                                        .executes(context -> {
+                                            showCatalog(getInteger(context, "page"), "models");
+                                            return 1;
+                                        })))
+                        .then(literal("catalog")
+                                .then(literal("refresh").executes(context -> {
+                                    refreshModelCatalog();
+                                    return 1;
+                                }))
+                                .then(literal("search")
+                                        .then(argument("query", greedyString())
+                                                .executes(context -> {
+                                                    searchModelCatalog(getString(context, "query"), 1, true);
+                                                    return 1;
+                                                })))
+                                .then(literal("search-page")
+                                        .then(argument("page", integer(1))
+                                                .then(argument("query", greedyString())
+                                                        .executes(context -> {
+                                                            searchModelCatalog(
+                                                                    getString(context, "query"),
+                                                                    getInteger(context, "page"),
+                                                                    false
+                                                            );
+                                                            return 1;
+                                                        })))))
+                        .then(literal("install-url")
+                                .then(argument("url", greedyString())
+                                        .executes(context -> {
+                                            installDirectUrl(getString(context, "url"));
+                                            return 1;
+                                        })));
     }
 
     private static CompletableFuture<Suggestions> suggestInstalledModels(
@@ -356,15 +470,36 @@ public final class LocalModelCommandBridge {
                 + bytes(selected.estimatedRecommendedMemoryBytes()) + " recommended");
     }
 
-    private static void showCatalog() {
+    private static void showCatalog(int requestedPage, String commandRoot) {
+        showCatalogEntries(
+                LocalModelCatalog.entries(),
+                requestedPage,
+                page -> "/" + commandRoot + " list " + page,
+                "Local Model Catalog"
+        );
+    }
+
+    private static void showCatalogEntries(
+            List<LocalModelCatalogEntry> entries,
+            int requestedPage,
+            java.util.function.IntFunction<String> pageCommand,
+            String title
+    ) {
+        LocalModelCatalogView.Page catalogPage = LocalModelCatalogView.page(
+                entries, requestedPage, CATALOG_PAGE_SIZE);
+        if (catalogPage.totalEntries() == 0) {
+            warning("No models matched this catalog view.");
+            return;
+        }
         LocalModelInstallationService installer = LocalModelInstallationService.instance();
-        LocalModelControlChatFeedback.header("Local Model Catalog  |  Hover for details; click to prefill");
         LocalModelService.hardwareReport(false).whenComplete((report, failure) -> onClient(() -> {
+            LocalModelControlChatFeedback.header(title + "  |  page " + catalogPage.page() + "/" + catalogPage.pageCount()
+                    + "  |  " + catalogPage.totalEntries() + " models");
             if (failure != null || report == null) {
                 warning("Hardware compatibility could not be measured: " + (failure == null ? "unknown result" : message(failure)));
             }
             String selectedId = LocalModelService.selectedCatalogId();
-            for (LocalModelCatalogEntry entry : LocalModelCatalog.entries()) {
+            for (LocalModelCatalogEntry entry : catalogPage.entries()) {
                 LocalModelCompatibility compatibility = LocalModelCompatibility.evaluate(
                         entry,
                         report,
@@ -380,6 +515,90 @@ public final class LocalModelCommandBridge {
                         ),
                         feedbackLevel(compatibility)
                 );
+            }
+            showCatalogNavigation(catalogPage.page(), catalogPage.pageCount(), pageCommand);
+        }));
+    }
+
+    private static void showCatalogNavigation(
+            int page,
+            int pageCount,
+            java.util.function.IntFunction<String> pageCommand
+    ) {
+        MutableText navigation = Text.literal("Pages: ").formatted(Formatting.DARK_GRAY);
+        if (page > 1) navigation.append(navigationLink("< previous", pageCommand.apply(page - 1)));
+        if (page > 1 && page < pageCount) navigation.append(Text.literal("  |  ").formatted(Formatting.DARK_GRAY));
+        if (page < pageCount) navigation.append(navigationLink("next >", pageCommand.apply(page + 1)));
+        if (pageCount <= 1) navigation.append(Text.literal("1 / 1").formatted(Formatting.WHITE));
+        LocalModelControlChatFeedback.add(navigation, LocalModelControlChatFeedback.Level.INFO);
+    }
+
+    private static Text navigationLink(String label, String command) {
+        return Text.literal(label).formatted(Formatting.WHITE).styled(style -> style
+                .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, command))
+                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
+                        Text.literal("Open " + command).formatted(Formatting.GRAY))));
+    }
+
+    private static void refreshModelCatalog() {
+        info("Refreshing Hugging Face GGUF model discovery.");
+        LocalModelCatalog.refreshRemote(true).whenComplete((result, failure) -> onClient(() -> {
+            if (failure != null || result == null) {
+                error("Model catalog refresh failed: " + (failure == null ? "unknown result" : message(failure)));
+                return;
+            }
+            success("Model catalog refreshed | " + result.candidatesSeen() + " candidates | "
+                    + result.builtInModelsPromoted() + " existing models made runnable | "
+                    + result.newModelsAdded() + " new runnable models discovered.");
+        }));
+    }
+
+    private static void searchModelCatalog(String query, int requestedPage, boolean searchRemote) {
+        if (query == null || query.isBlank()) {
+            warning("Usage: /model catalog search <model or repository>");
+            return;
+        }
+        String cleanQuery = query.replace('\n', ' ').replace('\r', ' ').strip();
+        List<LocalModelCatalogEntry> initialMatches = LocalModelCatalogView.search(LocalModelCatalog.entries(), cleanQuery);
+        if (!initialMatches.isEmpty()) {
+            showCatalogEntries(
+                    initialMatches,
+                    requestedPage,
+                    page -> "/models catalog search-page " + page + " " + cleanQuery,
+                    "Catalog Search: " + abbreviate(cleanQuery, 64)
+            );
+        }
+        if (!searchRemote) {
+            if (initialMatches.isEmpty()) {
+                warning("No current Koil catalog models matched '" + abbreviate(cleanQuery, 80) + "'.");
+            }
+            return;
+        }
+        info("Searching Hugging Face GGUF models for additional matches: " + cleanQuery);
+        LocalModelCatalog.searchRemote(cleanQuery).whenComplete((result, failure) -> onClient(() -> {
+            if (failure != null || result == null) {
+                error("Model catalog search failed: " + (failure == null ? "unknown result" : message(failure)));
+                return;
+            }
+            if (result.failed()) {
+                error(result.detail());
+                return;
+            }
+            success("Model catalog search complete | " + result.candidatesSeen() + " candidates | "
+                    + result.builtInModelsPromoted() + " existing models made runnable | "
+                    + result.newModelsAdded() + " new runnable models added.");
+            List<LocalModelCatalogEntry> matches = LocalModelCatalogView.search(LocalModelCatalog.entries(), cleanQuery);
+            if (!matches.isEmpty() && (initialMatches.isEmpty() || matches.size() != initialMatches.size())) {
+                showCatalogEntries(
+                        matches,
+                        requestedPage,
+                        page -> "/models catalog search-page " + page + " " + cleanQuery,
+                        "Catalog Search: " + abbreviate(cleanQuery, 64)
+                );
+            } else if (matches.isEmpty() && result.candidatesSeen() > 0) {
+                warning("Hugging Face returned candidates, but none resolved into a safe runnable Koil catalog entry for this query.");
+            } else if (matches.isEmpty()) {
+                warning("No Hugging Face or current Koil catalog models matched '" + abbreviate(cleanQuery, 80) + "'.");
             }
         }));
     }
@@ -408,11 +627,12 @@ public final class LocalModelCommandBridge {
     private static void showHelp() {
         chat("/model status | info | diagnostics | rescan");
         chat("/model start | stop | restart | cancel");
-        chat("/model list | installed | logs | prompt");
-        chat("/model install <id> | use <id> | switch <id> | uninstall <id>");
+        chat("/model list [page] | catalog refresh | catalog search <query> | installed | logs | prompt");
+        chat("/model install <id> | install-url <huggingface-url> | use <id> | switch <id> | uninstall <id>");
+        chat("/model reliability [reset [catalog-id]]");
         chat("/model voice [true|false|list|set <voice_id>]");
         chat("/model reset [general|automation|all]");
-        chat("/models setup opens the Local Model Setup screen; /ask reset clears general chat context.");
+        chat("/models setup opens Local Model Setup; /models list [page] and /models catalog search <query> are aliases.");
     }
 
     private static CompletableFuture<Suggestions> suggestVoices(SuggestionsBuilder builder) {
@@ -468,11 +688,58 @@ public final class LocalModelCommandBridge {
         info("Identity changes apply to the next model request. The Rich Chat and safety contracts are appended by Koil.");
     }
 
+    private static void showReliability(String catalogId) {
+        LocalModelCatalogEntry entry = LocalModelCatalog.find(catalogId).orElse(null);
+        if (entry == null) {
+            warning("No selected catalog model has reliability evidence.");
+            return;
+        }
+        LocalModelReliabilityStore.Snapshot snapshot = LocalModelReliabilityStore.snapshot(entry.modelId());
+        LocalModelControlChatFeedback.header("Model Runtime Reliability");
+        info(entry.displayName() + " | Automation " + (snapshot.quarantined() ? "quarantined" : "available"));
+        info("Runtime crashes: " + snapshot.crashCount()
+                + " | major tool-protocol failures: " + snapshot.protocolFailureCount());
+        if (!snapshot.lastCode().isBlank()) {
+            info("Latest: " + snapshot.lastCode()
+                    + (snapshot.lastDetail().isBlank() ? "" : " | " + abbreviate(snapshot.lastDetail(), 160)));
+        }
+    }
+
+    private static void resetReliability(String catalogId) {
+        LocalModelCatalogEntry entry = LocalModelCatalog.find(catalogId).orElse(null);
+        if (entry == null) {
+            warning("Unknown model catalog id '" + catalogId + "'.");
+            return;
+        }
+        if (LocalModelReliabilityStore.reset(entry)) {
+            success("Cleared recorded major-failure quarantine for " + entry.displayName() + ".");
+        } else {
+            info(entry.displayName() + " has no recorded reliability quarantine.");
+        }
+    }
+
     private static void installModel(String catalogId, boolean allowReplacement) {
         LocalModelCatalogEntry target = catalogEntry(catalogId);
         if (target == null) {
             return;
         }
+        if (!target.runnable() && LocalModelCatalog.canResolveForInstall(target)) {
+            info("Resolving a verified GGUF implementation for " + target.displayName() + " from Hugging Face.");
+            LocalModelCatalog.resolveForInstall(target.id()).whenComplete((resolved, failure) -> onClient(() -> {
+                if (failure != null || resolved == null || resolved.isEmpty() || !resolved.get().runnable()) {
+                    error("No verified llama.cpp-compatible GGUF could be resolved for " + target.displayName()
+                            + (failure == null ? "." : ": " + message(failure)));
+                    return;
+                }
+                installModel(resolved.get().id(), allowReplacement);
+            }));
+            return;
+        }
+        if (!target.runnable()) {
+            warning(target.displayName() + " does not currently have a compatible local runtime implementation.");
+            return;
+        }
+
         LocalModelInstallationService installer = LocalModelInstallationService.instance();
         if (installer.snapshot().state().active()) {
             warning("A model install or uninstall operation is already active.");
@@ -525,6 +792,24 @@ public final class LocalModelCommandBridge {
                 "Remove & Install",
                 () -> replaceInstalledModel(oldModel, target)
         );
+    }
+
+    private static void installDirectUrl(String url) {
+        if (url == null || url.isBlank()) {
+            warning("Usage: /model install-url <huggingface.co GGUF file URL>");
+            return;
+        }
+        info("Resolving the exact Hugging Face GGUF file and its verification metadata.");
+        LocalModelCatalog.registerDirectFile(url).whenComplete((result, failure) -> onClient(() -> {
+            if (failure != null || result == null || !result.resolved() || result.entry() == null) {
+                error("Direct model link could not be resolved: "
+                        + (failure != null ? message(failure)
+                        : result == null ? "no resolution result" : result.detail()));
+                return;
+            }
+            success(result.entry().displayName() + " was added to the local catalog from the exact GGUF link.");
+            installModel(result.entry().id(), false);
+        }));
     }
 
     private static void performInstall(LocalModelCatalogEntry target) {
@@ -818,7 +1103,7 @@ public final class LocalModelCommandBridge {
             case RECOMMENDED -> LocalModelControlChatFeedback.Level.SUCCESS;
             case SUPPORTED_WITH_LIMITS -> LocalModelControlChatFeedback.Level.WARNING;
             case NOT_RECOMMENDED, STORAGE_BLOCKED -> LocalModelControlChatFeedback.Level.ERROR;
-            case UNKNOWN -> LocalModelControlChatFeedback.Level.INFO;
+            case UNAVAILABLE, UNKNOWN -> LocalModelControlChatFeedback.Level.INFO;
         };
     }
 

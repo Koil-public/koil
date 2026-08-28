@@ -84,9 +84,6 @@ public final class ConsoleInputSuggestionService {
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate deep on", "enable bounded deep thinking", 14));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate deep off", "disable bounded deep thinking", 14));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate improve", "generate automation improvement files", 13));
-        suggestions.add(new ConsoleInputSuggestion("CMD", "/automate feedback", "show feedback options", 14));
-        suggestions.add(new ConsoleInputSuggestion("CMD", "/automate feedback good", "accept the latest execution", 15));
-        suggestions.add(new ConsoleInputSuggestion("CMD", "/automate feedback bad", "classify a problem in the latest execution", 15));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate proof", "run automation proof suite", 14));
         suggestions.add(new ConsoleInputSuggestion("CMD", "/automate proof cache", "run automation cache proof", 14));
         suggestions.add(new ConsoleInputSuggestion("TASK", "walk straight 4 blocks", "automation prompt", 22));
