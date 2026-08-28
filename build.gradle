@@ -1,24 +1,24 @@
 plugins {
-	id 'fabric-loom' version '1.8-SNAPSHOT'
-	id 'maven-publish'
-	id 'java'
-	id 'signing'
-	id 'com.github.johnrengelman.shadow' version '7.0.0'
-	id 'org.jetbrains.kotlin.jvm' version '1.8.10'
+    id 'fabric-loom' version '1.8-SNAPSHOT'
+    id 'maven-publish'
+    id 'java'
+    id 'signing'
+    id 'com.github.johnrengelman.shadow' version '7.0.0'
+    id 'org.jetbrains.kotlin.jvm' version '1.8.10'
 }
 
 version = project.mod_version
 group = project.maven_group
 base {
-	archivesName = project.archives_base_name
+    archivesName = project.archives_base_name
 }
 
 def devLaunchProperties = new Properties()
 def devLaunchPropertiesFile = file("dev-launch.properties")
 if (devLaunchPropertiesFile.isFile()) {
-	devLaunchPropertiesFile.withInputStream { stream ->
-		devLaunchProperties.load(stream)
-	}
+    devLaunchPropertiesFile.withInputStream { stream ->
+        devLaunchProperties.load(stream)
+    }
 }
 
 def devUsername = devLaunchProperties.getProperty("username", "Dev").trim()
@@ -26,354 +26,273 @@ def devUuid = devLaunchProperties.getProperty("uuid", "").trim()
 def devJavaExecutable = devLaunchProperties.getProperty("javaExecutable", "").trim()
 
 repositories {
-	maven { url 'https://maven.fabricmc.net/' }
-	maven { url 'https://repo.spongepowered.org/maven/' }
-	maven { url "https://maven.terraformersmc.com/releases/" }
-	maven { url "https://maven.blamejared.com/" }
-	maven { url "https://maven.shedaniel.me/" }
-	maven { url 'https://jitpack.io' }
+    maven { url 'https://maven.fabricmc.net/' }
+    maven { url 'https://repo.spongepowered.org/maven/' }
+    maven { url "https://maven.terraformersmc.com/releases/" }
+    maven { url "https://maven.blamejared.com/" }
+    maven { url "https://maven.shedaniel.me/" }
+    maven { url 'https://jitpack.io' }
 
-	maven { url 'https://maven.google.com/' }
-	maven { url 'https://plugins.gradle.org/m2/' }
-	maven { url 'https://raw.githubusercontent.com/umjammer/vavi-sound/master/repo' }
+    maven { url 'https://maven.google.com/' }
+    maven { url 'https://plugins.gradle.org/m2/' }
+    maven { url 'https://raw.githubusercontent.com/umjammer/vavi-sound/master/repo' }
 
-	maven { url "https://cursemaven.com/"  }
+    maven { url "https://cursemaven.com/" }
 
-	mavenCentral()
-	mavenLocal()
+    mavenCentral()
+    mavenLocal()
 
-	jcenter()
+    jcenter()
 
-	flatDir {
-		dirs 'libs'
-	}
+    flatDir {
+        dirs 'libs'
+    }
 }
 
 configurations.configureEach {
-	resolutionStrategy.eachDependency { details ->
-		if (details.requested.group == "org.lwjgl") {
-			details.useVersion("3.3.1")
-			details.because("Minecraft 1.20.1 runtime compatibility")
-		}
-	}
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == "org.lwjgl") {
+            details.useVersion("3.3.1")
+            details.because("Minecraft 1.20.1 runtime compatibility")
+        }
+    }
 }
 
 dependencies {
-	// Minecraft dependencies
-	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-	modImplementation("net.fabricmc:fabric-language-kotlin:1.12.3+kotlin.2.0.21")
-	modCompileOnly "dev.emi:emi-fabric:1.1.18+1.20.1"
-	modCompileOnly "mezz.jei:jei-1.20.1-fabric-api:15.20.0.135"
-	modCompileOnly "me.shedaniel:RoughlyEnoughItems-api-fabric:12.1.785"
+    // Minecraft dependencies
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    modImplementation("net.fabricmc:fabric-language-kotlin:1.12.3+kotlin.2.0.21")
+    modCompileOnly "dev.emi:emi-fabric:1.1.18+1.20.1"
+    modCompileOnly "mezz.jei:jei-1.20.1-fabric-api:15.20.0.135"
+    modCompileOnly "me.shedaniel:RoughlyEnoughItems-api-fabric:12.1.785"
 
-	// OkHttp and Gson dependencies
-	implementation 'com.squareup.okhttp3:okhttp:4.9.2'
-	include 'com.squareup.okhttp3:okhttp:4.9.2'
-	implementation 'com.squareup.okio:okio:3.4.0'
-	include 'com.squareup.okio:okio:3.4.0'
-	implementation 'com.google.code.gson:gson:2.8.9'
-	include 'com.google.code.gson:gson:2.8.9'
-	implementation 'org.sejda.imageio:webp-imageio:0.1.6'
-	include 'org.sejda.imageio:webp-imageio:0.1.6'
-	implementation 'org.yaml:snakeyaml:2.3'
-	include 'org.yaml:snakeyaml:2.3'
-	implementation 'org.scilab.forge:jlatexmath:1.0.7'
-	include 'org.scilab.forge:jlatexmath:1.0.7'
+    // OkHttp and Gson dependencies
+    implementation 'com.squareup.okhttp3:okhttp:4.9.2'
+    include 'com.squareup.okhttp3:okhttp:4.9.2'
+    implementation 'com.squareup.okio:okio:3.4.0'
+    include 'com.squareup.okio:okio:3.4.0'
+    implementation 'com.google.code.gson:gson:2.8.9'
+    include 'com.google.code.gson:gson:2.8.9'
+    implementation 'org.sejda.imageio:webp-imageio:0.1.6'
+    include 'org.sejda.imageio:webp-imageio:0.1.6'
+    implementation 'org.yaml:snakeyaml:2.3'
+    include 'org.yaml:snakeyaml:2.3'
+    implementation 'org.scilab.forge:jlatexmath:1.0.7'
+    include 'org.scilab.forge:jlatexmath:1.0.7'
 
-	implementation 'org.apache.maven:maven:3.6.3'
-	implementation 'org.avaje.ebeanorm:avaje-ebeanorm:4.7.3'
+    implementation 'com.fasterxml.jackson.core:jackson-core:2.15.2'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
+    implementation 'com.fasterxml.jackson.core:jackson-annotations:2.15.2'
+
+    implementation 'org.apache.maven:maven:3.6.3'
+    implementation 'org.avaje.ebeanorm:avaje-ebeanorm:4.7.3'
+
 
 }
 
 processResources {
-	inputs.property "version", project.version
+    inputs.property "version", project.version
 
-	from(sourceSets.main.resources)
+    from(sourceSets.main.resources)
 
-	filesMatching("fabric.mod.json") {
-		expand "version": project.version
-	}
-}
-
-tasks.register('syncKtlDevelopmentLibraries', Exec) {
-	def syncSource = file('src/main/java/com/spirit/koil/api/automation/ktl/KtlDevelopmentLibrarySynchronizer.java')
-	inputs.files(fileTree('src/main/resources/koil/automation'), fileTree('run/koil/automation'), syncSource)
-	outputs.upToDateWhen { false }
-	doFirst {
-		def launcher = javaToolchains.launcherFor {
-			languageVersion = JavaLanguageVersion.of(17)
-		}.get()
-		commandLine launcher.executablePath.asFile.absolutePath, syncSource.absolutePath, projectDir.absolutePath
-	}
-}
-
-tasks.named('processResources').configure {
-	dependsOn tasks.named('syncKtlDevelopmentLibraries')
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 17
+    it.options.release = 17
 }
 
 tasks.withType(JavaExec).configureEach {
-	if (name == "runClient" && !devJavaExecutable.isEmpty()) {
-		executable = devJavaExecutable
-	} else {
-		javaLauncher = javaToolchains.launcherFor {
-			languageVersion = JavaLanguageVersion.of(17)
-		}
-	}
+    if (name == "runClient" && !devJavaExecutable.isEmpty()) {
+        executable = devJavaExecutable
+    } else {
+        javaLauncher = javaToolchains.launcherFor {
+            languageVersion = JavaLanguageVersion.of(17)
+        }
+    }
 }
 
 def runClientRequiredClassFiles = [
-		file("$buildDir/classes/java/main/com/spirit/client/gui/content/browser/ContentBrowserListRowRenderer.class"),
-		file("$buildDir/classes/java/main/com/spirit/mixin/client/gui/revamp/world/MixinWorldEntry.class"),
-		file("$buildDir/classes/java/main/com/spirit/koil/api/util/file/media/VisualTransportControls.class"),
-		file("$buildDir/classes/java/main/com/spirit/Client.class"),
-		file("$buildDir/classes/java/main/com/spirit/Main.class")
+        file("$buildDir/classes/java/main/com/spirit/client/gui/content/browser/ContentBrowserListRowRenderer.class"),
+        file("$buildDir/classes/java/main/com/spirit/mixin/client/gui/revamp/world/MixinWorldEntry.class"),
+        file("$buildDir/classes/java/main/com/spirit/koil/api/util/file/media/VisualTransportControls.class"),
+        file("$buildDir/classes/java/main/com/spirit/Client.class"),
+        file("$buildDir/classes/java/main/com/spirit/Main.class")
 ]
 
 tasks.named("compileJava", JavaCompile).configure {
-	outputs.upToDateWhen {
-		runClientRequiredClassFiles.every { it.isFile() }
-	}
+    outputs.upToDateWhen {
+        runClientRequiredClassFiles.every { it.isFile() }
+    }
 }
 
 tasks.register("verifyRunClientClasses") {
-	dependsOn tasks.named("compileJava")
-	doLast {
-		def missing = runClientRequiredClassFiles.findAll { !it.isFile() }
-		if (!missing.isEmpty()) {
-			throw new GradleException(
-					"runClient is missing required compiled classes: " +
-							missing.collect { it.absolutePath }.join(", ") +
-							". Stop any running client and rerun ./gradlew compileJava."
-			)
-		}
-	}
-}
-
-def dedicatedServerSafeClassFiles = [
-		file("$buildDir/classes/java/main/com/spirit/Main.class"),
-		file("$buildDir/classes/java/main/com/spirit/Prelaunch.class"),
-		file("$buildDir/classes/java/main/com/spirit/koil/api/bootstrap/DedicatedServerBootstrapService.class"),
-		file("$buildDir/classes/java/main/com/spirit/koil/api/bootstrap/DedicatedServerBootstrapCommand.class"),
-		file("$buildDir/classes/java/main/com/spirit/koil/api/console/ConsoleLevel.class"),
-		file("$buildDir/classes/java/main/com/spirit/koil/api/util/console/log/SubFileLogger.class")
-]
-
-tasks.register("verifyDedicatedServerClasses") {
-	dependsOn tasks.named("compileJava")
-	doLast {
-		def missing = dedicatedServerSafeClassFiles.findAll { !it.isFile() }
-		if (!missing.isEmpty()) {
-			throw new GradleException("Dedicated-server verification is missing: " + missing.join(", "))
-		}
-		def forbidden = ["net/minecraft/client", "org/lwjgl", "com/spirit/client", "ModelGenerationHudState", "ModelVoice", "ExternalWindow"]
-		dedicatedServerSafeClassFiles.each { classFile ->
-			def bytes = classFile.bytes
-			def text = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
-			def matches = forbidden.findAll { text.contains(it) }
-			if (!matches.isEmpty()) {
-				throw new GradleException("Dedicated-server class ${classFile.name} links forbidden client symbols: ${matches}")
-			}
-		}
-	}
-}
-
-tasks.register('runDedicatedServerSmokeProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.bootstrap.DedicatedServerBootstrapProof'
-	def smokeDirectory = layout.buildDirectory.dir('dedicated-server-smoke').get().asFile
-	workingDir = smokeDirectory
-	doFirst {
-		delete smokeDirectory
-		smokeDirectory.mkdirs()
-	}
+    dependsOn tasks.named("compileJava")
+    doLast {
+        def missing = runClientRequiredClassFiles.findAll { !it.isFile() }
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                    "runClient is missing required compiled classes: " +
+                            missing.collect { it.absolutePath }.join(", ") +
+                            ". Stop any running client and rerun ./gradlew compileJava."
+            )
+        }
+    }
 }
 
 tasks.register('runContentRegistryProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.registry.dev.ContentRegistryProof'
-	args layout.buildDirectory.dir('content-registry-proof').get().asFile.absolutePath
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.registry.dev.ContentRegistryProof'
+    args layout.buildDirectory.dir('content-registry-proof').get().asFile.absolutePath
 }
 
 tasks.register('runDevelopmentCommandBridgeProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.development.command.DevelopmentCommandBridgeProof'
-	args layout.buildDirectory.dir('development-command-bridge-proof').get().asFile.absolutePath
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.development.command.DevelopmentCommandBridgeProof'
+    args layout.buildDirectory.dir('development-command-bridge-proof').get().asFile.absolutePath
 }
 
 tasks.register('runLocalModelFoundationProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.testing.LocalModelFoundationProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.testing.LocalModelFoundationProof'
 }
 
 tasks.register('runColibriProviderProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.provider.colibri.ColibriProviderProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.provider.colibri.ColibriProviderProof'
 }
 
 tasks.register('runLocalModelCatalogProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogProof'
 }
 
 tasks.register('runLocalModelCatalogChatRowProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.chat.LocalModelCatalogChatRowProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.chat.LocalModelCatalogChatRowProof'
 }
 
 tasks.register('runLocalModelCatalogRemoteProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogRemoteProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogRemoteProof'
 }
 
 tasks.register('runLlamaCppProviderProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.provider.llamacpp.LlamaCppProviderProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.provider.llamacpp.LlamaCppProviderProof'
 }
 
 tasks.register('runAutomationCapabilityProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.automation.capability.AutomationCapabilityProof'
-}
-
-tasks.register('runBoundedNavigationPlannerProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.automation.navigation.BoundedNavigationPlannerProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.automation.capability.AutomationCapabilityProof'
 }
 
 tasks.register('runModelPresencePlanningProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.testing.ModelPresencePlanningProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.testing.ModelPresencePlanningProof'
 }
 
 tasks.register('runModelAgentPlatformProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.testing.ModelAgentPlatformProof'
-}
-
-tasks.register('runModelPresentationProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.model.testing.ModelPresentationProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.testing.ModelAgentPlatformProof'
 }
 
 tasks.register('runRichChatSectionFormattingProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.chat.RichChatSectionFormattingProof'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.chat.RichChatSectionFormattingProof'
 }
 
 tasks.register('runKtlLibraryProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.automation.AutomationProofSuite'
-	def proofDirectory = layout.buildDirectory.dir('ktl-library-proof').get().asFile
-	workingDir = proofDirectory
-	doFirst {
-		delete proofDirectory
-		proofDirectory.mkdirs()
-	}
-}
-
-tasks.register('runKtlCurrentInstanceProof', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.automation.AutomationProofSuite'
-	workingDir = file('run')
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.automation.AutomationProofSuite'
+    workingDir = file('run')
 }
 
 tasks.register('generateContentRegistryTestDatapack', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.registry.dev.ContentTestDatapackGenerator'
-	args file('docs/test-datapacks').absolutePath
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.registry.dev.ContentTestDatapackGenerator'
+    args file('docs/test-datapacks').absolutePath
 }
 
 tasks.register('installContentRegistryTestDatapackGeorgia', JavaExec) {
-	dependsOn classes
-	classpath = sourceSets.main.runtimeClasspath
-	mainClass = 'com.spirit.koil.api.registry.dev.ContentTestWorldInstaller'
-	args file('run/saves/georgia').absolutePath
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.registry.dev.ContentTestWorldInstaller'
+    args file('run/saves/georgia').absolutePath
 }
 
 loom {
-	accessWidenerPath = file("src/main/resources/koil.accesswidener")
+    accessWidenerPath = file("src/main/resources/koil.accesswidener")
 
-	runs {
-		client {
-			client()
-			name "Minecraft Client"
-			runDir "run"
-			// IntelliJ uses the checked-in Gradle run profile in .run/. Direct Loom
-			// profiles encode spaces in this project's path incorrectly on this setup.
-			ideConfigGenerated false
-			programArgs "--username", devUsername
-			if (!devUuid.isEmpty()) {
-				programArgs "--uuid", devUuid
-			}
-		}
-		server {
-			server()
-			name "Minecraft Server"
-			runDir "run-server"
-			ideConfigGenerated false
-		}
-	}
+    runs {
+        client {
+            client()
+            name "Minecraft Client"
+            runDir "run"
+            // IntelliJ uses the checked-in Gradle run profile in .run/. Direct Loom
+            // profiles encode spaces in this project's path incorrectly on this setup.
+            ideConfigGenerated false
+            programArgs "--username", devUsername
+            if (!devUuid.isEmpty()) {
+                programArgs "--uuid", devUuid
+            }
+        }
+    }
 }
 
 tasks.named("runClient").configure {
-	dependsOn tasks.named("verifyRunClientClasses")
+    dependsOn tasks.named("verifyRunClientClasses")
 }
 
 java {
-	toolchain {
-		languageVersion = JavaLanguageVersion.of(17)
-	}
-	withSourcesJar()
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+    withSourcesJar()
 }
 
 shadowJar {
-	zip64 = true
-	configurations = [project.configurations.runtimeClasspath]
+    zip64 = true
+    configurations = [project.configurations.runtimeClasspath]
 }
 
 jar {
-	from("LICENSE") {
-		rename { "${it}_${project.archivesBaseName}" }
-	}
+    from("LICENSE") {
+        rename { "${it}_${project.archivesBaseName}" }
+    }
 }
 
 tasks.register("signJar") {
-	dependsOn remapJar
-	doLast {
-		def jarFile = remapJar.archiveFile.get().asFile
-		ant.signjar(
-				jar: jarFile,
-				alias: 'hpuluyzwyaf3eoamyyg94wl7wmoi5hvw-gmq11qrjhjk1vjk2cxudcaukc5adkw6ngapwcw50yk0jsm5c',
-				keystore: file('keystore.jks'),
-				storepass: 'b59mc6zsdtqwpghol7ozvdgbc4qzi44q-72bn94wnrvv9d7e5n6nx9mf95z4cuzor4eeyo5jtpj2o9k8czj1y1ak7aucizhqt',
-				preservelastmodified: true
-		)
-	}
+    dependsOn remapJar
+    doLast {
+        def jarFile = remapJar.archiveFile.get().asFile
+        ant.signjar(
+                jar: jarFile,
+                alias: 'hpuluyzwyaf3eoamyyg94wl7wmoi5hvw-gmq11qrjhjk1vjk2cxudcaukc5adkw6ngapwcw50yk0jsm5c',
+                keystore: file('keystore.jks'),
+                storepass: 'b59mc6zsdtqwpghol7ozvdgbc4qzi44q-72bn94wnrvv9d7e5n6nx9mf95z4cuzor4eeyo5jtpj2o9k8czj1y1ak7aucizhqt',
+                preservelastmodified: true
+        )
+    }
 }
 
 remapJar.finalizedBy signJar
