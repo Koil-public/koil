@@ -9,9 +9,8 @@ import com.spirit.client.gui.ide.FileExplorerScreen;
 import com.spirit.client.gui.main.elements.MenuBookEntry;
 import com.spirit.client.gui.main.elements.SparkleButtonWidget;
 import com.spirit.client.gui.update.elements.UpdateScreenData;
-import com.spirit.koil.api.console.ConsoleChannel;
+import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.design.KoilScreenBackgrounds;
-import com.spirit.koil.api.util.application.WindowManager;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.util.file.media.image.ImageTextureService;
 import net.fabricmc.api.EnvType;
@@ -774,14 +773,14 @@ public class KoilMenuScreen extends Screen {
         context.getMatrices().scale(1.2F, 1.2F, 1.0F);
         context.drawText(this.textRenderer, "Debug Console", (int) (140 / 1.2F), (int) (75 / 1.2F), new Color(uiColorContentBaseTitleText, true).getRGB(), true);
         context.getMatrices().pop();
-        context.drawText(this.textRenderer, "Open external debugging surfaces and Koil log utilities.", 140, 92, new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
+        context.drawText(this.textRenderer, "Open Koil logs or inspect persistent model and executor traces.", 140, 92, new Color(uiColorContentBaseDescriptionText, true).getRGB(), false);
 
         if (debugButtons.isEmpty()) {
             ButtonWidget consoleButton1 = this.addDrawableChild(ButtonWidget.builder(Text.literal("Open Koil Log"), button -> {
                 assert this.client != null;
                 this.client.setScreen(new ConsoleScreen(this));
             }).dimensions(140, 118, 150, 20).build());
-            ButtonWidget consoleButton2 = this.addDrawableChild(ButtonWidget.builder(Text.literal("Pop Out Koil Log"), button -> WindowManager.openConsoleWindow(ConsoleChannel.KOIL))
+            ButtonWidget consoleButton2 = this.addDrawableChild(ButtonWidget.builder(Text.literal("Automation Workspace"), button -> AutomationRouter.openWorkspace(""))
                     .dimensions(296, 118, 150, 20)
                     .build());
             debugButtons.add(consoleButton1);

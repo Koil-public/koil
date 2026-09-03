@@ -13,15 +13,13 @@ public final class KoilRemoteScreenClientBridge {
             boolean close = buffer.readBoolean();
             String id = buffer.readString(256);
             String data = buffer.readString(4096);
+            String presentation = buffer.isReadable() ? buffer.readString(32) : "popup";
             client.execute(() -> {
                 if (close) {
                     client.setScreen(null);
                     return;
                 }
-                net.minecraft.client.gui.screen.Screen requested = KoilRemoteScreenRegistry.create(client, client.currentScreen, id, data);
-                if (requested != null) {
-                    client.setScreen(requested);
-                }
+                ExternalUiWindow.open(client, client.currentScreen, id, data, ExternalUiWindow.Presentation.from(presentation));
             });
         });
     }

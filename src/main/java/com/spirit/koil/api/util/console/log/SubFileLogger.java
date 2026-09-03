@@ -4,7 +4,6 @@ import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.console.ConsoleLogBridge;
 import net.fabricmc.loader.impl.FabricLoaderImpl;
-import net.minecraft.MinecraftVersion;
 
 import java.io.BufferedWriter;
 import java.io.FileWriter;
@@ -265,11 +264,15 @@ public class SubFileLogger {
     }
 
     private void enqueueLogMessage(String logMessage) {
-        try {
-            logQueue.put(logMessage);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            e.printStackTrace();
+        if (!logQueue.offer(logMessage)) {
+            // Logging must never stall a model, Automation, package, or client thread.
+            logQueue.poll();
+            logQueue.offer("[=] | [" + LocalDateTime.now().format(timestampFormatter)
+                    + "] [Logger Thread/Warn]: log queue overflow; oldest pending row was dropped");
+            if (!logQueue.offer(logMessage)) {
+                logQueue.poll();
+                logQueue.offer(logMessage);
+            }
         }
     }
 
@@ -287,10 +290,9 @@ public class SubFileLogger {
                     }
                     writer.flush();
                 }
-            } catch (IOException | InterruptedException e) {
-                if (e instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
+            } catch (InterruptedException interrupted) {
+                if (!running) return;
+            } catch (IOException e) {
                 e.printStackTrace();
             }
         }
@@ -330,6 +332,7 @@ public class SubFileLogger {
     private void handleShutdown() {
         if (!crashDetected) {
             crashDetected = true;
+            close();
             renameLatestLogWithTimestamp(baseFileName);
         }
     }
@@ -337,14 +340,21 @@ public class SubFileLogger {
     private void renameLatestLogWithTimestamp(String baseFileName) {
         lock.lock();
         try {
-            String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
-            String newLogFileName = logFilePath.replace(LATEST_LOG_FILE_NAME, timestamp + "-" + baseFileName + ".log");
-
             Path latestLogPath = Paths.get(logFilePath);
-            Path timestampedLogPath = Paths.get(newLogFileName);
-
             if (Files.exists(latestLogPath)) {
-                Files.move(latestLogPath, timestampedLogPath);
+                String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss-SSS"));
+                Path parent = latestLogPath.toAbsolutePath().normalize().getParent();
+                String stem = timestamp + "-" + baseFileName;
+                for (int suffix = 0; suffix < 1000; suffix++) {
+                    String name = stem + (suffix == 0 ? "" : "-" + suffix) + ".log";
+                    Path timestampedLogPath = parent.resolve(name);
+                    try {
+                        Files.move(latestLogPath, timestampedLogPath);
+                        break;
+                    } catch (java.nio.file.FileAlreadyExistsException collision) {
+                        // Multiple short-lived proof/runtime processes can rotate in one millisecond.
+                    }
+                }
             }
         } catch (IOException e) {
             e.printStackTrace();
@@ -364,7 +374,7 @@ public class SubFileLogger {
                 ╚═╝  ╚═╝ ╚═════╝ ╚═╝╚══════╝  -----------------------------------
             =============================================================================================
             """,
-                logFilePath, MinecraftVersion.CURRENT.getName(), FabricLoaderImpl.VERSION, VERSION
+                logFilePath, runtimeMinecraftVersion(), FabricLoaderImpl.VERSION, VERSION
         );
         try {
             writer.write(header);
@@ -373,6 +383,11 @@ public class SubFileLogger {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private static String runtimeMinecraftVersion() {
+        String version = System.getProperty("fabric.gameVersion", "").strip();
+        return version.isBlank() ? "runtime" : version;
     }
 
     private static ConsoleChannel resolveConsoleChannel(String logFilePath) {

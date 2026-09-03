@@ -4,8 +4,9 @@ package com.spirit.koil.api.model.catalog;
  * Catalog-backed protocol boundary for Koil's Automation tools.
  *
  * <p>The catalog's complex-intent estimate is display/recommendation guidance,
- * never a permission boundary. Automation eligibility depends on a verified
- * tool protocol; objective validation remains responsible for correctness.</p>
+ * never a permission boundary. Automation eligibility depends on declared
+ * tool-protocol capability plus observed reliability; objective validation
+ * remains responsible for correctness.</p>
  */
 public final class LocalModelAutomationEligibility {
     /** Migration-only constant retained for callers compiled against older Koil builds. */
@@ -32,8 +33,7 @@ public final class LocalModelAutomationEligibility {
                     "",
                     "Selected model",
                     -1,
-                    "The selected model is not capable of Automation Mode because it has no verified "
-                            + "verified tool protocol. /ask remains available."
+                    "No selected model is available for Automation Mode. /ask remains available."
             );
         }
         boolean eligible = supportsAutomationTools(entry);

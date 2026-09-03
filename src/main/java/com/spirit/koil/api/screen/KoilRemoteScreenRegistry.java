@@ -1,5 +1,6 @@
 package com.spirit.koil.api.screen;
 
+import com.spirit.client.gui.automation.AutomationWorkspaceScreen;
 import com.spirit.client.gui.ide.FileExplorerScreen;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
@@ -39,6 +40,7 @@ public final class KoilRemoteScreenRegistry {
         register("koil:file_explorer", (client, parent, data) -> data.isBlank()
                 ? new FileExplorerScreen(parent)
                 : FileExplorerScreen.openAtPath(data, parent));
+        register("koil:automation_workspace", (client, parent, data) -> new AutomationWorkspaceScreen(parent, data));
     }
 
     private static String normalize(String id) {

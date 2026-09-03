@@ -10,7 +10,6 @@ import com.spirit.koil.api.chat.RichChatPrivacyNoticeClient;
 import com.spirit.koil.api.chat.sync.RichChatSyncClientBridge;
 import com.spirit.koil.api.command.ExitCommandBridge;
 import com.spirit.koil.api.console.ConsoleRequestBridge;
-import com.spirit.koil.api.console.ConsoleChannel;
 import com.spirit.koil.api.development.command.DevelopmentCommandBridge;
 import com.spirit.koil.api.f3.F3CommandBridge;
 import com.spirit.koil.api.f3.F3SnapshotService;
@@ -39,8 +38,6 @@ import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 import net.minecraft.text.Text;
 import com.spirit.koil.api.util.console.log.SubFileLogger;
-import com.spirit.koil.api.util.application.ExternalWindowConsole;
-import com.spirit.koil.api.util.application.WindowManager;
 
 public class Client implements ClientModInitializer {
 
@@ -62,9 +59,6 @@ public class Client implements ClientModInitializer {
                 ? startupClient.getSession().getUsername()
                 : "";
         Main.initializeClientBootstrap(username);
-        if (!Boolean.getBoolean(ExternalWindowConsole.PROCESS_MARKER_PROPERTY) && Main.openKoilLogOnStartup()) {
-            WindowManager.openConsoleWindow(ConsoleChannel.KOIL);
-        }
         DevelopmentCommandBridge.initialize();
         LocalModelService.initialize();
         DeepThoughtSessionLifecycleBridge.initialize();

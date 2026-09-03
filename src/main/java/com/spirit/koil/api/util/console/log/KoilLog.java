@@ -14,20 +14,25 @@ public final class KoilLog {
     }
 
     public static void write(String thread, ConsoleLevel level, String category, String message) {
-        SubFileLogger logger = mainLogger();
-        String cleanCategory = clean(category, "event");
-        String cleanMessage = clean(message, "");
-        String detail = "[" + cleanCategory + "]" + (cleanMessage.isBlank() ? "" : " " + cleanMessage);
-        ConsoleLevel safeLevel = level == null ? ConsoleLevel.PLAIN : level;
-        switch (safeLevel) {
-            case INFO -> logger.logI(thread, detail);
-            case WARN -> logger.logW(thread, detail);
-            case ERROR -> logger.logE(thread, detail);
-            case FATAL -> logger.logF(thread, detail);
-            case DEBUG -> logger.logD(thread, detail);
-            case UPDATE -> logger.logU(thread, detail);
-            case OTHER -> logger.logO(thread, detail);
-            default -> logger.log(thread, detail);
+        boolean restoreInterrupt = Thread.interrupted();
+        try {
+            SubFileLogger logger = mainLogger();
+            String cleanCategory = clean(category, "event");
+            String cleanMessage = clean(message, "");
+            String detail = "[" + cleanCategory + "]" + (cleanMessage.isBlank() ? "" : " " + cleanMessage);
+            ConsoleLevel safeLevel = level == null ? ConsoleLevel.PLAIN : level;
+            switch (safeLevel) {
+                case INFO -> logger.logI(thread, detail);
+                case WARN -> logger.logW(thread, detail);
+                case ERROR -> logger.logE(thread, detail);
+                case FATAL -> logger.logF(thread, detail);
+                case DEBUG -> logger.logD(thread, detail);
+                case UPDATE -> logger.logU(thread, detail);
+                case OTHER -> logger.logO(thread, detail);
+                default -> logger.log(thread, detail);
+            }
+        } finally {
+            if (restoreInterrupt) Thread.currentThread().interrupt();
         }
     }
 

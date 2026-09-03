@@ -32,11 +32,11 @@ public final class KoilRemoteScreenServerBridge {
     }
 
     private static int sendClose(net.minecraft.server.command.ServerCommandSource source, Collection<ServerPlayerEntity> targets) {
-        return send(source, targets, true, "", "");
+        return send(source, targets, true, "", "", "popup");
     }
 
-    private static int sendOpen(net.minecraft.server.command.ServerCommandSource source, Collection<ServerPlayerEntity> targets, String id, String data) {
-        return send(source, targets, false, id, data);
+    private static int sendOpen(net.minecraft.server.command.ServerCommandSource source, Collection<ServerPlayerEntity> targets, String id, String data, String presentation) {
+        return send(source, targets, false, id, data, presentation);
     }
 
     private static int sendOpenPayload(net.minecraft.server.command.ServerCommandSource source, Collection<ServerPlayerEntity> targets, String payload) {
@@ -45,13 +45,25 @@ public final class KoilRemoteScreenServerBridge {
             source.sendError(Text.literal("Give /screen open a screen id."));
             return 0;
         }
-        int split = value.indexOf(' ');
-        String id = split < 0 ? value : value.substring(0, split);
-        String data = split < 0 ? "" : value.substring(split + 1).stripLeading();
-        return sendOpen(source, targets, id, data);
+        String presentation = "popup";
+        String remaining = value;
+        int firstSplit = remaining.indexOf(' ');
+        String first = firstSplit < 0 ? remaining : remaining.substring(0, firstSplit);
+        if (first.equalsIgnoreCase("popup") || first.equalsIgnoreCase("external")) {
+            presentation = first.toLowerCase(java.util.Locale.ROOT);
+            remaining = firstSplit < 0 ? "" : remaining.substring(firstSplit + 1).stripLeading();
+        }
+        if (remaining.isBlank()) {
+            source.sendError(Text.literal("Give /screen open a registered screen id."));
+            return 0;
+        }
+        int split = remaining.indexOf(' ');
+        String id = split < 0 ? remaining : remaining.substring(0, split);
+        String data = split < 0 ? "" : remaining.substring(split + 1).stripLeading();
+        return sendOpen(source, targets, id, data, presentation);
     }
 
-    private static int send(net.minecraft.server.command.ServerCommandSource source, Collection<ServerPlayerEntity> targets, boolean close, String id, String data) {
+    private static int send(net.minecraft.server.command.ServerCommandSource source, Collection<ServerPlayerEntity> targets, boolean close, String id, String data, String presentation) {
         int sent = 0;
         for (ServerPlayerEntity target : targets) {
             if (!ServerPlayNetworking.canSend(target, KoilRemoteScreenNetwork.SCREEN_REQUEST_PACKET)) {
@@ -61,6 +73,7 @@ public final class KoilRemoteScreenServerBridge {
             buffer.writeBoolean(close);
             buffer.writeString(id == null ? "" : id, 256);
             buffer.writeString(data == null ? "" : data, 4096);
+            buffer.writeString(presentation == null ? "popup" : presentation, 32);
             ServerPlayNetworking.send(target, KoilRemoteScreenNetwork.SCREEN_REQUEST_PACKET, buffer);
             sent++;
         }

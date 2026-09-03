@@ -1,9 +1,10 @@
 package com.spirit.koil.api.automation.cli;
 
-import com.spirit.client.gui.console.ConsoleScreen;
+import com.spirit.client.gui.automation.AutomationWorkspaceScreen;
 import com.spirit.koil.api.automation.feedback.AutomationFailureType;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackNode;
 import com.spirit.koil.api.automation.AutomationRuntimeStatus;
+import com.spirit.koil.api.automation.workspace.AutomationWorkspaceRepository;
 import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.model.KoilLifetimeCounters;
 import com.spirit.koil.api.model.chat.ModelActivityTreeGlyphs;
@@ -663,6 +664,7 @@ public final class AutomationCliViewModel {
         };
         upsert("runtime:active_state", "summary", "active_state", 0, marker, "runtime.active_state", value, true);
         publishCompactChatStatus(normalized, detailText);
+        if (isTerminalRuntimeState(normalized)) lastPersistNanos = 0L;
         persist();
     }
 
@@ -741,7 +743,7 @@ public final class AutomationCliViewModel {
             detailText = detailText.substring(0, 33) + "...";
         }
         AutomationPresenceState.updateLocal(normalizedState, detailText);
-        if (client.currentScreen instanceof ConsoleScreen) {
+        if (client.currentScreen instanceof AutomationWorkspaceScreen) {
             return;
         }
         String prompt = currentPrompt == null || currentPrompt.isBlank() ? "(none)" : currentPrompt;
@@ -758,7 +760,7 @@ public final class AutomationCliViewModel {
             prompt = prompt.substring(0, 93) + "...";
         }
         AutomationPresenceState.updateLocal("header", prompt);
-        if (client.currentScreen instanceof ConsoleScreen) {
+        if (client.currentScreen instanceof AutomationWorkspaceScreen) {
             return;
         }
         MutableText header = automationChatHeader();
@@ -1050,7 +1052,9 @@ public final class AutomationCliViewModel {
             return;
         }
         lastPersistNanos = now;
-        AutomationCliSnapshotStore.save(snapshot());
+        AutomationCliSnapshot current = snapshot();
+        AutomationCliSnapshotStore.save(current);
+        AutomationWorkspaceRepository.updateExecutor(current, currentRuntimeState);
     }
 
     private static void enforceRowBudget() {

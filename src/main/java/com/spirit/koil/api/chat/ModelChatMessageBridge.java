@@ -1,5 +1,7 @@
 package com.spirit.koil.api.chat;
 
+import com.spirit.koil.api.automation.AutomationRouter;
+import com.spirit.koil.api.automation.workspace.AutomationWorkspaceRepository;
 import com.spirit.koil.api.design.uiColorVal;
 import com.spirit.koil.api.model.chat.ModelChatIdentity;
 import com.spirit.koil.api.model.chat.ModelActivityPresentation;
@@ -24,6 +26,7 @@ public final class ModelChatMessageBridge {
     private static final int MAXIMUM_RETAINED_TRACES = 128;
     private static final Object TRACE_LOCK = new Object();
     private static final Map<MessageIndicator, ModelActivityPresentation.TraceSnapshot> TYPED_TRACES = new IdentityHashMap<>();
+    private static final Map<MessageIndicator, String> WORKSPACE_TRACE_IDS = new IdentityHashMap<>();
     private static final Map<MessageIndicator, List<Text>> LEGACY_TRACE_LINES = new IdentityHashMap<>();
     private static final List<MessageIndicator> TRACE_ORDER = new ArrayList<>();
 
@@ -49,6 +52,10 @@ public final class ModelChatMessageBridge {
     }
 
     public static MessageIndicator indicator(ModelActivityPresentation.TraceSnapshot traceSnapshot) {
+        return indicator(traceSnapshot, "");
+    }
+
+    private static MessageIndicator indicator(ModelActivityPresentation.TraceSnapshot traceSnapshot, String workspaceTraceId) {
         String rendered = ModelActivityPresentation.render(traceSnapshot);
         List<Text> trace = styledTrace(rendered);
         MessageIndicator indicator = new MessageIndicator(
@@ -57,7 +64,7 @@ public final class ModelChatMessageBridge {
                 trace.isEmpty() ? Text.literal("Local model response") : null,
                 LOGGED_NAME
         );
-        if (!trace.isEmpty()) rememberTrace(indicator, traceSnapshot);
+        if (!trace.isEmpty()) rememberTrace(indicator, traceSnapshot, workspaceTraceId);
         return indicator;
     }
 
@@ -104,7 +111,8 @@ public final class ModelChatMessageBridge {
                 .metadata("visible_identity", ModelChatIdentity.LABEL)
                 .build();
         RichChatMessageStore.remember(message);
-        client.inGameHud.getChatHud().addMessage(Text.literal(visibleText), null, indicator(traceSnapshot));
+        String workspaceTraceId = AutomationWorkspaceRepository.rememberModel(traceSnapshot);
+        client.inGameHud.getChatHud().addMessage(Text.literal(visibleText), null, indicator(traceSnapshot, workspaceTraceId));
     }
 
     public static List<Text> traceTooltipLines(MessageIndicator indicator) {
@@ -144,6 +152,19 @@ public final class ModelChatMessageBridge {
         context.getMatrices().translate(0.0F, 0.0F, 1_100.0F);
         context.drawTooltip(renderer, tooltip, Optional.empty(), mouseX, mouseY);
         context.getMatrices().pop();
+        return true;
+    }
+
+    /** Opens the persistent workspace focused on the clicked model-message activity bar. */
+    public static boolean openTraceWorkspace(MinecraftClient client, double mouseX, double mouseY) {
+        if (client == null || client.inGameHud == null) return false;
+        MessageIndicator indicator = client.inGameHud.getChatHud().getIndicatorAt(mouseX, mouseY);
+        String traceId;
+        synchronized (TRACE_LOCK) {
+            traceId = WORKSPACE_TRACE_IDS.get(indicator);
+        }
+        if (traceId == null || traceId.isBlank()) return false;
+        AutomationRouter.openWorkspace(traceId);
         return true;
     }
 
@@ -191,18 +212,27 @@ public final class ModelChatMessageBridge {
                 MessageIndicator removed = TRACE_ORDER.remove(0);
                 LEGACY_TRACE_LINES.remove(removed);
                 TYPED_TRACES.remove(removed);
+                WORKSPACE_TRACE_IDS.remove(removed);
             }
         }
     }
 
-    private static void rememberTrace(MessageIndicator indicator, ModelActivityPresentation.TraceSnapshot trace) {
+    private static void rememberTrace(
+            MessageIndicator indicator,
+            ModelActivityPresentation.TraceSnapshot trace,
+            String workspaceTraceId
+    ) {
         synchronized (TRACE_LOCK) {
             TYPED_TRACES.put(indicator, trace);
+            if (workspaceTraceId != null && !workspaceTraceId.isBlank()) {
+                WORKSPACE_TRACE_IDS.put(indicator, workspaceTraceId);
+            }
             TRACE_ORDER.add(indicator);
             while (TRACE_ORDER.size() > MAXIMUM_RETAINED_TRACES) {
                 MessageIndicator removed = TRACE_ORDER.remove(0);
                 LEGACY_TRACE_LINES.remove(removed);
                 TYPED_TRACES.remove(removed);
+                WORKSPACE_TRACE_IDS.remove(removed);
             }
         }
     }

@@ -1114,6 +1114,11 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             return;
         }
 
+        if (button == 0 && ModelChatMessageBridge.openTraceWorkspace(MinecraftClient.getInstance(), mouseX, mouseY)) {
+            cir.setReturnValue(true);
+            return;
+        }
+
         MinecraftClient minecraft = MinecraftClient.getInstance();
         if (button == 0 && minecraft != null && minecraft.inGameHud != null && minecraft.inGameHud.getChatHud() instanceof com.spirit.koil.api.chat.ChatHudRefreshBridge bridge) {
             if (bridge.koil$chatScrollbarContains(mouseX, mouseY)) {

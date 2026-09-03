@@ -2,7 +2,6 @@ package com.spirit.koil.api.model.chat;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.spirit.Main;
 import com.spirit.koil.api.automation.cli.AutomationStateColors;
 import com.spirit.koil.api.model.ModelDeepThoughtControl;
 import com.spirit.koil.api.model.ModelSemanticPalette;
@@ -428,20 +427,17 @@ public final class ModelActivityPresentation {
         if (usage.promptTokens() <= 0 && usage.completionTokens() <= 0 && usage.reusedPrefixTokens() <= 0
                 && usage.queueMillis() <= 0L && usage.timeToFirstTokenMillis() <= 0L
                 && usage.tokensPerSecond() <= 0.0D && elapsed <= 0L) return "";
-        if (Main.isBetaTesting) {
-            StringBuilder value = new StringBuilder("-# §8").append(ModelActivityTreeGlyphs.BRANCH).append("§r ")
-                .append(AutomationStateColors.section("observing")).append("Request metrics§r");
-            value.append("\n-# §8│  ├─§r §7Prompt tokens§r | ").append(usage.promptTokens());
-            value.append("\n-# §8│  ├─§r §7Output tokens§r | ").append(usage.completionTokens());
-            value.append("\n-# §8│  ├─§r §7Reused prefix§r | ").append(usage.reusedPrefixTokens()).append(" tokens");
-            value.append("\n-# §8│  ├─§r §7Queue§r | ").append(formatDuration(usage.queueMillis()));
-            value.append("\n-# §8│  ├─§r §7First token§r | ").append(formatDuration(usage.timeToFirstTokenMillis()));
-            value.append("\n-# §8│  ├─§r §7Average speed§r | ")
-                .append(String.format(Locale.ROOT, "%.2f output tokens/s", usage.tokensPerSecond()));
-            value.append("\n-# §8│  └─§r §7Elapsed§r | ").append(formatDuration(elapsed));
-            return value.toString();
-        }
-        return "";
+        StringBuilder value = new StringBuilder("-# §8").append(ModelActivityTreeGlyphs.BRANCH).append("§r ")
+            .append(AutomationStateColors.section("observing")).append("Request metrics§r");
+        value.append("\n-# §8│  ├─§r §7Prompt tokens§r | ").append(usage.promptTokens());
+        value.append("\n-# §8│  ├─§r §7Output tokens§r | ").append(usage.completionTokens());
+        value.append("\n-# §8│  ├─§r §7Reused prefix§r | ").append(usage.reusedPrefixTokens()).append(" tokens");
+        value.append("\n-# §8│  ├─§r §7Queue§r | ").append(formatDuration(usage.queueMillis()));
+        value.append("\n-# §8│  ├─§r §7First token§r | ").append(formatDuration(usage.timeToFirstTokenMillis()));
+        value.append("\n-# §8│  ├─§r §7Average speed§r | ")
+            .append(String.format(Locale.ROOT, "%.2f output tokens/s", usage.tokensPerSecond()));
+        value.append("\n-# §8│  └─§r §7Elapsed§r | ").append(formatDuration(elapsed));
+        return value.toString();
     }
 
     private record EvidenceRow(String label, String value) {

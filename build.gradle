@@ -296,6 +296,12 @@ tasks.register('runAutomationCapabilityProof', JavaExec) {
     mainClass = 'com.spirit.koil.api.automation.capability.AutomationCapabilityProof'
 }
 
+tasks.register('runAutomationWorkspaceProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.automation.workspace.AutomationWorkspaceProof'
+}
+
 tasks.register('runModelPresencePlanningProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath

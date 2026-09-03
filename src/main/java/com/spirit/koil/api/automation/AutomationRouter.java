@@ -1,5 +1,6 @@
 package com.spirit.koil.api.automation;
 
+import com.spirit.client.gui.automation.AutomationWorkspaceScreen;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
 import com.spirit.koil.api.automation.feedback.AutomationImprovementService;
@@ -199,6 +200,10 @@ public final class AutomationRouter {
                     }
                     return 1;
                 }))
+                .then(literal("workspace").executes(context -> {
+                    openWorkspace("");
+                    return 1;
+                }))
                 .then(literal("improve").executes(context -> {
                     AutomationCliViewModel.beginSession("/" + commandName + " improve");
                     AutomationImprovementService.improve();
@@ -374,7 +379,7 @@ public final class AutomationRouter {
     }
 
     public static void openCli() {
-        LocalModelControlChatFeedback.info("Automation activity is shown in the shared model popup; the Automation console was retired.");
+        openWorkspace("");
     }
 
     public static void closeCli() {
@@ -383,6 +388,12 @@ public final class AutomationRouter {
             return;
         }
         // The retired Automation console has no screen to close.
+    }
+
+    public static void openWorkspace(String traceId) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) return;
+        client.execute(() -> client.setScreen(new AutomationWorkspaceScreen(client.currentScreen, traceId)));
     }
 
     public static void handleConsoleInput(String input) {
@@ -427,6 +438,10 @@ public final class AutomationRouter {
                 }
                 AutomationCliViewModel.beginSession(trimmed);
                 AutomationReporter.pipeline("[mode]", "automation chat prompt opened");
+                return;
+            }
+            case "/automate workspace" -> {
+                openWorkspace("");
                 return;
             }
             case "/automate improve" -> {
