@@ -1,5 +1,6 @@
 package com.spirit.koil.api.automation;
 
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.spirit.client.gui.automation.AutomationWorkspaceScreen;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
@@ -7,11 +8,9 @@ import com.spirit.koil.api.automation.feedback.AutomationImprovementService;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.automation.runtime.AutomationExecutionResult;
 import com.spirit.koil.api.automation.runtime.AutomationExecutionResults;
-import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
+import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.model.LocalModelService;
-import com.spirit.koil.api.model.chat.LocalModelControlChatFeedback;
-import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -22,15 +21,13 @@ import net.minecraft.text.Text;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static com.mojang.brigadier.arguments.StringArgumentType.getString;
-import static com.mojang.brigadier.arguments.StringArgumentType.greedyString;
-import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
 
 @Environment(EnvType.CLIENT)
@@ -198,10 +195,6 @@ public final class AutomationRouter {
                     if (client != null) {
                         client.execute(() -> client.setScreen(new ChatScreen("")));
                     }
-                    return 1;
-                }))
-                .then(literal("workspace").executes(context -> {
-                    openWorkspace("");
                     return 1;
                 }))
                 .then(literal("improve").executes(context -> {
@@ -393,7 +386,7 @@ public final class AutomationRouter {
     public static void openWorkspace(String traceId) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null) return;
-        client.execute(() -> client.setScreen(new AutomationWorkspaceScreen(client.currentScreen, traceId)));
+        client.execute(() -> Objects.requireNonNull(client).setScreen(new AutomationWorkspaceScreen(client.currentScreen, traceId)));
     }
 
     public static void handleConsoleInput(String input) {

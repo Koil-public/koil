@@ -3,9 +3,8 @@ package com.spirit.koil.api.chat;
 import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.automation.workspace.AutomationWorkspaceRepository;
 import com.spirit.koil.api.design.uiColorVal;
-import com.spirit.koil.api.model.chat.ModelChatIdentity;
 import com.spirit.koil.api.model.chat.ModelActivityPresentation;
-import com.spirit.koil.api.model.chat.ModelRequestMetricsPresentation;
+import com.spirit.koil.api.model.chat.ModelChatIdentity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
@@ -14,11 +13,7 @@ import net.minecraft.text.MutableText;
 import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 
-import java.util.ArrayList;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 public final class ModelChatMessageBridge {
     private static final String LOGGED_NAME = "Koil local model";
@@ -143,11 +138,6 @@ public final class ModelChatMessageBridge {
         List<Text> tooltip = new ArrayList<>(trace.size() + 1);
         MutableText title = traceTitle(renderer, targetWidth, indicator);
         tooltip.add(title);
-        for (Text line : trace) {
-            for (net.minecraft.text.OrderedText wrapped : renderer.wrapLines(line, targetWidth)) {
-                tooltip.add(fromOrderedText(wrapped));
-            }
-        }
         context.getMatrices().push();
         context.getMatrices().translate(0.0F, 0.0F, 1_100.0F);
         context.drawTooltip(renderer, tooltip, Optional.empty(), mouseX, mouseY);
@@ -169,21 +159,8 @@ public final class ModelChatMessageBridge {
     }
 
     private static MutableText traceTitle(TextRenderer renderer, int targetWidth, MessageIndicator indicator) {
-        MutableText title = Text.literal("Activity trace").formatted(net.minecraft.util.Formatting.WHITE);
-        ModelActivityPresentation.TraceSnapshot trace;
-        synchronized (TRACE_LOCK) {
-            trace = TYPED_TRACES.get(indicator);
-        }
-        if (trace == null) return title;
-        long end = trace.completedAtMillis() > 0L ? trace.completedAtMillis() : trace.createdAtMillis();
-        String metrics = ModelRequestMetricsPresentation.tokensPerSecondLabel(trace.usage())
-                + "  " + ModelRequestMetricsPresentation.formatElapsedMillis(trace.createdAtMillis(), end);
-        int desiredGap = Math.max(renderer.getWidth("  "),
-                targetWidth - renderer.getWidth(title) - renderer.getWidth(metrics));
-        StringBuilder gap = new StringBuilder();
-        while (renderer.getWidth(gap.toString()) < desiredGap) gap.append(' ');
-        title.append(Text.literal(gap.toString()))
-                .append(Text.literal(metrics).formatted(net.minecraft.util.Formatting.GRAY));
+        MutableText title = Text.literal("view traces").formatted(net.minecraft.util.Formatting.WHITE);
+        /* remove old TRACE LOCK and other message bar activity trace functions unused and useless*/
         return title;
     }
 
