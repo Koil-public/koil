@@ -10,6 +10,7 @@ import com.spirit.koil.api.automation.runtime.AutomationExecutionResult;
 import com.spirit.koil.api.automation.runtime.AutomationExecutionResults;
 import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
 import com.spirit.koil.api.console.ConsoleLevel;
+import com.spirit.koil.api.model.LocalModelRuntimeLog;
 import com.spirit.koil.api.model.LocalModelService;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -21,7 +22,6 @@ import net.minecraft.text.Text;
 
 import java.time.Instant;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
@@ -168,9 +168,6 @@ public final class AutomationRouter {
                         .then(literal("associative-memory").executes(context -> togglePersistentExperiment(
                                 com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY,
                                 "Persistent associative memory")))
-                        .then(literal("gigatoken").executes(context -> togglePersistentExperiment(
-                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.GIGATOKEN,
-                                "gigaToken")))
                         .then(literal("expert-prefetch").executes(context -> togglePersistentExperiment(
                                 com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH,
                                 "Expert prefetch")))
@@ -183,6 +180,10 @@ public final class AutomationRouter {
                         })))
                 .then(literal("exit").executes(context -> {
                     stopAutomation(true);
+                    return 1;
+                }))
+                .then(literal("workpad").executes(context -> {
+                    openWorkpad();
                     return 1;
                 }))
                 .then(literal("chat").executes(context -> {
@@ -385,8 +386,41 @@ public final class AutomationRouter {
 
     public static void openWorkspace(String traceId) {
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null) return;
-        client.execute(() -> Objects.requireNonNull(client).setScreen(new AutomationWorkspaceScreen(client.currentScreen, traceId)));
+        if (client == null) {
+            LocalModelRuntimeLog.write("automation_workspace", "status=failed reason=client_unavailable");
+            return;
+        }
+        String focusedTraceId = traceId == null ? "" : traceId;
+        LocalModelRuntimeLog.write("automation_workspace", "status=requested focus="
+                + (focusedTraceId.isBlank() ? "none" : focusedTraceId));
+        client.execute(() -> {
+            try {
+                client.setScreen(new AutomationWorkspaceScreen(client.currentScreen, focusedTraceId));
+                if (!(client.currentScreen instanceof AutomationWorkspaceScreen)) {
+                    LocalModelRuntimeLog.write("automation_workspace", "status=failed reason=screen_not_active");
+                    if (client.inGameHud != null) {
+                        client.inGameHud.getChatHud().addMessage(Text.literal("Could not open Automation Workpad: screen was not activated."));
+                    }
+                    return;
+                }
+                LocalModelRuntimeLog.write("automation_workspace", "status=opened focus="
+                        + (focusedTraceId.isBlank() ? "none" : focusedTraceId));
+            } catch (RuntimeException exception) {
+                String detail = exception.getMessage();
+                if (detail == null || detail.isBlank()) {
+                    detail = exception.getClass().getSimpleName();
+                }
+                LocalModelRuntimeLog.write("automation_workspace", "status=failed reason=" + detail);
+                if (client.inGameHud != null) {
+                    client.inGameHud.getChatHud().addMessage(Text.literal("Could not open Automation Workpad: " + detail));
+                }
+            }
+        });
+    }
+
+    /** Opens the Workpad without requiring a model or Executor trace. */
+    public static void openWorkpad() {
+        openWorkspace("");
     }
 
     public static void handleConsoleInput(String input) {
@@ -433,8 +467,8 @@ public final class AutomationRouter {
                 AutomationReporter.pipeline("[mode]", "automation chat prompt opened");
                 return;
             }
-            case "/automate workspace" -> {
-                openWorkspace("");
+            case "/automate workpad" -> {
+                openWorkpad();
                 return;
             }
             case "/automate improve" -> {

@@ -23,6 +23,7 @@ final class ColibriStreamDecoder {
     private int promptTokens;
     private int completionTokens;
     private int streamedOutputUnits;
+    private boolean stopped;
     private String finishReason = "";
 
     ColibriStreamDecoder(UUID requestId, StreamingModelObserver observer) {
@@ -52,7 +53,8 @@ final class ColibriStreamDecoder {
             case "content_block_stop" -> finishTool(integer(root, "index", -1));
             case "message_delta" -> readMessageDelta(root);
             case "error" -> throw error(root);
-            case "ping", "message_stop" -> {
+            case "message_stop" -> this.stopped = true;
+            case "ping" -> {
             }
             default -> {
                 if ("error".equalsIgnoreCase(eventName)) {
@@ -137,6 +139,9 @@ final class ColibriStreamDecoder {
     }
 
     void finishOpenBlocks() {
+        if (!this.stopped) {
+            throw new ProtocolException("incomplete_stream", "Colibri stream ended without message_stop", null);
+        }
         for (Integer index : List.copyOf(this.tools.keySet())) {
             finishTool(index);
         }

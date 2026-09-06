@@ -26,6 +26,8 @@ import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.api.chat.ChatHudPanelStack;
+import com.spirit.koil.api.design.particle.KoilScreenSpriteOverlay;
+import com.spirit.koil.api.chat.MenuChatScreen;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
@@ -50,6 +52,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -106,6 +109,11 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
             return;
         }
         koil$renderScreenChromeLate(context, mouseX, mouseY, delta);
+    }
+
+    @Inject(method = "render", at = @At("TAIL"))
+    private void koil$renderScreenSprites(DrawContext context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
+        KoilScreenSpriteOverlay.render(context, this.width, this.height, mouseX, mouseY);
     }
 
     @Override
@@ -225,6 +233,18 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
 
     @Inject(method = "keyPressed", at = @At("HEAD"), cancellable = true)
     private void koil$consumePixelDifferenceKey(int keyCode, int scanCode, int modifiers, CallbackInfoReturnable<Boolean> cir) {
+        if (keyCode == GLFW.GLFW_KEY_T
+                && !((Object) this instanceof ChatScreen)
+                && !((Object) this instanceof MenuChatScreen)
+                && MenuChatScreen.canOpenMenuChat(this.getFocused())
+                && this.client != null) {
+            boolean worldLoaded = this.client.world != null
+                    && this.client.player != null
+                    && this.client.getNetworkHandler() != null;
+            this.client.setScreen(MenuChatScreen.open((Screen) (Object) this, worldLoaded));
+            cir.setReturnValue(true);
+            return;
+        }
         if (PixelDifferenceOverlay.keyPressed(keyCode) || PixelMagnifierOverlay.keyPressed(keyCode)) {
             cir.setReturnValue(true);
         }

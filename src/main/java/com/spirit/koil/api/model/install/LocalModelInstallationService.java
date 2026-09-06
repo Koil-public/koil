@@ -3,9 +3,12 @@ package com.spirit.koil.api.model.install;
 import com.spirit.koil.api.model.BinaryStorageFormatter;
 import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
+import com.spirit.koil.api.model.catalog.LocalModelRuntimeResolver;
 import com.spirit.koil.api.model.catalog.LocalModelSelection;
 import com.spirit.koil.api.model.catalog.LocalModelSelectionStore;
 import com.spirit.koil.api.model.catalog.ModelArtifact;
+import com.spirit.koil.api.model.catalog.ModelRuntimeCompatibility;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -42,11 +45,13 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 public final class LocalModelInstallationService {
-    public static final Path ROOT = Path.of("koil/sys/model");
+    public static final Path ROOT = KoilInstancePaths.modelRoot();
     public static final Path RUNTIME_ROOT = ROOT.resolve("runtime");
     public static final Path MODEL_ROOT = ROOT.resolve("models");
     private static final long STORAGE_HEADROOM = 1024L * 1024L * 1024L;
     private static final LocalModelInstallationService INSTANCE = new LocalModelInstallationService();
+    private final ManagedRuntimeInstaller runtimeInstaller = new ManagedRuntimeInstaller();
+    private final HuggingFaceSnapshotInstaller snapshotInstaller = new HuggingFaceSnapshotInstaller();
 
     private final OkHttpClient http = new OkHttpClient.Builder()
             .connectTimeout(20L, TimeUnit.SECONDS)
@@ -133,11 +138,26 @@ public final class LocalModelInstallationService {
         if (entry == null || !entry.runnable()) {
             return false;
         }
-        Path runtime = runtimeExecutable();
+        LocalModelRuntimeResolver.Resolution resolution = LocalModelRuntimeResolver.resolve(entry);
+        Path runtime = resolution.selectedOptional()
+                .map(compat -> this.runtimeInstaller.installed(compat.runtimeId(), RUNTIME_ROOT))
+                .map(ManagedRuntimeInstallation::executable)
+                .orElse(null);
         if (runtime == null || !Files.isRegularFile(runtime)) {
             return false;
         }
         Path modelDirectory = modelDirectory(entry);
+        ModelRuntimeCompatibility compatibility = resolution.selectedOptional().orElse(null);
+        if (compatibility != null && compatibility.installsRepositorySnapshot()) {
+            if (ColibriModelPreparation.required(compatibility)) {
+                return ColibriModelPreparation.prepared(compatibility, modelDirectory);
+            }
+            return this.snapshotInstaller.installed(
+                    modelDirectory,
+                    compatibility.modelRepository(),
+                    compatibility.modelRevision()
+            );
+        }
         for (ModelArtifact artifact : entry.artifacts()) {
             Path file = modelDirectory.resolve(artifact.fileName());
             try {
@@ -152,17 +172,33 @@ public final class LocalModelInstallationService {
     }
 
     public LocalModelSelection selection(LocalModelCatalogEntry entry) {
-        Path runtime = runtimeExecutable();
-        if (!installed(entry) || runtime == null) {
+        if (!installed(entry)) {
             return LocalModelSelection.none();
         }
+        LocalModelRuntimeResolver.Resolution resolution = LocalModelRuntimeResolver.resolve(entry);
+        ModelRuntimeCompatibility compat = resolution.selectedOptional().orElse(null);
+        ManagedRuntimeInstallation runtime = compat == null
+                ? null
+                : this.runtimeInstaller.installed(compat.runtimeId(), RUNTIME_ROOT);
+        if (compat == null || runtime == null) {
+            return LocalModelSelection.none();
+        }
+        Path directory = modelDirectory(entry);
+        Path modelPath = compat.artifactFormat() == com.spirit.koil.api.model.catalog.ModelArtifactFormat.GGUF_FILE
+                ? directory.resolve(entry.primaryFileName()).toAbsolutePath().normalize()
+                : directory.toAbsolutePath().normalize();
         return new LocalModelSelection(
                 entry.id(),
-                entry.providerId(),
+                compat.providerId(),
+                compat.runtimeId(),
+                compat.architectureId(),
                 entry.modelId(),
-                runtime.toAbsolutePath().normalize(),
-                modelDirectory(entry).resolve(entry.primaryFileName()).toAbsolutePath().normalize(),
-                entry.contextTokens()
+                runtime.executable(),
+                directory.toAbsolutePath().normalize(),
+                modelPath,
+                compat.tokenizerFamily(),
+                "",
+                compat.maximumContextTokens() > 0 ? compat.maximumContextTokens() : entry.contextTokens()
         );
     }
 
@@ -205,7 +241,10 @@ public final class LocalModelInstallationService {
             return new StoragePlan(0L, STORAGE_HEADROOM, 0L, 0L, false);
         }
         long remaining = remainingDownloadBytes(entry);
-        long required = Math.addExact(remaining, STORAGE_HEADROOM);
+        ModelRuntimeCompatibility compatibility = LocalModelRuntimeResolver.resolve(entry).selectedOptional().orElse(null);
+        long preparation = ColibriModelPreparation.additionalStorageBytes(compatibility);
+        long total = Math.addExact(remaining, preparation);
+        long required = Math.addExact(total, STORAGE_HEADROOM);
         long usable;
         try {
             Files.createDirectories(ROOT);
@@ -213,7 +252,7 @@ public final class LocalModelInstallationService {
         } catch (IOException exception) {
             usable = 0L;
         }
-        return new StoragePlan(remaining, STORAGE_HEADROOM, required, usable, usable >= required);
+        return new StoragePlan(total, STORAGE_HEADROOM, required, usable, usable >= required);
     }
 
     public CompletableFuture<UninstallResult> uninstall(String catalogId) {
@@ -276,79 +315,131 @@ public final class LocalModelInstallationService {
         try {
             Files.createDirectories(RUNTIME_ROOT);
             Files.createDirectories(MODEL_ROOT);
-            long required = remainingDownloadBytes(entry) + STORAGE_HEADROOM;
+            LocalModelRuntimeResolver.Resolution resolution = LocalModelRuntimeResolver.resolve(entry);
+            ModelRuntimeCompatibility compat = resolution.selectedOptional()
+                    .orElseThrow(() -> new IOException("No compatible runtime for this model on "
+                            + com.spirit.koil.api.model.catalog.LocalModelRuntimePlatform.currentId()
+                            + ": " + resolution.evidence()));
+            long runtimeBytes = ManagedRuntimeCatalog.current(compat.runtimeId())
+                    .map(ManagedRuntimeArtifact::sizeBytes)
+                    .orElse(0L);
+            HuggingFaceSnapshotInstaller.SnapshotManifest repositorySnapshot = compat.installsRepositorySnapshot()
+                    ? this.snapshotInstaller.resolve(
+                            compat.modelRepository(), compat.modelRevision(), () -> this.cancellation.get())
+                    : null;
+            long modelBytes = repositorySnapshot == null ? entry.downloadBytes() : repositorySnapshot.totalBytes();
+            long preparationBytes = ColibriModelPreparation.additionalStorageBytes(compat);
+            total = Math.addExact(runtimeBytes, modelBytes);
+            final long plannedTotal = total;
+            long required = Math.addExact(Math.addExact(modelBytes, preparationBytes), STORAGE_HEADROOM);
             FileStore store = Files.getFileStore(ROOT.toAbsolutePath().normalize());
             if (store.getUsableSpace() < required) {
                 throw new IOException("Not enough free storage. Need "
                         + formatBytes(required) + " including 1 gb safety headroom, but only "
                         + formatBytes(store.getUsableSpace()) + " is available.");
             }
-            LlamaCppRuntimeCatalog.RuntimeArtifact runtimeArtifact = LlamaCppRuntimeCatalog.currentPlatform()
-                    .orElseThrow(() -> new IOException("No verified llama.cpp runtime is available for this operating system and architecture."));
-            Path runtime = runtimeExecutable();
-            if (runtime == null || !Files.isRegularFile(runtime)) {
-                Path archive = RUNTIME_ROOT.resolve(runtimeArtifact.fileName() + ".part");
-                update(ModelInstallationState.DOWNLOADING_RUNTIME, entry.id(), "Downloading verified llama.cpp runtime.",
-                        runtimeArtifact.fileName(), completed, total);
-                download(runtimeArtifact.downloadUri().toString(), archive, runtimeArtifact.sizeBytes(), runtimeArtifact.sha256(),
-                        entry.id(), ModelInstallationState.DOWNLOADING_RUNTIME, completed, total);
-                completed += runtimeArtifact.sizeBytes();
-                checkCancelled();
-                update(ModelInstallationState.EXTRACTING_RUNTIME, entry.id(), "Extracting llama.cpp runtime.",
-                        runtimeArtifact.fileName(), completed, total);
-                Path runtimeDirectory = runtimeDirectory();
-                Files.createDirectories(runtimeDirectory);
-                extractArchive(archive, runtimeDirectory, runtimeArtifact.archiveType());
-                Files.deleteIfExists(archive);
-                runtime = findRuntimeExecutable(runtimeDirectory);
-                if (runtime == null) {
-                    throw new IOException("The verified runtime archive did not contain llama-server.");
-                }
-                makeExecutable(runtime);
-                Files.writeString(runtimeMarker(), runtimeArtifact.sha256(), StandardCharsets.UTF_8);
-            } else {
-                completed += runtimeArtifact.sizeBytes();
+            ManagedRuntimeInstallation runtime = this.runtimeInstaller.installed(compat.runtimeId(), RUNTIME_ROOT);
+            if (runtime == null) {
+                long completedBefore = completed;
+                ManagedRuntimeInstaller.ProgressListener progress = (stage, detail, file, done, totalBytes) -> {
+                    ModelInstallationState state = switch (stage) {
+                        case "downloading" -> ModelInstallationState.DOWNLOADING_RUNTIME;
+                        case "extracting" -> ModelInstallationState.EXTRACTING_RUNTIME;
+                        case "building" -> ModelInstallationState.BUILDING_RUNTIME;
+                        default -> ModelInstallationState.EXTRACTING_RUNTIME;
+                    };
+                    long reportedDone = done >= 0L ? completedBefore + done : completedBefore;
+                    update(state, entry.id(), detail, file, reportedDone, plannedTotal);
+                };
+                runtime = this.runtimeInstaller.ensureInstalled(
+                        compat.runtimeId(),
+                        RUNTIME_ROOT,
+                        progress,
+                        () -> this.cancellation.get()
+                );
+                com.spirit.koil.api.model.LocalModelRuntimeLog.write("runtime_install", "installed managed runtime "
+                        + compat.runtimeId() + (runtime.sourceBuilt() ? " (source-built)" : ""));
             }
+            completed += runtimeBytes;
 
             Path modelDirectory = modelDirectory(entry);
             Files.createDirectories(modelDirectory);
-            for (ModelArtifact artifact : entry.artifacts()) {
-                Path destination = modelDirectory.resolve(artifact.fileName());
-                if (validSize(destination, artifact.sizeBytes())) {
+            if (repositorySnapshot != null) {
+                long completedBefore = completed;
+                Path snapshotDirectory = ColibriModelPreparation.required(compat)
+                        ? ColibriModelPreparation.sourceDirectory(modelDirectory) : modelDirectory;
+                this.snapshotInstaller.install(repositorySnapshot, snapshotDirectory,
+                        (stage, detail, file, done, ignoredTotal) -> update(
+                                ModelInstallationState.DOWNLOADING_MODEL,
+                                entry.id(), detail, file,
+                                completedBefore + Math.max(0L, done), plannedTotal),
+                        () -> this.cancellation.get());
+                completed += repositorySnapshot.totalBytes();
+            } else {
+                for (ModelArtifact artifact : entry.artifacts()) {
+                    Path destination = modelDirectory.resolve(artifact.fileName());
+                    if (validSize(destination, artifact.sizeBytes())) {
+                        completed += artifact.sizeBytes();
+                        continue;
+                    }
+                    Path part = modelDirectory.resolve(artifact.fileName() + ".part");
+                    update(ModelInstallationState.DOWNLOADING_MODEL, entry.id(), "Downloading " + entry.displayName() + ".",
+                            artifact.fileName(), completed, plannedTotal);
+                    download(artifact.downloadUri().toString(), part, artifact.sizeBytes(), artifact.sha256(),
+                            entry.id(), ModelInstallationState.DOWNLOADING_MODEL, completed, plannedTotal);
+                    moveAtomically(part, destination);
                     completed += artifact.sizeBytes();
-                    continue;
                 }
-                Path part = modelDirectory.resolve(artifact.fileName() + ".part");
-                update(ModelInstallationState.DOWNLOADING_MODEL, entry.id(), "Downloading " + entry.displayName() + ".",
-                        artifact.fileName(), completed, total);
-                download(artifact.downloadUri().toString(), part, artifact.sizeBytes(), artifact.sha256(),
-                        entry.id(), ModelInstallationState.DOWNLOADING_MODEL, completed, total);
-                moveAtomically(part, destination);
-                completed += artifact.sizeBytes();
             }
+            long completedBeforePreparation = completed;
+            ColibriModelPreparation.prepare(compat, RUNTIME_ROOT,
+                    ColibriModelPreparation.sourceDirectory(modelDirectory), modelDirectory,
+                    (stage, detail, file, done, ignoredTotal) -> update(ModelInstallationState.VERIFYING,
+                            entry.id(), detail, file, completedBeforePreparation, plannedTotal),
+                    () -> this.cancellation.get());
             checkCancelled();
             update(ModelInstallationState.VERIFYING, entry.id(), "Verifying installed runtime and model files.", "",
-                    completed, total);
-            for (ModelArtifact artifact : entry.artifacts()) {
-                Path model = modelDirectory.resolve(artifact.fileName());
-                verify(model, artifact.sizeBytes(), artifact.sha256());
+                    completed, plannedTotal);
+            if (repositorySnapshot == null) {
+                for (ModelArtifact artifact : entry.artifacts()) {
+                    Path model = modelDirectory.resolve(artifact.fileName());
+                    verify(model, artifact.sizeBytes(), artifact.sha256());
+                }
+            } else {
+                Path snapshotDirectory = ColibriModelPreparation.required(compat)
+                        ? ColibriModelPreparation.sourceDirectory(modelDirectory) : modelDirectory;
+                if (!this.snapshotInstaller.installed(snapshotDirectory, compat.modelRepository(), compat.modelRevision())) {
+                    throw new IOException("Pinned Hugging Face snapshot did not publish a valid completion marker");
+                }
+                if (!ColibriModelPreparation.prepared(compat, modelDirectory)) {
+                    throw new IOException("Colibri model preparation did not publish a runnable container");
+                }
             }
-            runtime = findRuntimeExecutable(runtimeDirectory());
-            if (runtime == null || !Files.isRegularFile(runtime)) {
-                throw new IOException("llama-server is missing after installation.");
+            if (!Files.isRegularFile(runtime.executable())) {
+                throw new IOException("The managed runtime executable is missing after installation: " + compat.runtimeId());
             }
-            makeExecutable(runtime);
+            makeExecutable(runtime.executable());
             LocalModelSelection selection = new LocalModelSelection(
                     entry.id(),
-                    entry.providerId(),
+                    compat.providerId(),
+                    compat.runtimeId(),
+                    compat.architectureId(),
                     entry.modelId(),
-                    runtime.toAbsolutePath().normalize(),
-                    modelDirectory.resolve(entry.primaryFileName()).toAbsolutePath().normalize(),
-                    entry.contextTokens()
+                    runtime.executable(),
+                    modelDirectory.toAbsolutePath().normalize(),
+                    compat.artifactFormat() == com.spirit.koil.api.model.catalog.ModelArtifactFormat.GGUF_FILE
+                            ? modelDirectory.resolve(entry.primaryFileName()).toAbsolutePath().normalize()
+                            : modelDirectory.toAbsolutePath().normalize(),
+                    compat.tokenizerFamily(),
+                    "",
+                    compat.maximumContextTokens() > 0 ? compat.maximumContextTokens() : entry.contextTokens()
             );
             LocalModelSelectionStore.save(selection);
             update(ModelInstallationState.READY, entry.id(), entry.displayName() + " is installed and selected.", "",
-                    total, total);
+                    plannedTotal, plannedTotal);
+        } catch (ManagedRuntimeInstaller.CancelledException cancelledByInstaller) {
+            update(ModelInstallationState.CANCELLED, entry.id(), "Model installation was cancelled. It can be retried safely.", "",
+                    Math.min(completed, total), total);
         } catch (CancelledException exception) {
             update(ModelInstallationState.CANCELLED, entry.id(), "Model installation was cancelled. It can be retried safely.", "",
                     Math.min(completed, total), total);
@@ -411,215 +502,7 @@ public final class LocalModelInstallationService {
     }
 
     private static void verify(Path path, long expectedBytes, String expectedSha256) throws IOException {
-        long actualBytes = Files.size(path);
-        if (actualBytes != expectedBytes) {
-            throw new IOException("Size verification failed for " + path.getFileName()
-                    + ": expected " + expectedBytes + " bytes, got " + actualBytes + ".");
-        }
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (Exception exception) {
-            throw new IOException("SHA-256 is unavailable.", exception);
-        }
-        try (InputStream input = new BufferedInputStream(Files.newInputStream(path))) {
-            byte[] buffer = new byte[128 * 1024];
-            int read;
-            while ((read = input.read(buffer)) >= 0) {
-                if (read > 0) {
-                    digest.update(buffer, 0, read);
-                }
-            }
-        }
-        String actual = HexFormat.of().formatHex(digest.digest());
-        if (!actual.equalsIgnoreCase(expectedSha256)) {
-            throw new IOException("SHA-256 verification failed for " + path.getFileName() + ".");
-        }
-    }
-
-    private static void extractArchive(Path archive, Path output, String archiveType) throws IOException {
-        if ("zip".equals(archiveType)) {
-            extractZip(archive, output);
-        } else if ("tar.gz".equals(archiveType)) {
-            extractTarGz(archive, output);
-        } else {
-            throw new IOException("Unsupported runtime archive type: " + archiveType);
-        }
-    }
-
-    private static void extractZip(Path archive, Path output) throws IOException {
-        try (ZipInputStream zip = new ZipInputStream(new BufferedInputStream(Files.newInputStream(archive)))) {
-            ZipEntry entry;
-            while ((entry = zip.getNextEntry()) != null) {
-                Path target = safeTarget(output, entry.getName());
-                if (entry.isDirectory()) {
-                    Files.createDirectories(target);
-                } else {
-                    Files.createDirectories(target.getParent());
-                    try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(target))) {
-                        zip.transferTo(out);
-                    }
-                }
-                zip.closeEntry();
-            }
-        }
-    }
-
-    private static void extractTarGz(Path archive, Path output) throws IOException {
-        try (InputStream input = new BufferedInputStream(new GZIPInputStream(Files.newInputStream(archive)))) {
-            byte[] header = new byte[512];
-            while (true) {
-                readFully(input, header);
-                if (allZero(header)) {
-                    return;
-                }
-                String name = text(header, 0, 100);
-                String prefix = text(header, 345, 155);
-                if (!prefix.isBlank()) {
-                    name = prefix + "/" + name;
-                }
-                long size = octal(header, 124, 12);
-                int type = header[156] & 0xFF;
-                Path target = safeTarget(output, name);
-                if (type == '5') {
-                    Files.createDirectories(target);
-                    skipFully(input, size);
-                } else if (type == 0 || type == '0') {
-                    Files.createDirectories(target.getParent());
-                    try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(target))) {
-                        copyExactly(input, out, size);
-                    }
-                } else if (type == '2') {
-                    String linkName = text(header, 157, 100);
-                    Path linkTarget = Path.of(linkName);
-                    if (linkTarget.isAbsolute() || target.getParent() == null
-                            || !target.getParent().resolve(linkTarget).normalize().startsWith(output.toAbsolutePath().normalize())) {
-                        throw new IOException("Unsafe symlink in runtime archive: " + name);
-                    }
-                    Files.createDirectories(target.getParent());
-                    Files.deleteIfExists(target);
-                    Files.createSymbolicLink(target, linkTarget);
-                    skipFully(input, size);
-                } else {
-                    skipFully(input, size);
-                }
-                long padding = (512L - size % 512L) % 512L;
-                skipFully(input, padding);
-            }
-        } catch (EOFException exception) {
-            throw new IOException("Runtime archive ended unexpectedly.", exception);
-        }
-    }
-
-    private static void copyExactly(InputStream input, OutputStream output, long bytes) throws IOException {
-        byte[] buffer = new byte[128 * 1024];
-        long remaining = bytes;
-        while (remaining > 0L) {
-            int read = input.read(buffer, 0, (int) Math.min(buffer.length, remaining));
-            if (read < 0) {
-                throw new EOFException();
-            }
-            output.write(buffer, 0, read);
-            remaining -= read;
-        }
-    }
-
-    private static void readFully(InputStream input, byte[] buffer) throws IOException {
-        int offset = 0;
-        while (offset < buffer.length) {
-            int read = input.read(buffer, offset, buffer.length - offset);
-            if (read < 0) {
-                throw new EOFException();
-            }
-            offset += read;
-        }
-    }
-
-    private static void skipFully(InputStream input, long bytes) throws IOException {
-        long remaining = bytes;
-        while (remaining > 0L) {
-            long skipped = input.skip(remaining);
-            if (skipped <= 0L) {
-                if (input.read() < 0) {
-                    throw new EOFException();
-                }
-                skipped = 1L;
-            }
-            remaining -= skipped;
-        }
-    }
-
-    private static boolean allZero(byte[] bytes) {
-        for (byte value : bytes) {
-            if (value != 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static String text(byte[] bytes, int offset, int length) {
-        int end = offset;
-        int maximum = Math.min(bytes.length, offset + length);
-        while (end < maximum && bytes[end] != 0) {
-            end++;
-        }
-        return new String(bytes, offset, end - offset, StandardCharsets.UTF_8).trim();
-    }
-
-    private static long octal(byte[] bytes, int offset, int length) {
-        String value = text(bytes, offset, length).replace("\u0000", "").trim();
-        return value.isEmpty() ? 0L : Long.parseLong(value, 8);
-    }
-
-    private static Path safeTarget(Path root, String entryName) throws IOException {
-        Path normalizedRoot = root.toAbsolutePath().normalize();
-        Path target = normalizedRoot.resolve(entryName).normalize();
-        if (!target.startsWith(normalizedRoot)) {
-            throw new IOException("Unsafe path in runtime archive: " + entryName);
-        }
-        return target;
-    }
-
-    private static Path runtimeDirectory() {
-        return RUNTIME_ROOT.resolve("llama.cpp-" + LlamaCppRuntimeCatalog.VERSION);
-    }
-
-    private static Path runtimeExecutable() {
-        String expected = LlamaCppRuntimeCatalog.currentPlatform()
-                .map(LlamaCppRuntimeCatalog.RuntimeArtifact::sha256)
-                .orElse("");
-        try {
-            if (expected.isBlank()
-                    || !Files.isRegularFile(runtimeMarker())
-                    || !expected.equalsIgnoreCase(Files.readString(runtimeMarker(), StandardCharsets.UTF_8).trim())) {
-                return null;
-            }
-        } catch (IOException exception) {
-            return null;
-        }
-        return findRuntimeExecutable(runtimeDirectory());
-    }
-
-    private static Path runtimeMarker() {
-        return runtimeDirectory().resolve(".koil-runtime-sha256");
-    }
-
-    private static Path findRuntimeExecutable(Path root) {
-        if (!Files.isDirectory(root)) {
-            return null;
-        }
-        String expected = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("win")
-                ? "llama-server.exe"
-                : "llama-server";
-        try (var paths = Files.walk(root, 5)) {
-            return paths.filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().equals(expected))
-                    .findFirst()
-                    .orElse(null);
-        } catch (IOException exception) {
-            return null;
-        }
+        DownloadVerification.verify(path, expectedBytes, expectedSha256);
     }
 
     private static void makeExecutable(Path path) {
@@ -639,20 +522,34 @@ public final class LocalModelInstallationService {
     }
 
     private long totalDownloadBytes(LocalModelCatalogEntry entry) {
-        long runtime = LlamaCppRuntimeCatalog.currentPlatform().map(LlamaCppRuntimeCatalog.RuntimeArtifact::sizeBytes).orElse(0L);
+        long runtime = resolvedRuntimeBytes(entry, true);
         return Math.addExact(runtime, entry.downloadBytes());
     }
 
     private long remainingDownloadBytes(LocalModelCatalogEntry entry) {
-        long remaining = runtimeExecutable() == null
-                ? LlamaCppRuntimeCatalog.currentPlatform().map(LlamaCppRuntimeCatalog.RuntimeArtifact::sizeBytes).orElse(0L)
-                : 0L;
+        long remaining = resolvedRuntimeBytes(entry, false);
         for (ModelArtifact artifact : entry.artifacts()) {
             if (!validSize(modelDirectory(entry).resolve(artifact.fileName()), artifact.sizeBytes())) {
                 remaining = Math.addExact(remaining, artifact.sizeBytes());
             }
         }
         return remaining;
+    }
+
+    /**
+     * Exact download size of the resolved managed runtime, either unconditionally
+     * (for display totals) or only when it is not already installed (remaining).
+     */
+    private long resolvedRuntimeBytes(LocalModelCatalogEntry entry, boolean always) {
+        LocalModelRuntimeResolver.Resolution resolution = LocalModelRuntimeResolver.resolve(entry);
+        String runtimeId = resolution.selectedOptional().map(ModelRuntimeCompatibility::runtimeId).orElse("");
+        if (runtimeId.isBlank()) {
+            return 0L;
+        }
+        if (!always && runtimeInstaller.installed(runtimeId, RUNTIME_ROOT) != null) {
+            return 0L;
+        }
+        return ManagedRuntimeCatalog.current(runtimeId).map(ManagedRuntimeArtifact::sizeBytes).orElse(0L);
     }
 
     private static boolean validSize(Path path, long expected) {

@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.spirit.koil.api.automation.cli.AutomationCliRow;
 import com.spirit.koil.api.automation.cli.AutomationCliSnapshot;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -17,7 +18,7 @@ import java.util.*;
 public final class AutomationFeedbackService {
     /** The feedback backend is retained for compatibility, but its user surface is temporarily disabled. */
     private static final boolean USER_SURFACE_ENABLED = false;
-    private static final Path EVENTS = Path.of("koil/automation/feedback/events.jsonl");
+    private static final Path EVENTS = KoilInstancePaths.automationRoot().resolve("feedback/events.jsonl");
     private static final Gson GSON = new GsonBuilder().disableHtmlEscaping().create();
     private static PendingFlow pending = PendingFlow.empty();
     private static FeedbackContext lastFeedbackContext = FeedbackContext.empty();

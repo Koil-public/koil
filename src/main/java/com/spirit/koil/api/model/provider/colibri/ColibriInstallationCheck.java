@@ -22,10 +22,13 @@ public record ColibriInstallationCheck(boolean compatible, List<String> failures
             failures.add("local API authentication key is missing");
         }
         if (!allowExistingRuntime) {
-            if (configuration.executable() == null || !Files.isRegularFile(configuration.executable())) {
-                failures.add("Colibri executable is missing");
-            } else if (!Files.isExecutable(configuration.executable())) {
-                failures.add("Colibri executable is not executable");
+            if (!configuration.effectiveManaged()) {
+                // Legacy manual mode: the user owns the executable entirely.
+                if (configuration.executable() == null || !Files.isRegularFile(configuration.executable())) {
+                    failures.add("Colibri executable is missing");
+                } else if (!Files.isExecutable(configuration.executable())) {
+                    failures.add("Colibri executable is not executable");
+                }
             }
             if (configuration.modelDirectory() == null || !Files.isDirectory(configuration.modelDirectory())) {
                 failures.add("model directory is missing");

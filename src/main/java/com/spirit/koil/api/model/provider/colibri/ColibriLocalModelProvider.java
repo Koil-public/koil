@@ -8,6 +8,14 @@ import com.spirit.koil.api.model.LocalModelProvider;
 import com.spirit.koil.api.model.LocalModelOwnedProcessRegistry;
 import com.spirit.koil.api.model.LocalModelRuntimeLog;
 import com.spirit.koil.api.model.catalog.LocalModelReliabilityStore;
+import com.spirit.koil.api.model.catalog.ModelRuntimeCompatibility;
+import com.spirit.koil.api.model.install.LocalModelInstallationService;
+import com.spirit.koil.api.model.install.ManagedRuntimeCatalog;
+import com.spirit.koil.api.model.install.ManagedRuntimeInstallation;
+import com.spirit.koil.api.model.install.ManagedRuntimeInstaller;
+import com.spirit.koil.api.model.install.ColibriRuntimeIntegrator;
+import com.spirit.koil.api.model.provider.tokenizer.GigatokenBridgeClient;
+import com.spirit.koil.api.model.provider.tokenizer.GigatokenCompatibilityRegistry;
 import com.spirit.koil.api.model.ModelCancellationHandle;
 import com.spirit.koil.api.model.ModelCapabilityDescriptor;
 import com.spirit.koil.api.model.ModelHealthSnapshot;
@@ -34,6 +42,7 @@ import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,7 +57,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class ColibriLocalModelProvider implements LocalModelProvider {
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
     private final Object processLock = new Object();
-    private final ColibriConfiguration configuration;
+    private volatile ColibriConfiguration configuration;
+    private final ModelRuntimeCompatibility engineCompatibility;
+    private final ManagedRuntimeInstaller runtimeInstaller = new ManagedRuntimeInstaller();
     private final OkHttpClient http;
     private final ExecutorService lifecycle;
     private final ExecutorService requests;
@@ -59,16 +70,35 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
     private volatile boolean closed;
     private volatile int selectedPort;
     private volatile int restartAttempts;
+    private volatile String runtimeInstallDetail = "";
+    private volatile Map<String, String> inspectionDiagnostics = Map.of();
+    private volatile Path gigatokenBridge;
+    private volatile String gigatokenTokenizerSha = "";
+    private volatile String tokenizerName = "Native Colibri";
+    private volatile String gigatokenDetail = "not evaluated";
 
     public ColibriLocalModelProvider(ColibriConfiguration configuration) {
-        this(configuration, new OkHttpClient.Builder()
+        this(configuration, (ModelRuntimeCompatibility) null);
+    }
+
+    /**
+     * Binding to the exact engine/checkpoint compatibility resolved from the catalog
+     * makes capabilities truthful per model family instead of provider-global.
+     */
+    public ColibriLocalModelProvider(ColibriConfiguration configuration, ModelRuntimeCompatibility engineCompatibility) {
+        this(configuration, engineCompatibility, new OkHttpClient.Builder()
                 .connectTimeout(5L, TimeUnit.SECONDS)
                 .readTimeout(0L, TimeUnit.MILLISECONDS)
                 .build());
     }
 
     ColibriLocalModelProvider(ColibriConfiguration configuration, OkHttpClient http) {
+        this(configuration, null, http);
+    }
+
+    ColibriLocalModelProvider(ColibriConfiguration configuration, ModelRuntimeCompatibility engineCompatibility, OkHttpClient http) {
         this.configuration = configuration == null ? ColibriConfiguration.disabled() : configuration;
+        this.engineCompatibility = engineCompatibility;
         this.http = http;
         this.selectedPort = this.configuration.port();
         this.lifecycle = Executors.newSingleThreadExecutor(runnable -> daemon(runnable, "koil-colibri-lifecycle"));
@@ -82,6 +112,11 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
 
     @Override
     public ModelCapabilityDescriptor capabilities() {
+        if (this.engineCompatibility != null) {
+            return this.engineCompatibility.capabilities();
+        }
+        // Manual/external configurations have no resolved engine binding; these
+        // claims remain generic until Koil manages the runtime+model pair.
         return new ModelCapabilityDescriptor(
                 true,
                 true,
@@ -116,13 +151,37 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
         if (this.configuration.port() > 0 && compatibleRuntimeAvailable(this.configuration.port())) {
             this.selectedPort = this.configuration.port();
             this.ownsProcess = false;
+            this.tokenizerName = "External runtime (unverified)";
+            this.gigatokenDetail = "unverified: external runtime manages its own tokenizer; request evidence required";
             this.restartAttempts = 0;
             return updateHealth(ModelHealthState.READY, "connected to existing local runtime", runtimeDiagnostics());
+        }
+        if (this.configuration.effectiveManaged()
+                && (this.configuration.executable() == null
+                    || !java.nio.file.Files.isRegularFile(this.configuration.executable()))) {
+            ModelHealthSnapshot resolved = ensureManagedRuntime();
+            if (resolved != null) {
+                return resolved;
+            }
+        }
+        if (this.configuration.effectiveManaged()) {
+            prepareManagedAcceleration();
         }
 
         ColibriInstallationCheck launchCheck = ColibriInstallationCheck.inspect(this.configuration, false);
         if (!launchCheck.compatible()) {
             return failHealth(String.join("; ", launchCheck.failures()));
+        }
+        if (this.configuration.effectiveManaged()) {
+            try {
+                updateHealth(ModelHealthState.STARTING, "running Colibri doctor and resource plan", runtimeDiagnostics());
+                ColibriRuntimeInspectionService.Inspection inspection = ColibriRuntimeInspectionService.inspect(
+                        this.configuration.executable(), this.configuration.modelDirectory(),
+                        capabilities().maximumContextTokens(), this.configuration.kvSlots());
+                this.inspectionDiagnostics = inspection.diagnostics();
+            } catch (Exception failure) {
+                return failHealth(message(failure));
+            }
         }
         synchronized (this.processLock) {
             if (this.process != null && this.process.isAlive()) {
@@ -135,6 +194,10 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
                 builder.environment().put("COLI_API_KEY", this.configuration.apiKey());
                 builder.environment().put("COLI_KV_SLOTS", Integer.toString(this.configuration.kvSlots()));
                 builder.environment().put("COLI_MODEL", this.configuration.modelDirectory().toAbsolutePath().normalize().toString());
+                if (this.gigatokenBridge != null && !this.gigatokenTokenizerSha.isBlank()) {
+                    builder.environment().put("KOIL_GIGATOKEN_BRIDGE", this.gigatokenBridge.toString());
+                    builder.environment().put("KOIL_GIGATOKEN_TOKENIZER_SHA256", this.gigatokenTokenizerSha);
+                }
                 this.process = builder.start();
                 this.ownsProcess = true;
                 Process launched = this.process;
@@ -147,6 +210,101 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
             }
         }
         return waitForReadiness();
+    }
+
+    /**
+     * Downloads/verifies/builds the pinned Colibri runtime when Koil owns it.
+     * Any failure becomes a truthful FAILED health state with exact evidence.
+     */
+    private ModelHealthSnapshot ensureManagedRuntime() {
+        updateHealth(ModelHealthState.STARTING, "installing managed Colibri runtime", Map.of());
+        ManagedRuntimeInstaller.ProgressListener progress = (stage, detail, file, done, total) ->
+                updateHealth(ModelHealthState.STARTING,
+                        detail + (total > 0L ? " (" + (100L * Math.max(0L, done) / total) + "%)" : ""),
+                        Map.of("stage", stage == null ? "" : stage, "file", file == null ? "" : file));
+        try {
+            ManagedRuntimeInstallation installation = this.runtimeInstaller.ensureInstalled(
+                    ManagedRuntimeCatalog.COLIBRI_RUNTIME_ID,
+                    LocalModelInstallationService.RUNTIME_ROOT,
+                    progress,
+                    () -> this.stopping || this.closed || Thread.currentThread().isInterrupted()
+            );
+            this.configuration = this.configuration.withExecutable(installation.executable());
+            this.runtimeInstallDetail = installation.sourceBuilt()
+                    ? "source-built from pinned " + ManagedRuntimeCatalog.COLIBRI_COMMIT
+                    : "verified release archive";
+            LocalModelRuntimeLog.write("colibri_runtime",
+                    "managed runtime ready at " + installation.installRoot() + " (" + this.runtimeInstallDetail + ")");
+            return null;
+        } catch (ManagedRuntimeInstaller.CancelledException cancelled) {
+            return failHealth("Colibri runtime installation was cancelled");
+        } catch (Exception exception) {
+            return failHealth("Colibri unavailable: " + message(exception));
+        }
+    }
+
+    /**
+     * Qualifies and installs Gigatoken automatically. Failure never prevents a
+     * valid Colibri model from using its native tokenizer, and is always exposed
+     * in diagnostics rather than being a silent fallback.
+     */
+    private void prepareManagedAcceleration() {
+        this.gigatokenBridge = null;
+        this.gigatokenTokenizerSha = "";
+        this.tokenizerName = "Native Colibri";
+        try {
+            Path runtimeRoot = this.configuration.executable().toAbsolutePath().normalize().getParent();
+            ColibriRuntimeIntegrator.integrate(runtimeRoot);
+        } catch (Exception integrationFailure) {
+            this.gigatokenDetail = "fallback: Colibri token-ID seam unavailable: " + message(integrationFailure);
+            LocalModelRuntimeLog.write("gigatoken_fallback", this.gigatokenDetail);
+            return;
+        }
+
+        GigatokenCompatibilityRegistry.Qualification qualification =
+                GigatokenCompatibilityRegistry.qualify(this.engineCompatibility,
+                        this.configuration.modelDirectory());
+        if (!qualification.active()) {
+            this.gigatokenDetail = "fallback: " + qualification.detail();
+            LocalModelRuntimeLog.write("gigatoken_fallback", this.gigatokenDetail);
+            return;
+        }
+
+        try {
+            updateHealth(ModelHealthState.STARTING, "preparing Gigatoken", runtimeDiagnostics());
+            ManagedRuntimeInstallation bridge = this.runtimeInstaller.installed(
+                    ManagedRuntimeCatalog.GIGATOKEN_BRIDGE_RUNTIME_ID,
+                    LocalModelInstallationService.RUNTIME_ROOT);
+            if (bridge == null) {
+                bridge = this.runtimeInstaller.ensureInstalled(
+                        ManagedRuntimeCatalog.GIGATOKEN_BRIDGE_RUNTIME_ID,
+                        LocalModelInstallationService.RUNTIME_ROOT,
+                        (stage, detail, file, done, total) -> updateHealth(
+                                ModelHealthState.STARTING, detail,
+                                Map.of("stage", stage == null ? "" : stage,
+                                        "file", file == null ? "" : file)),
+                        () -> this.stopping || this.closed || Thread.currentThread().isInterrupted());
+            }
+            try (GigatokenBridgeClient client = GigatokenBridgeClient.open(
+                    bridge.executable(), qualification.tokenizer(),
+                    qualification.certificate().bridgeLoadOperation())) {
+                if (client.encode("Koil Gigatoken runtime probe").isEmpty()) {
+                    throw new IOException("Gigatoken returned no IDs for a non-empty probe");
+                }
+            }
+            this.gigatokenBridge = bridge.executable().toAbsolutePath().normalize();
+            this.gigatokenTokenizerSha = qualification.certificate().tokenizerSha256();
+            this.tokenizerName = "Gigatoken 0.10.0";
+            this.gigatokenDetail = "qualified: exact certificate verified; request use requires runtime evidence";
+            LocalModelRuntimeLog.write("gigatoken_qualified", this.configuration.modelId()
+                    + " | " + this.gigatokenDetail);
+        } catch (ManagedRuntimeInstaller.CancelledException cancelled) {
+            this.gigatokenDetail = "fallback: Gigatoken installation cancelled";
+            LocalModelRuntimeLog.write("gigatoken_fallback", this.gigatokenDetail);
+        } catch (Exception failure) {
+            this.gigatokenDetail = "fallback: " + message(failure);
+            LocalModelRuntimeLog.write("gigatoken_fallback", this.gigatokenDetail);
+        }
     }
 
     private ModelHealthSnapshot waitForReadiness() {
@@ -254,10 +412,17 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
             observer.onFailure(request.id(), "request_invalid", message(exception), exception);
             return;
         }
+        LocalModelRuntimeLog.write("colibri_request", "request=" + request.id()
+                + " conversation=" + request.conversationId()
+                + " status=invoked operation=messages payloadChars=" + payload.toString().length()
+                + " messages=" + request.messages().size() + " tools=" + request.tools().size()
+                + " contextLimit=" + capabilities().maximumContextTokens()
+                + " gigatoken=" + this.gigatokenDetail);
         observer.onState(request.id(), ModelRequestState.PREFILLING, "prefilling");
         Request httpRequest = authenticated(new Request.Builder()
                 .url(baseUrl(this.selectedPort) + "/v1/messages")
                 .header("Accept", "text/event-stream")
+                .header("X-Koil-Request-Id", request.id().toString())
                 .header("anthropic-version", "2023-06-01")
                 .post(RequestBody.create(payload.toString(), JSON))).build();
         Call call = this.http.newCall(httpRequest);
@@ -344,8 +509,14 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
                     usage,
                     decoder.finishReason()
             ));
-            LocalModelRuntimeLog.write("request", request.id() + " completed");
+            LocalModelRuntimeLog.write("colibri_request", "request=" + request.id()
+                    + " status=completed promptTokens=" + usage.promptTokens()
+                    + " completionTokens=" + usage.completionTokens()
+                    + " ttftMs=" + usage.timeToFirstTokenMillis()
+                    + " tokensPerSecond=" + usage.tokensPerSecond()
+                    + " durationMs=" + (System.nanoTime() - started) / 1_000_000L);
         } catch (ColibriStreamDecoder.ProtocolException exception) {
+            LocalModelRuntimeLog.write("colibri_request", "request=" + request.id() + " status=failed code=" + exception.code());
             observer.onState(request.id(), ModelRequestState.FAILED, exception.getMessage());
             observer.onFailure(request.id(), exception.code(), exception.getMessage(), exception);
         } catch (IOException exception) {
@@ -442,7 +613,7 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
             messages.add(entry);
         }
         root.add("messages", messages);
-        if (!request.tools().isEmpty()) {
+        if (!request.tools().isEmpty() && capabilities().toolCalling()) {
             JsonArray tools = new JsonArray();
             for (ModelToolDefinition definition : request.tools()) {
                 JsonObject tool = new JsonObject();
@@ -452,6 +623,9 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
                 tools.add(tool);
             }
             root.add("tools", tools);
+        } else if (!request.tools().isEmpty()) {
+            LocalModelRuntimeLog.write("colibri_tools_omitted",
+                    this.configuration.modelId() + " does not have engine/checkpoint tool capability");
         }
         String slot = request.metadata().get("cache_slot");
         if (slot != null && !slot.isBlank()) {
@@ -607,13 +781,21 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
     }
 
     private Map<String, String> runtimeDiagnostics() {
-        return Map.of(
-                "provider", id(),
-                "model", this.configuration.modelId(),
-                "host", this.configuration.host(),
-                "port", Integer.toString(this.selectedPort),
-                "ownedProcess", Boolean.toString(this.ownsProcess)
-        );
+        java.util.LinkedHashMap<String, String> diagnostics = new java.util.LinkedHashMap<>();
+        diagnostics.put("provider", id());
+        diagnostics.put("runtime", "Colibri");
+        diagnostics.put("runtimeVersion", "v1.10.1");
+        diagnostics.put("model", this.configuration.modelId());
+        diagnostics.put("architecture", this.engineCompatibility == null
+                ? this.configuration.engineId() : this.engineCompatibility.architectureId());
+        diagnostics.put("engine", this.configuration.engineId());
+        diagnostics.put("host", this.configuration.host());
+        diagnostics.put("port", Integer.toString(this.selectedPort));
+        diagnostics.put("ownedProcess", Boolean.toString(this.ownsProcess));
+        diagnostics.put("tokenizer", this.tokenizerName);
+        diagnostics.put("gigatoken", this.gigatokenDetail);
+        diagnostics.putAll(this.inspectionDiagnostics);
+        return Map.copyOf(diagnostics);
     }
 
     private ModelHealthSnapshot failHealth(String detail) {

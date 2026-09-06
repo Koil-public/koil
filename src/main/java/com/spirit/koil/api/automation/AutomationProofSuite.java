@@ -10,6 +10,7 @@ import com.spirit.koil.api.automation.feedback.AutomationFeedbackNode;
 import com.spirit.koil.api.automation.feedback.AutomationFeedbackService;
 import com.spirit.koil.api.automation.runtime.ExecutionPlan;
 import com.spirit.koil.api.automation.runtime.InterpretationResult;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -20,7 +21,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 public final class AutomationProofSuite {
-    private static final Path PROOF_DIR = Path.of("koil/automation/validation");
+    private static final Path PROOF_DIR = KoilInstancePaths.automationRoot().resolve("validation");
     private static final Path CACHE_PROOF_FILE = PROOF_DIR.resolve("proof_cache_probe.ktl");
 
     private AutomationProofSuite() {
@@ -94,6 +95,8 @@ public final class AutomationProofSuite {
             var proof = automate.getChild("proof");
             var deep = automate.getChild("deep");
             var plan = automate.getChild("plan");
+            var workpad = automate.getChild("workpad");
+            var workspace = automate.getChild("workspace");
             boolean valid = feedback == null
                     && !AutomationFeedbackService.userSurfaceEnabled()
                     && proof != null
@@ -106,12 +109,14 @@ public final class AutomationProofSuite {
                     && plan != null
                     && plan.getChild("on") != null
                     && plan.getChild("off") != null
-                    && plan.getChild("status") != null;
+                    && plan.getChild("status") != null
+                    && workpad != null
+                    && workspace == null;
             if (!valid) {
-                AutomationReporter.fail("[fail]", "command.tree = disabled feedback or /automate proof contract is wrong");
+                AutomationReporter.fail("[fail]", "command.tree = automation command contract is wrong");
                 return false;
             }
-            AutomationReporter.done("[done]", "command.tree = feedback disabled + /automate proof active");
+            AutomationReporter.done("[done]", "command.tree = proof and standalone workpad active");
             return true;
         } catch (RuntimeException exception) {
             AutomationReporter.fail("[fail]", "command.tree threw " + messageOf(exception));
@@ -203,17 +208,22 @@ public final class AutomationProofSuite {
             temporary = Files.createTempDirectory("koil-ktl-sync-proof-");
             Files.createDirectories(temporary.resolve(".git"));
             Files.writeString(temporary.resolve("build.gradle"), "// proof", StandardCharsets.UTF_8);
-            Path sourceRoot = temporary.resolve("src/main/resources/koil/automation");
-            Path runRoot = temporary.resolve("run/koil/automation");
+            Path sourceRoot = temporary.resolve("src/main/resources/koil/sys/automation");
+            Path legacyRoot = temporary.resolve("run/koil/automation");
+            Path runRoot = temporary.resolve("run/koil/sys/automation");
             Path sourceTask = sourceRoot.resolve("flow/proof.ktl");
             Path runTask = runRoot.resolve("flow/proof.ktl");
+            Path legacyTask = legacyRoot.resolve("legacy-only.ktl");
             Files.createDirectories(sourceTask.getParent());
             Files.createDirectories(runTask.getParent());
+            Files.createDirectories(legacyTask.getParent());
             Files.writeString(sourceTask, "source-forward", StandardCharsets.UTF_8);
             Files.writeString(runTask, "legacy-run", StandardCharsets.UTF_8);
+            Files.writeString(legacyTask, "legacy-only", StandardCharsets.UTF_8);
 
             KtlDevelopmentLibrarySynchronizer.sync(temporary);
             if (!"source-forward".equals(Files.readString(runTask))) return false;
+            if (Files.exists(runRoot.resolve("legacy-only.ktl"))) return false;
 
             Files.writeString(runTask, "edited-in-run", StandardCharsets.UTF_8);
             KtlDevelopmentLibrarySynchronizer.sync(temporary);

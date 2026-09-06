@@ -268,6 +268,14 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
             return;
         }
 
+        LocalModelRuntimeLog.write("model_pipeline", "request=" + queued.request.id()
+                + " display=" + queued.request.metadata().getOrDefault("display_request_id", "none")
+                + " conversation=" + queued.request.conversationId() + " provider=" + provider.id()
+                + " colibri=" + ("colibri".equals(provider.id()) ? "selected" : "not_applicable")
+                + " gigatoken=" + ("colibri".equals(provider.id()) ? "runtime_evidence_required" : "not_applicable")
+                + " contextLimit=" + provider.capabilities().maximumContextTokens()
+                + " inputChars=" + (queued.request.systemPrompt().length()
+                + queued.request.messages().stream().mapToInt(message -> message.content().length()).sum()));
         CountDownLatch terminal = new CountDownLatch(1);
         AtomicBoolean ended = new AtomicBoolean();
         StreamingModelObserver forwarding = new StreamingModelObserver() {
@@ -302,6 +310,9 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
             @Override
             public void onComplete(StreamingModelResponse response) {
                 if (ended.compareAndSet(false, true)) {
+                    LocalModelRuntimeLog.write("model_pipeline", "request=" + queued.request.id()
+                            + " status=completed promptTokens=" + response.usage().promptTokens()
+                            + " completionTokens=" + response.usage().completionTokens());
                     queued.observer.onComplete(response);
                     queued.completion.complete(response);
                     terminal.countDown();
@@ -311,6 +322,8 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
             @Override
             public void onFailure(UUID requestId, String code, String detail, Throwable cause) {
                 if (ended.compareAndSet(false, true)) {
+                    LocalModelRuntimeLog.write("model_pipeline", "request=" + queued.request.id()
+                            + " status=failed code=" + code);
                     queued.observer.onFailure(requestId, code, detail, cause);
                     queued.completion.completeExceptionally(new ModelRequestException(code, detail, cause));
                     terminal.countDown();
@@ -345,12 +358,14 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
     }
 
     private void failBeforeQueue(QueuedRequest queued, String code, String detail) {
+        LocalModelRuntimeLog.write("model_pipeline", "request=" + queued.request.id() + " status=failed code=" + code);
         queued.observer.onState(queued.request.id(), ModelRequestState.FAILED, detail);
         queued.observer.onFailure(queued.request.id(), code, detail, null);
         queued.completion.completeExceptionally(new ModelRequestException(code, detail, null));
     }
 
     private void fail(QueuedRequest queued, String code, String detail, Throwable cause) {
+        LocalModelRuntimeLog.write("model_pipeline", "request=" + queued.request.id() + " status=failed code=" + code);
         queued.observer.onState(queued.request.id(), ModelRequestState.FAILED, detail);
         queued.observer.onFailure(queued.request.id(), code, detail, cause);
         queued.completion.completeExceptionally(new ModelRequestException(code, detail, cause));

@@ -93,17 +93,86 @@ dependencies {
 
 }
 
+sourceSets {
+    docIndex {
+        java.srcDir 'tools/docindex/src/main/java'
+    }
+}
+
+configurations.named('docIndexImplementation') {
+    // docIndex deliberately uses only the Java 17 compiler/tree APIs. Keeping the
+    // classpath empty makes the architecture index reproducible and offline.
+}
+
+def docIndexMarkdownOutputs = [
+        'index.md',
+        'architecture.md',
+        'systems.md',
+        'dependencies.md',
+        'execution-flows.md',
+        'source-map.md',
+        'configs.md',
+        'commands.md',
+        'mixins.md',
+        'screens.md',
+        'registries.md'
+].collect { layout.projectDirectory.file("docs/${it}") }
+
+tasks.register('docIndex', JavaExec) {
+    group = 'documentation'
+    description = 'Generates and validates Koil architecture documentation from source.'
+    dependsOn tasks.named('compileJava'), tasks.named('compileDocIndexJava')
+    classpath = sourceSets.docIndex.runtimeClasspath
+    mainClass = 'com.spirit.docindex.DocIndexMain'
+    args layout.projectDirectory.asFile.absolutePath
+
+    inputs.files(fileTree('src/main/java') { include '**/*.java' })
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(fileTree('src/main/kotlin') { include '**/*.kt' })
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(fileTree('src/main/resources') {
+        include '**/*.json', '**/*.mixins.json', '**/*.accesswidener', '**/*.ktl'
+    }).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files('build.gradle', 'settings.gradle', 'gradle.properties', 'docIndex.json')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.files(docIndexMarkdownOutputs)
+    outputs.dir(layout.projectDirectory.dir('docs/generated'))
+}
+
+tasks.register('docIndexValidate', JavaExec) {
+    group = 'verification'
+    description = 'Validates the existing generated Koil documentation index.'
+    dependsOn tasks.named('compileDocIndexJava')
+    classpath = sourceSets.docIndex.runtimeClasspath
+    mainClass = 'com.spirit.docindex.DocIndexMain'
+    args layout.projectDirectory.asFile.absolutePath, '--validate-only'
+}
+
+tasks.named('build') {
+    dependsOn tasks.named('docIndex')
+}
+
 def bundledModelDocumentation = fileTree('docs') {
     include 'systems/*'
     include 'connectors/*'
     include 'architecture/*'
     include 'test-datapacks/**'
+    include 'generated/**'
+    include 'docIndex.json'
+    include 'architecture.md'
+    include 'commands.md'
+    include 'configs.md'
+    include 'dependencies.md'
+    include 'execution-flows.md'
+    include 'index.md'
+    include 'mixins.md'
+    include 'registries.md'
+    include 'screens.md'
+    include 'source-map.md'
+    include 'systems.md'
     include 'file-map.md'
     include 'project-structure.md'
     exclude 'test-datapacks/**/*.png'
-    include 'automation-capability-test-matrix.md'
-    include 'issues-and-risks.md'
-    include 'local-model-user-test-guide.md'
     include 'vision.md'
 }
 def bundledModelKnowledgeIndex = layout.buildDirectory.file(
@@ -137,12 +206,22 @@ processResources {
         include 'connectors/*'
         include 'architecture/*'
         include 'test-datapacks/**'
+        include 'generated/**'
+        include 'docIndex.json'
+        include 'architecture.md'
+        include 'commands.md'
+        include 'configs.md'
+        include 'dependencies.md'
+        include 'execution-flows.md'
+        include 'index.md'
+        include 'mixins.md'
+        include 'registries.md'
+        include 'screens.md'
+        include 'source-map.md'
+        include 'systems.md'
         include 'file-map.md'
         include 'project-structure.md'
         exclude 'test-datapacks/**/*.png'
-        include 'automation-capability-test-matrix.md'
-        include 'issues-and-risks.md'
-        include 'local-model-user-test-guide.md'
         include 'vision.md'
         into 'koil/model/knowledge/project-docs'
     }
@@ -228,6 +307,40 @@ tasks.register('runColibriProviderProof', JavaExec) {
     mainClass = 'com.spirit.koil.api.model.provider.colibri.ColibriProviderProof'
 }
 
+tasks.register('runGigatokenDifferentialProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.testing.GigatokenDifferentialProof'
+    def bridge = providers.gradleProperty('gigatokenBridge')
+    def tokenizer = providers.gradleProperty('gigatokenTokenizer')
+    def reference = providers.gradleProperty('colibriTokenizerReference')
+    onlyIf {
+        if (!(bridge.isPresent() && tokenizer.isPresent() && reference.isPresent())) {
+            logger.lifecycle('Skipping real Gigatoken differential proof; pass -PgigatokenBridge, -PgigatokenTokenizer, and -PcolibriTokenizerReference.')
+            return false
+        }
+        true
+    }
+    doFirst {
+        args bridge.get(), tokenizer.get(), reference.get()
+    }
+}
+
+tasks.register('runColibriRuntimeIntegrationProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.install.ColibriRuntimeIntegrationProof'
+    def fixture = providers.gradleProperty('colibriSourceDirectory')
+    onlyIf {
+        if (!fixture.isPresent()) {
+            logger.lifecycle('Skipping pinned Colibri integration proof; pass -PcolibriSourceDirectory=<upstream c directory>.')
+            return false
+        }
+        true
+    }
+    doFirst { args fixture.get() }
+}
+
 tasks.register('runLocalModelCatalogProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
@@ -284,6 +397,12 @@ tasks.register('runKoilUnifiedLogProof', JavaExec) {
     doFirst { workingDir.mkdirs() }
 }
 
+tasks.register('runKoilInstancePathsProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.util.file.KoilInstancePathsProof'
+}
+
 tasks.register('runLlamaCppProviderProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
@@ -300,6 +419,18 @@ tasks.register('runAutomationWorkspaceProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.spirit.koil.api.automation.workspace.AutomationWorkspaceProof'
+}
+
+tasks.register('runKoilScreenSpriteProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.design.particle.KoilScreenSpriteProof'
+}
+
+tasks.register('runMenuChatScreenProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.chat.MenuChatScreenProof'
 }
 
 tasks.register('runModelPresencePlanningProof', JavaExec) {
@@ -325,6 +456,7 @@ tasks.register('runKtlLibraryProof', JavaExec) {
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.spirit.koil.api.automation.AutomationProofSuite'
     workingDir = file('run')
+    systemProperty 'koil.instanceRoot', file('run').absolutePath
 }
 
 tasks.register('generateContentRegistryTestDatapack', JavaExec) {

@@ -18,7 +18,7 @@ import java.util.List;
  * run directory.
  */
 public final class KtlBuiltinLibraryInstaller {
-    private static final String RESOURCE_ROOT = "/koil/automation/";
+    private static final String RESOURCE_ROOT = "/koil/sys/automation/";
     private static final String MANIFEST = RESOURCE_ROOT + "manifest.txt";
 
     private KtlBuiltinLibraryInstaller() {

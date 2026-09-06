@@ -24,7 +24,6 @@
     "defaultRequire": 1
   },
   "client": [
-    "KoilButton",
     "client.nbt.Tooltip",
     "client.KoilSkinPlayerMixin",
     "client.MinecraftClientMixin",

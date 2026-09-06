@@ -10,9 +10,7 @@ import static com.spirit.koil.api.model.catalog.LocalModelCanonicalMetadata.Matu
 
 public final class LocalModelCatalog {
         private static final long GIB = 1024L * 1024L * 1024L;
-        private static final String PROVIDER = "llama_cpp";
-        private static final String RUNTIME = "llama.cpp-b10173";
-        private static final List<LocalModelCatalogEntry> BUILT_IN_ENTRIES = List.of(
+        private static final List<LocalModelCatalogEntry> BUILT_IN_ENTRIES = annotateBuiltInRuntimes(List.of(
                 qwen(
                         "qwen1.5-0.5b-q4",
                         "Qwen1.5 0.5B Chat",
@@ -3731,6 +3729,28 @@ public final class LocalModelCatalog {
                         262_144
                 ),
 
+                // Allen AI's compact sparse model is the only current Colibri
+                // family that fits the Steam Deck target without a frontier-size
+                // model download. The managed Colibri preparation path converts
+                // this immutable HF snapshot to its required merged int8 form.
+                localTextModel(
+                        "OLMoE",
+                        "1B-active / 7B",
+                        6.919,
+                        1.3,
+                        Architecture.MOE,
+                        "Instruct",
+                        List.of(),
+                        List.of("text"),
+                        "allenai/OLMoE-1B-7B-0125-Instruct",
+                        Maturity.SUPPORTED,
+                        "olmoe",
+                        "",
+                        "",
+                        List.of("Safetensors", "Colibri int8"),
+                        4_096
+                ),
+
                 // StepFun reasoning and multimodal-capable families.
                 localTextModel(
                         "Step 3.5",
@@ -4326,9 +4346,130 @@ public final class LocalModelCatalog {
                         List.of("Safetensors"),
                         0
                 )
-        );
+        ));
 
         private LocalModelCatalog() {
+        }
+
+        /**
+         * Exact Colibri runtime compatibility for the catalog entries whose canonical
+         * family matches a pinned Colibri engine. llama.cpp GGUF entries keep their
+         * automatic default; these entries additionally (or exclusively) declare the
+         * managed Colibri path with capabilities transcribed from the pinned
+         * {@code family_registry.py} / {@code docs/api.md}. Nothing here makes a model
+         * installable: Colibri containers are still imported explicitly by the user.
+         */
+        private static java.util.Map<String, ModelRuntimeCompatibility> colibriCompatibilityById() {
+                java.util.Map<String, ModelRuntimeCompatibility> map = new java.util.HashMap<>();
+                map.put("hf-zai-org-glm-5-2", ModelRuntimeCompatibility.colibri(
+                        "glm",
+                        "colibri/glm-5.2",
+                        true,
+                        true,
+                        false,
+                        false,
+                        1_048_576,
+                        java.util.Set.of("openai_chat", "anthropic_messages", "grammar_gbnf"),
+                        "mastouri/GLM-5.2-colibri-int4-g64-with-int8-mtp",
+                        "6bbb01ed3e515a8730b694dfae73aadfd6774581",
+                        "Pinned Colibri v1.10.1 registry: glm family, tools+grammar, max context 1048576."
+                ));
+                map.put("hf-moonshotai-kimi-k3", ModelRuntimeCompatibility.colibri(
+                        "kimi",
+                        "colibri/kimi-k3",
+                        true,
+                        true,
+                        false,
+                        false,
+                        1_048_576,
+                        java.util.Set.of("openai_chat", "anthropic_messages"),
+                        "moonshotai/Kimi-K3",
+                        "f831ab66814297da540d832a5235f8e904f29d06",
+                        "Pinned Colibri v1.10.1 registry: kimi family, tools, max context 1048576."
+                ));
+                map.put("hf-qwen-qwen3-6-35b-a3b", ModelRuntimeCompatibility.colibri(
+                        "qwen36",
+                        "colibri/qwen3.6-35b-a3b",
+                        false,
+                        true,
+                        false,
+                        false,
+                        262_144,
+                        java.util.Set.of("openai_chat", "anthropic_messages"),
+                        "Kreuzzelg/qwen36-35b-a3b-colibri-i4-gs64",
+                        "c619aa594ad1e70af82168fb6b4878427896e21c",
+                        "Pinned Colibri v1.10.1 registry: qwen36 family without tool support, max context 262144."
+                ));
+                map.put("hf-qwen-qwen3-8-flash-next", ModelRuntimeCompatibility.colibri(
+                        "qwen38",
+                        "colibri/qwen3.8-flash-next",
+                        true,
+                        true,
+                        false,
+                        false,
+                        262_144,
+                        java.util.Set.of("openai_chat", "anthropic_messages"),
+                        "Qwen/Qwen3.8-Flash-Next-FP8",
+                        "236dfdf285828023ca3bcd3f37366c58a3469b13",
+                        "Pinned Colibri v1.10.1 family registry reports qwen38 tool rendering/parsing support and max context 262144."
+                ));
+                map.put("hf-deepseek-ai-deepseek-v4-flash-0731", ModelRuntimeCompatibility.colibri(
+                        "deepseek_v4",
+                        "colibri/deepseek-v4-flash",
+                        true,
+                        true,
+                        false,
+                        false,
+                        1_048_576,
+                        java.util.Set.of("openai_chat", "anthropic_messages"),
+                        "deepseek-ai/DeepSeek-V4-Flash-0731",
+                        "7872f01b1d1fe23eabc4c98b48bffcef5a386062",
+                        "Pinned Colibri v1.10.1 registry: deepseek_v4 family, tools, max context 1048576."
+                ));
+                map.put("hf-deepseek-ai-deepseek-v4-pro", ModelRuntimeCompatibility.colibri(
+                        "deepseek_v4",
+                        "colibri/deepseek-v4-pro",
+                        true,
+                        true,
+                        false,
+                        false,
+                        1_048_576,
+                        java.util.Set.of("openai_chat", "anthropic_messages"),
+                        "",
+                        "",
+                        "Pinned Colibri v1.10.1 registry: deepseek_v4 family, tools, max context 1048576."
+                ));
+                map.put("hf-allenai-olmoe-1b-7b-0125-instruct", ModelRuntimeCompatibility.colibri(
+                        "olmoe",
+                        "colibri/olmoe-1b-7b-0125-instruct",
+                        false,
+                        false,
+                        false,
+                        false,
+                        4_096,
+                        java.util.Set.of("openai_chat"),
+                        "allenai/OLMoE-1B-7B-0125-Instruct",
+                        "b89a7c4bc24fb9e55ce2543c9458ce0ca5c4650e",
+                        "Pinned Colibri v1.10.1 olmoe registry; immutable instruct snapshot requires Koil's merged-int8 preparation."
+                ));
+                return java.util.Collections.unmodifiableMap(map);
+        }
+
+        /** Attaches exact per-runtime compatibility metadata to matching built-in entries. */
+        private static List<LocalModelCatalogEntry> annotateBuiltInRuntimes(List<LocalModelCatalogEntry> entries) {
+                java.util.Map<String, ModelRuntimeCompatibility> colibriById = colibriCompatibilityById();
+                List<LocalModelCatalogEntry> result = new java.util.ArrayList<>(entries.size());
+                for (LocalModelCatalogEntry entry : entries) {
+                        ModelRuntimeCompatibility colibri = colibriById.get(entry.id());
+                        if (colibri == null) {
+                                result.add(entry);
+                                continue;
+                        }
+                        List<ModelRuntimeCompatibility> compatibility = new java.util.ArrayList<>(entry.runtimeCompatibility());
+                        compatibility.add(colibri);
+                        result.add(entry.withRuntimeCompatibility(compatibility));
+                }
+                return List.copyOf(result);
         }
 
         public static List<LocalModelCatalogEntry> entries() {
@@ -4706,8 +4847,8 @@ public final class LocalModelCatalog {
                 return new LocalModelCatalogEntry(
                         id,
                         displayName,
-                        PROVIDER,
-                        RUNTIME,
+                        "llama_cpp",
+                        "llama.cpp-b10173",
                         modelId,
                         parameterCount,
                         quantization,

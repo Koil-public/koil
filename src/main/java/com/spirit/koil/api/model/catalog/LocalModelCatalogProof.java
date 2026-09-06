@@ -1,6 +1,7 @@
 package com.spirit.koil.api.model.catalog;
 
 import com.spirit.koil.api.model.install.LlamaCppRuntimeCatalog;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,6 +22,7 @@ public final class LocalModelCatalogProof {
         int smolLmChoices = 0;
         int lfmChoices = 0;
         int runnableChoices = 0;
+        int colibriChoices = 0;
         int dynamicallyResolvableChoices = 0;
         int unavailableChoices = 0;
         for (LocalModelCatalogEntry entry : LocalModelCatalog.entries()) {
@@ -35,7 +37,22 @@ public final class LocalModelCatalogProof {
             }
             if (entry.runnable()) {
                 runnableChoices++;
-                require("llama_cpp".equals(entry.providerId()), "runnable catalog models must use the verified llama.cpp provider");
+                LocalModelRuntimeResolver.Resolution resolution = LocalModelRuntimeResolver.resolve(entry);
+                require(resolution.available(), "runnable model had no runtime resolution");
+                ModelRuntimeCompatibility selected = resolution.selected();
+                if ("colibri".equals(selected.providerId())) {
+                    colibriChoices++;
+                    require(selected.installsRepositorySnapshot(),
+                            "managed Colibri model omitted its immutable repository snapshot");
+                    require(selected.preference() > entry.runtimeCompatibility().stream()
+                                    .filter(value -> !"colibri".equals(value.providerId()))
+                                    .mapToInt(ModelRuntimeCompatibility::preference).max().orElse(-1),
+                            "exact Colibri runtime was not preferred over generic fallbacks");
+                } else {
+                    require("llama_cpp".equals(selected.providerId()),
+                            "runnable text model resolved to an unknown provider");
+                    require(entry.contextTokens() == 32_768, "verified llama.cpp context metadata drifted");
+                }
                 require(entry.capabilityTags().contains(LocalModelCapabilityTag.CHAT),
                         "runnable local text model omitted the chat capability tag");
                 if (entry.toolCalling()) {
@@ -43,7 +60,6 @@ public final class LocalModelCatalogProof {
                             "tool-capable runnable model omitted the Automation tools tag");
                 }
                 require(entry.complexReasoningEstimatePercent() > 0, "runnable catalog reasoning estimate was missing");
-                require(entry.contextTokens() == 32_768, "verified llama.cpp context metadata drifted");
             } else {
                 unavailableChoices++;
                 require(entry.artifacts().isEmpty(), "unavailable catalog entry exposed an unverified download");
@@ -81,6 +97,7 @@ public final class LocalModelCatalogProof {
             }
         }
         require(runnableChoices >= 72, "verified runnable roster unexpectedly lost pinned models");
+        require(colibriChoices >= 6, "exact managed Colibri roster was not activated");
         require(unavailableChoices > 40, "current Hugging Face local-model expansion was incomplete");
         require(qwenChoices == 54, "expected fifty-four verified Qwen-family choices");
         require(gptOssChoices == 2, "expected both verified GPT-OSS choices");
@@ -111,13 +128,21 @@ public final class LocalModelCatalogProof {
         require(ids.contains("hf-google-gemma-3-12b-it"), "Gemma 3 12B verified GGUF was omitted");
         require(ids.contains("hf-google-gemma-3-27b-it"), "Gemma 3 27B verified GGUF was omitted");
         require(ids.contains("hf-qwen-qwen3-8-2-4t-a95b"), "Qwen3.8 frontier metadata was omitted");
+        LocalModelCatalogEntry olmoe = LocalModelCatalog.find("hf-allenai-olmoe-1b-7b-0125-instruct")
+                .orElseThrow(() -> new IllegalStateException("OLMoE Steam Deck Colibri fixture was omitted"));
+        ModelRuntimeCompatibility olmoeRuntime = LocalModelRuntimeResolver.resolve(olmoe).selected();
+        require("colibri".equals(olmoeRuntime.providerId()) && "olmoe".equals(olmoeRuntime.engineId()),
+                "OLMoE did not resolve to the Colibri engine");
+        require(olmoeRuntime.maximumContextTokens() == 4_096,
+                "OLMoE context contract drifted from the pinned Colibri engine");
         require(ids.contains("hf-black-forest-labs-flux-2-klein-4b"), "FLUX.2 typed metadata was omitted");
         require(ids.contains("hf-openai-gpt-oss-20b"), "GPT-OSS protocol metadata was omitted");
         require(ids.contains("hf-brokenshards-ox-alpha"), "experimental ox-alpha metadata was omitted");
         require(LlamaCppRuntimeCatalog.currentPlatform().isPresent(), "current proof platform has no verified runtime");
 
         Path root = Files.createTempDirectory("koil-model-selection-proof");
-        Path selectionPath = root.resolve("selection.json");
+        String previousInstanceRoot = System.getProperty("koil.instanceRoot");
+        System.setProperty("koil.instanceRoot", root.toString());
         LocalModelSelection expected = new LocalModelSelection(
                 "qwen2.5-0.5b-q4",
                 "llama_cpp",
@@ -126,11 +151,22 @@ public final class LocalModelCatalogProof {
                 root.resolve("model.gguf"),
                 32_768
         );
-        LocalModelSelectionStore.save(selectionPath, expected);
-        require(expected.equals(LocalModelSelectionStore.load(selectionPath)), "selection did not round-trip");
-        LocalModelSelectionStore.clear(selectionPath);
-        require(!LocalModelSelectionStore.load(selectionPath).complete(), "cleared selection remained active");
-        require(!Files.exists(selectionPath), "selection file was not removed");
+        try {
+            Path selectionPath = root.resolve("koil/sys/model/model-selection.json");
+            require(LocalModelSelectionStore.defaultPath().equals(selectionPath), "default selection path must use the active instance model root");
+            require(KoilInstancePaths.modelRoot().equals(root.resolve("koil/sys/model")), "model root must use the active instance");
+            LocalModelSelectionStore.save(expected);
+            require(expected.equals(LocalModelSelectionStore.load()), "selection did not round-trip");
+            LocalModelSelectionStore.clear();
+            require(!LocalModelSelectionStore.load().complete(), "cleared selection remained active");
+            require(!Files.exists(selectionPath), "selection file was not removed");
+        } finally {
+            if (previousInstanceRoot == null) {
+                System.clearProperty("koil.instanceRoot");
+            } else {
+                System.setProperty("koil.instanceRoot", previousInstanceRoot);
+            }
+        }
         System.out.println("Local model catalog proof passed.");
     }
 

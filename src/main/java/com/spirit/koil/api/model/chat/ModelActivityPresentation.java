@@ -85,6 +85,14 @@ public final class ModelActivityPresentation {
             }
             rendered.append('\n').append(timelineEvent(event, false));
             if (event.type() == ModelGenerationHudState.ActivityEventType.TOOL_START) {
+                String toolId = string(event.data(), "toolId");
+                if (!toolId.isBlank()) {
+                    appendEvidenceField(rendered, "│     ", "Tool ID", toolId, false);
+                }
+                String source = string(event.data(), "source");
+                if (!source.isBlank()) {
+                    appendEvidenceField(rendered, "│     ", "Source", source, false);
+                }
                 String arguments = event.data() == null || !event.data().has("arguments")
                         || !event.data().get("arguments").isJsonObject()
                         ? ""

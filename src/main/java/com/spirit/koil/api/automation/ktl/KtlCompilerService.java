@@ -5,6 +5,7 @@ import com.spirit.koil.api.automation.AutomationRequest;
 import com.spirit.koil.api.automation.capability.AutomationPrimitiveRegistry;
 import com.spirit.koil.api.automation.runtime.ExecutionPlan;
 import com.spirit.koil.api.automation.runtime.InterpretationResult;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.Item;
 import net.minecraft.registry.Registries;
@@ -21,7 +22,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class KtlCompilerService {
-    private static final Path ROOT = Path.of("koil/automation");
+    private static final Path ROOT = KoilInstancePaths.automationRoot();
     private static final Pattern TOKEN_PATTERN = Pattern.compile("\"([^\"]+)\"|(\\S+)");
     private static final Set<String> EVALUATOR_KEYS = Set.of(
             "counter_lt_target", "eval.block_matches", "eval.compare_numbers", "eval.compare_stat",

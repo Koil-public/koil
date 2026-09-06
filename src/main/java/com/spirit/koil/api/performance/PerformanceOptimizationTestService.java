@@ -2,6 +2,7 @@ package com.spirit.koil.api.performance;
 
 import com.spirit.koil.api.automation.AutomationRequest;
 import com.spirit.koil.api.automation.AutomationRouter;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 
@@ -108,7 +109,7 @@ public final class PerformanceOptimizationTestService {
     }
 
     public static boolean automationProbeAvailable() {
-        return Files.exists(Path.of("koil/automation/movement/navigation/move_relative.ktl"));
+        return Files.exists(KoilInstancePaths.automationRoot().resolve("movement/navigation/move_relative.ktl"));
     }
 
     private static void startMovementProbe() {

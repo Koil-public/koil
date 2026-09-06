@@ -133,19 +133,26 @@ public class EditSkinScreen extends Screen {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         KoilVanillaScreenChrome.renderOptionsShell(context, this.client, this.width, this.height);
-        KoilVanillaScreenChrome.renderTitle(context, this.textRenderer, Text.literal("Options"), Text.literal("Skin Texture Editor"));
+        KoilVanillaScreenChrome.renderTitle(context, this.textRenderer, Text.literal("Options"), Text.literal("Skin Editor"));
         calculateLayout();
         this.hoverPixelX = canvasPixelX(mouseX);
         this.hoverPixelY = canvasPixelY(mouseY);
-        int headingY = this.toolsTop + 12;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Tools"), this.toolsLeft + 8, headingY, 0xFFE6EAF0);
+
+        context.drawTextWithShadow(this.textRenderer, Text.literal("Toolbox"), this.toolsLeft + 6, this.toolsTop + 6, 0xFFFFFFFF);
         drawSidebarActionButtons(context, mouseX, mouseY);
         drawToolsPanel(context, mouseX, mouseY);
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Canvas 64x64"), this.canvasX, headingY, 0xFFE6EAF0);
+
+        context.drawCenteredTextWithShadow(this.textRenderer, Text.literal("64 × 64 Skin Texture"), this.canvasX + this.canvasSize / 2, this.canvasY - 14, 0xFFFFFFFF);
         drawCanvas(context);
+        drawCanvasStatus(context);
         drawPaletteBar(context, mouseX, mouseY);
-        context.drawTextWithShadow(this.textRenderer, Text.literal("3D Preview"), this.previewLeft + 10, headingY, 0xFFE6EAF0);
+
+        context.drawTextWithShadow(this.textRenderer, Text.literal("Player Preview"), this.previewLeft + 8, this.previewTop + 6, 0xFFFFFFFF);
         drawPreviewScrollContent(context, mouseX, mouseY);
+        if (!this.status.isBlank()) {
+            String message = this.textRenderer.trimToWidth(this.status, Math.max(120, this.width - 80));
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(message), this.width / 2, this.height - 40, 0xFFAAAAAA);
+        }
         drawFooterButtons(context, mouseX, mouseY);
         super.render(context, mouseX, mouseY, delta);
         if (this.colorPickerOpen) {
@@ -154,32 +161,49 @@ public class EditSkinScreen extends Screen {
     }
 
     private void calculateLayout() {
-        int left = 38;
-        int right = this.width - 34;
-        int top = 34;
-        int bottom = this.height - 40;
-        int toolWidth = 132;
-        int previewWidth = Math.max(338, Math.min(438, this.width / 3 + 78));
-        this.toolsLeft = left;
+        int margin = 24;
+        int left = margin;
+        int right = this.width - margin;
+        int top = 38;
+        int bottom = this.height - 42;
+        int panelGap = 8;
+        int paletteSpace = 74;
+        int canvasTop = top + 22;
+        int canvasBottom = bottom - paletteSpace;
+        int availableHeight = Math.max(160, canvasBottom - canvasTop);
+        int totalWidth = Math.max(520, right - left);
+
+        int toolWidth = Math.max(158, Math.min(176, totalWidth * 18 / 100));
+        int previewWidth = Math.max(276, Math.min(326, totalWidth * 31 / 100));
+        int maxCanvasByWidth = totalWidth - toolWidth - previewWidth - panelGap * 2;
+
+        if (maxCanvasByWidth < 160) {
+            previewWidth = Math.max(220, previewWidth - (160 - maxCanvasByWidth) / 2);
+            toolWidth = Math.max(144, toolWidth - (160 - maxCanvasByWidth) / 2);
+            maxCanvasByWidth = totalWidth - toolWidth - previewWidth - panelGap * 2;
+        }
+
+        this.canvasSize = Math.max(160, Math.min(availableHeight, maxCanvasByWidth));
+        int workbenchWidth = toolWidth + panelGap + this.canvasSize + panelGap + previewWidth;
+        int workbenchLeft = Math.max(left, this.width / 2 - workbenchWidth / 2);
+
+        this.toolsLeft = workbenchLeft;
         this.toolsTop = top;
-        this.toolsRight = left + toolWidth;
+        this.toolsRight = this.toolsLeft + toolWidth;
         this.toolsBottom = bottom;
-        this.previewRight = right - 8;
-        this.previewLeft = right - previewWidth;
+
+        this.canvasX = this.toolsRight + panelGap;
+        this.canvasY = canvasTop + Math.max(0, (availableHeight - this.canvasSize) / 2);
+
+        this.previewLeft = this.canvasX + this.canvasSize + panelGap;
+        this.previewRight = Math.min(right, this.previewLeft + previewWidth);
         this.previewTop = top;
         this.previewBottom = bottom;
-        int canvasLeft = this.toolsRight + 18;
-        int canvasRight = this.previewLeft - 18;
-        int canvasTop = top + 22;
-        int paletteSpace = 58;
-        int canvasBottom = bottom - paletteSpace;
-        this.canvasSize = Math.max(176, Math.min(canvasRight - canvasLeft - 12, canvasBottom - canvasTop));
-        this.canvasX = canvasLeft + Math.max(0, (canvasRight - canvasLeft - this.canvasSize) / 2);
-        this.canvasY = canvasTop;
+
         this.paletteLeft = this.canvasX;
-        this.paletteTop = this.canvasY + this.canvasSize + 8;
         this.paletteRight = this.canvasX + this.canvasSize;
-        this.paletteBottom = this.paletteTop + 48;
+        this.paletteTop = canvasBottom + 38;
+        this.paletteBottom = bottom;
     }
 
     private void loadImage() {
@@ -270,37 +294,66 @@ public class EditSkinScreen extends Screen {
 
     private void drawSidebarActionButtons(DrawContext context, int mouseX, int mouseY) {
         int y = actionButtonY();
-        drawPreviewButton(context, mouseX, mouseY, this.toolsLeft + 8, y, this.toolsLeft + 43, y + 18, "Undo", 0xFFE6EAF0);
-        drawPreviewButton(context, mouseX, mouseY, this.toolsLeft + 47, y, this.toolsLeft + 82, y + 18, "Redo", 0xFFE6EAF0);
-        drawPreviewButton(context, mouseX, mouseY, this.toolsLeft + 86, y, this.toolsLeft + 124, y + 18, "Open", 0xFFE6EAF0);
+        int gap = 4;
+        int inner = this.toolsRight - this.toolsLeft - 12;
+        int buttonWidth = (inner - gap) / 2;
+        int left = this.toolsLeft + 6;
+        drawMinecraftButton(context, mouseX, mouseY, left, y, left + buttonWidth, y + 20, "Undo");
+        drawMinecraftButton(context, mouseX, mouseY, left + buttonWidth + gap, y, this.toolsRight - 6, y + 20, "Redo");
+        drawMinecraftButton(context, mouseX, mouseY, left, y + 24, this.toolsRight - 6, y + 44, "Open PNG...");
     }
 
     private void drawFooterButtons(DrawContext context, int mouseX, int mouseY) {
         int y = this.height - 28;
-        drawMinecraftButton(context, mouseX, mouseY, 38, y, 124, y + 20, "Back");
+        int w = 112;
+        int gap = 8;
+        int total = w * 3 + gap * 2;
+        int x = this.width / 2 - total / 2;
+        drawMinecraftButton(context, mouseX, mouseY, x, y, x + w, y + 20, "Back");
+        drawMinecraftButton(context, mouseX, mouseY, x + w + gap, y, x + w * 2 + gap, y + 20, this.entry == null ? "Save Skin" : "Save Changes");
+        drawMinecraftButton(context, mouseX, mouseY, x + (w + gap) * 2, y, x + w * 3 + gap * 2, y + 20, "Save a Copy");
     }
 
 
     private boolean handleActionButtonClick(double mouseX, double mouseY) {
         int y = actionButtonY();
-        if (isInside(mouseX, mouseY, this.toolsLeft + 8, y, this.toolsLeft + 43, y + 18)) {
+        int gap = 4;
+        int inner = this.toolsRight - this.toolsLeft - 12;
+        int buttonWidth = (inner - gap) / 2;
+        int left = this.toolsLeft + 6;
+        if (isInside(mouseX, mouseY, left, y, left + buttonWidth, y + 20)) {
             playClick();
             undo();
             return true;
         }
-        if (isInside(mouseX, mouseY, this.toolsLeft + 47, y, this.toolsLeft + 82, y + 18)) {
+        if (isInside(mouseX, mouseY, left + buttonWidth + gap, y, this.toolsRight - 6, y + 20)) {
             playClick();
             redo();
             return true;
         }
-        if (isInside(mouseX, mouseY, this.toolsLeft + 86, y, this.toolsLeft + 124, y + 18)) {
+        if (isInside(mouseX, mouseY, left, y + 24, this.toolsRight - 6, y + 44)) {
             playClick();
             openSkinTexture();
             return true;
         }
-        if (isInside(mouseX, mouseY, 38, this.height - 28, 124, this.height - 8)) {
+        int footerY = this.height - 28;
+        int w = 112;
+        int footerGap = 8;
+        int total = w * 3 + footerGap * 2;
+        int x = this.width / 2 - total / 2;
+        if (isInside(mouseX, mouseY, x, footerY, x + w, footerY + 20)) {
             playClick();
             this.client.setScreen(this.parent);
+            return true;
+        }
+        if (isInside(mouseX, mouseY, x + w + footerGap, footerY, x + w * 2 + footerGap, footerY + 20)) {
+            playClick();
+            overwrite();
+            return true;
+        }
+        if (isInside(mouseX, mouseY, x + (w + footerGap) * 2, footerY, x + w * 3 + footerGap * 2, footerY + 20)) {
+            playClick();
+            saveCopy();
             return true;
         }
         return false;
@@ -345,15 +398,15 @@ public class EditSkinScreen extends Screen {
     }
 
     private int toolsViewportTop() {
-        return actionButtonY() + 24;
+        return actionButtonY() + 50;
     }
 
     private int toolsViewportBottom() {
-        return this.toolsBottom - 6;
+        return this.toolsBottom - 4;
     }
 
     private int toolsContentHeight() {
-        return layerPartGridTopY() + 6 * 17 + 12 - toolsViewportTop();
+        return layerPartGridTopY() + 6 * 18 + 8 - toolsViewportTop();
     }
 
     private int maxToolsScrollOffset() {
@@ -426,49 +479,50 @@ public class EditSkinScreen extends Screen {
     }
 
     private void drawTools(DrawContext context, int mouseX, int mouseY) {
+        context.drawTextWithShadow(this.textRenderer, Text.literal("Paint"), this.toolsLeft + 6, toolGridTopY() - 12, 0xFFAAAAAA);
         for (int i = 0; i < Tool.values().length; i++) {
             drawToolButton(context, mouseX, mouseY, Tool.values()[i], i);
         }
         int brushY = brushButtonY();
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Brush"), this.toolsLeft + 8, brushY - 12, 0xFFE6EAF0);
-        drawSmallButton(context, this.toolsLeft + 8, brushY, 18, "-", this.brushSize > 1, mouseX, mouseY);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(String.valueOf(this.brushSize)), this.toolsLeft + 34, brushY + 5, 0xFFC8D0DA);
-        drawSmallButton(context, this.toolsLeft + 54, brushY, 18, "+", this.brushSize < 8, mouseX, mouseY);
+        context.drawTextWithShadow(this.textRenderer, Text.literal("Brush Size"), this.toolsLeft + 6, brushY - 12, 0xFFAAAAAA);
+        drawSmallButton(context, this.toolsLeft + 6, brushY, 20, "-", this.brushSize > 1, mouseX, mouseY);
+        context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(String.valueOf(this.brushSize)), this.toolsLeft + 56, brushY + 6, 0xFFFFFFFF);
+        drawSmallButton(context, this.toolsRight - 26, brushY, 20, "+", this.brushSize < 8, mouseX, mouseY);
+
         int gridY = gridToggleY();
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Guides"), this.toolsLeft + 8, gridY - 13, 0xFFE6EAF0);
-        drawWideToggle(context, this.toolsLeft + 8, gridY, "Grid", this.showGrid, mouseX, mouseY);
-        drawWideToggle(context, this.toolsLeft + 8, uvToggleY(), "UV", this.showUvGuide, mouseX, mouseY);
+        context.drawTextWithShadow(this.textRenderer, Text.literal("View"), this.toolsLeft + 6, gridY - 12, 0xFFAAAAAA);
+        drawWideToggle(context, this.toolsLeft + 6, gridY, "Grid", this.showGrid, mouseX, mouseY);
+        drawWideToggle(context, this.toolsLeft + 6, uvToggleY(), "UV Guide", this.showUvGuide, mouseX, mouseY);
+
         int layerY = baseLayerToggleY();
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Layers"), this.toolsLeft + 8, layerY - 13, 0xFFE6EAF0);
-        drawWideToggle(context, this.toolsLeft + 8, layerY, "Base All", this.showBaseLayer, mouseX, mouseY);
-        drawWideToggle(context, this.toolsLeft + 8, overlayLayerToggleY(), "Layer All", this.showOverlayLayer, mouseX, mouseY);
+        context.drawTextWithShadow(this.textRenderer, Text.literal("Skin Layers"), this.toolsLeft + 6, layerY - 12, 0xFFAAAAAA);
+        drawWideToggle(context, this.toolsLeft + 6, layerY, "Base", this.showBaseLayer, mouseX, mouseY);
+        drawWideToggle(context, this.toolsLeft + 6, overlayLayerToggleY(), "Outer", this.showOverlayLayer, mouseX, mouseY);
         drawLayerPartToggles(context, mouseX, mouseY);
     }
 
     private int actionButtonY() {
-        return this.toolsTop + 22;
+        return this.toolsTop + 20;
     }
 
     private int toolGridTopY() {
-        return actionButtonY() + 26;
+        return toolsViewportTop() + 14;
     }
 
     private int toolButtonLeft(int index) {
-        int columnWidth = (this.toolsRight - this.toolsLeft - 22) / 2;
-        return this.toolsLeft + 8 + (index % 2) * (columnWidth + 6);
+        return this.toolsLeft + 6;
     }
 
     private int toolButtonRight(int index) {
-        int columnWidth = (this.toolsRight - this.toolsLeft - 22) / 2;
-        return toolButtonLeft(index) + columnWidth;
+        return this.toolsRight - 8;
     }
 
     private int toolButtonTop(int index) {
-        return toolGridTopY() + (index / 2) * 18;
+        return toolGridTopY() + index * 19;
     }
 
     private int toolsAfterToolY() {
-        return toolGridTopY() + ((Tool.values().length + 1) / 2) * 18;
+        return toolGridTopY() + Tool.values().length * 19;
     }
 
     private int brushButtonY() {
@@ -476,98 +530,88 @@ public class EditSkinScreen extends Screen {
     }
 
     private int gridToggleY() {
-        return brushButtonY() + 38;
+        return brushButtonY() + 42;
     }
 
     private int uvToggleY() {
-        return gridToggleY() + 18;
+        return gridToggleY() + 22;
     }
 
     private int baseLayerToggleY() {
-        return uvToggleY() + 38;
+        return uvToggleY() + 42;
     }
 
     private int overlayLayerToggleY() {
-        return baseLayerToggleY() + 18;
+        return baseLayerToggleY() + 22;
     }
 
     private int layerPartGridTopY() {
-        return overlayLayerToggleY() + 24;
+        return overlayLayerToggleY() + 28;
     }
 
     private int layerPartButtonLeft(int index) {
-        int columnWidth = (this.toolsRight - this.toolsLeft - 22) / 2;
-        return this.toolsLeft + 8 + (index % 2) * (columnWidth + 6);
+        int columnWidth = (this.toolsRight - this.toolsLeft - 16) / 2;
+        return this.toolsLeft + 6 + (index % 2) * (columnWidth + 4);
     }
 
     private int layerPartButtonRight(int index) {
-        int columnWidth = (this.toolsRight - this.toolsLeft - 22) / 2;
+        int columnWidth = (this.toolsRight - this.toolsLeft - 16) / 2;
         return layerPartButtonLeft(index) + columnWidth;
     }
 
     private int layerPartButtonTop(int index) {
-        return layerPartGridTopY() + (index / 2) * 17;
+        return layerPartGridTopY() + (index / 2) * 18;
     }
 
     private void drawToolButton(DrawContext context, int mouseX, int mouseY, Tool value, int index) {
         int left = toolButtonLeft(index);
         int right = toolButtonRight(index);
         int y = toolButtonTop(index);
-        boolean active = value == this.tool;
-        boolean hovered = isInside(mouseX, mouseY, left, y, right, y + 16);
-        int fill = active ? 0x44313A46 : hovered ? 0x44262C34 : 0x331B1F26;
-        context.fill(left, y, right, y + 16, fill);
-        context.drawBorder(left, y, right - left, 16, active ? 0xFFB7C0CF : 0x55727C8D);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(value.label), left + 4, y + 4, active ? 0xFFE6EAF0 : 0xFFC8D0DA);
+        drawMinecraftButton(context, mouseX, mouseY, left, y, right, y + 18, value.label, value != this.tool);
     }
 
     private void drawLayerPartToggles(DrawContext context, int mouseX, int mouseY) {
-        String[] names = new String[]{"B Head", "B Body", "B RArm", "B LArm", "B RLeg", "B LLeg", "L Head", "L Body", "L RArm", "L LArm", "L RLeg", "L LLeg"};
+        String[] names = new String[]{"B Head", "B Body", "B RArm", "B LArm", "B RLeg", "B LLeg", "O Head", "O Body", "O RArm", "O LArm", "O RLeg", "O LLeg"};
         for (int i = 0; i < names.length; i++) {
             boolean enabled = layerPartEnabled(i >= 6, i % 6);
             int left = layerPartButtonLeft(i);
             int right = layerPartButtonRight(i);
             int top = layerPartButtonTop(i);
-            boolean hovered = isInside(mouseX, mouseY, left, top, right, top + 15);
-            context.fill(left, top, right, top + 15, enabled ? 0x44313A46 : hovered ? 0x44262C34 : 0x331B1F26);
-            context.drawBorder(left, top, right - left, 15, enabled ? 0x88727C8D : 0x664D5563);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(names[i]), left + 3, top + 4, enabled ? 0xFFE6EAF0 : 0xFFC8D0DA);
+            drawMinecraftButton(context, mouseX, mouseY, left, top, right, top + 16, (enabled ? "[x] " : "[ ] ") + names[i]);
         }
     }
 
     private void drawSmallButton(DrawContext context, int x, int y, int size, String label, boolean enabled, int mouseX, int mouseY) {
-        boolean hovered = enabled && isInside(mouseX, mouseY, x, y, x + size, y + size);
-        context.fill(x, y, x + size, y + size, hovered ? 0x44262C34 : 0x331B1F26);
-        context.drawBorder(x, y, size, size, enabled ? 0x88727C8D : 0x334D5563);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(label), x + 6, y + 5, enabled ? 0xFFE6EAF0 : 0x66727C8D);
+        drawMinecraftButton(context, mouseX, mouseY, x, y, x + size, y + size, label, enabled);
     }
 
     private void drawWideToggle(DrawContext context, int x, int y, String label, boolean enabled, int mouseX, int mouseY) {
-        boolean hovered = isInside(mouseX, mouseY, x, y, x + 76, y + 16);
-        context.fill(x, y, x + 76, y + 16, enabled ? 0x44313A46 : hovered ? 0x44262C34 : 0x331B1F26);
-        context.drawBorder(x, y, 76, 16, enabled ? 0x88727C8D : 0x664D5563);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(label + ": " + (enabled ? "On" : "Off")), x + 5, y + 4, enabled ? 0xFFE6EAF0 : 0xFFC8D0DA);
+        drawMinecraftButton(context, mouseX, mouseY, x, y, this.toolsRight - 8, y + 18, label + ": " + (enabled ? "ON" : "OFF"));
     }
 
     private void drawPaletteColor(DrawContext context, int x, int y, int color, boolean active) {
-        context.fill(x, y, x + 18, y + 18, 0xFF20242C);
+        context.fill(x, y, x + 18, y + 18, 0xFF000000);
         if (((color >> 24) & 255) == 0) {
-            context.fill(x + 2, y + 2, x + 16, y + 16, 0xFF303642);
-            context.drawTextWithShadow(this.textRenderer, Text.literal("T"), x + 6, y + 5, 0xFFC8D0DA);
+            context.fill(x + 2, y + 2, x + 16, y + 16, 0xFF777777);
+            context.fill(x + 2, y + 2, x + 9, y + 9, 0xFF333333);
+            context.fill(x + 9, y + 9, x + 16, y + 16, 0xFF333333);
         } else {
             context.fill(x + 2, y + 2, x + 16, y + 16, color);
         }
-        context.drawBorder(x, y, 18, 18, active ? 0xFFFFFFFF : 0x88727C8D);
+        context.drawBorder(x, y, 18, 18, active ? 0xFFFFFF55 : 0xFFFFFFFF);
+        if (active) {
+            context.drawBorder(x - 1, y - 1, 20, 20, 0xFF000000);
+        }
     }
 
     private void drawPaletteBar(DrawContext context, int mouseX, int mouseY) {
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Marker Colors"), this.paletteLeft, this.paletteTop, 0xFFE6EAF0);
-        int columns = 8;
+        context.drawCenteredTextWithShadow(this.textRenderer, Text.literal("Colors"), (this.paletteLeft + this.paletteRight) / 2, this.paletteTop - 14, 0xFFFFFFFF);
+        int columns = (this.paletteRight - this.paletteLeft) >= 333 ? 16 : 8;
         int swatch = 18;
-        int gap = 6;
+        int gap = 3;
         int totalWidth = columns * swatch + (columns - 1) * gap;
         int startX = this.paletteLeft + Math.max(0, (this.paletteRight - this.paletteLeft - totalWidth) / 2);
-        int startY = this.paletteTop + 15;
+        int startY = this.paletteTop;
         for (int i = 0; i < this.palette.length; i++) {
             int x = startX + (i % columns) * (swatch + gap);
             int rowY = startY + (i / columns) * 22;
@@ -575,15 +619,27 @@ public class EditSkinScreen extends Screen {
         }
     }
 
+    private void drawCanvasStatus(DrawContext context) {
+        int y = this.canvasY + this.canvasSize + 5;
+        String left = this.hoverPixelX >= 0 && this.hoverPixelY >= 0
+            ? "Pixel " + this.hoverPixelX + ", " + this.hoverPixelY + "  •  " + uvZoneName(this.hoverPixelX, this.hoverPixelY)
+            : "Move over the texture to inspect a pixel";
+        context.drawTextWithShadow(this.textRenderer, Text.literal(left), this.canvasX, y, 0xFFAAAAAA);
+        String right = this.tool.label + "  •  " + this.brushSize + "px  •  #" + colorHex(this.selectedColor);
+        context.drawTextWithShadow(this.textRenderer, Text.literal(right), this.canvasX + this.canvasSize - this.textRenderer.getWidth(right), y, 0xFFAAAAAA);
+    }
+
     private void drawCanvas(DrawContext context) {
-        int cell = Math.max(1, this.canvasSize / 64);
+        context.fill(this.canvasX - 3, this.canvasY - 3, this.canvasX + this.canvasSize + 3, this.canvasY + this.canvasSize + 3, 0xFF000000);
+        context.fill(this.canvasX - 2, this.canvasY - 2, this.canvasX + this.canvasSize + 2, this.canvasY + this.canvasSize + 2, 0xFF777777);
         for (int y = 0; y < 64; y++) {
             for (int x = 0; x < 64; x++) {
                 int px = this.canvasX + x * this.canvasSize / 64;
                 int py = this.canvasY + y * this.canvasSize / 64;
                 int right = this.canvasX + (x + 1) * this.canvasSize / 64;
                 int bottom = this.canvasY + (y + 1) * this.canvasSize / 64;
-                context.fill(px, py, Math.max(px + 1, right), Math.max(py + 1, bottom), ((x + y) & 1) == 0 ? 0xFF2A2E36 : 0xFF20242C);
+                int checker = ((x + y) & 1) == 0 ? 0xFFB8B8B8 : 0xFF8F8F8F;
+                context.fill(px, py, Math.max(px + 1, right), Math.max(py + 1, bottom), checker);
                 if (isPixelVisibleByLayer(x, y)) {
                     int color = SkinTextureTools.nativeToArgb(this.image.getColor(x, y));
                     if (((color >> 24) & 255) > 0) {
@@ -593,13 +649,13 @@ public class EditSkinScreen extends Screen {
             }
         }
         if (!this.showBaseLayer || !this.showOverlayLayer) {
-            context.drawTextWithShadow(this.textRenderer, Text.literal(layerVisibilityLabel()), this.canvasX + 4, this.canvasY + 4, 0xFFE6C46A);
+            context.drawTextWithShadow(this.textRenderer, Text.literal(layerVisibilityLabel()), this.canvasX + 4, this.canvasY + 4, 0xFFFFFF55);
         }
         if (this.showGrid) {
             for (int i = 0; i <= 64; i++) {
                 int line = this.canvasX + i * this.canvasSize / 64;
                 int lineY = this.canvasY + i * this.canvasSize / 64;
-                int alpha = i % 8 == 0 ? 0x774D5563 : 0x224D5563;
+                int alpha = i % 8 == 0 ? 0x88000000 : 0x33000000;
                 context.fill(line, this.canvasY, line + 1, this.canvasY + this.canvasSize, alpha);
                 context.fill(this.canvasX, lineY, this.canvasX + this.canvasSize, lineY + 1, alpha);
             }
@@ -615,9 +671,10 @@ public class EditSkinScreen extends Screen {
         if (this.hoverPixelX >= 0 && this.hoverPixelY >= 0) {
             int hx = this.canvasX + this.hoverPixelX * this.canvasSize / 64;
             int hy = this.canvasY + this.hoverPixelY * this.canvasSize / 64;
-            context.drawBorder(hx, hy, Math.max(cell, 2), Math.max(cell, 2), 0xFFFFFFFF);
+            int hr = this.canvasX + (this.hoverPixelX + 1) * this.canvasSize / 64;
+            int hb = this.canvasY + (this.hoverPixelY + 1) * this.canvasSize / 64;
+            context.drawBorder(hx, hy, Math.max(1, hr - hx), Math.max(1, hb - hy), 0xFFFFFFFF);
         }
-        context.drawBorder(this.canvasX, this.canvasY, this.canvasSize, this.canvasSize, 0xFFB7C0CF);
     }
 
     private boolean isPixelVisibleByLayer(int x, int y) {
@@ -860,7 +917,7 @@ public class EditSkinScreen extends Screen {
     }
 
     private int previewViewportTop() {
-        return this.previewTop + 30;
+        return this.previewTop + 22;
     }
 
     private int previewViewportBottom() {
@@ -868,7 +925,7 @@ public class EditSkinScreen extends Screen {
     }
 
     private int previewContentHeight() {
-        return 452;
+        return 438;
     }
 
     private int maxPreviewScrollOffset() {
@@ -877,34 +934,27 @@ public class EditSkinScreen extends Screen {
 
     private void drawPreviewScrollContent(DrawContext context, int mouseX, int mouseY) {
         this.previewScrollOffset = Math.max(0, Math.min(maxPreviewScrollOffset(), this.previewScrollOffset));
-        int left = this.previewLeft + 8;
-        int right = this.previewRight - 8;
+        int left = this.previewLeft + 6;
+        int right = this.previewRight - 10;
         int viewportTop = previewViewportTop();
         int viewportBottom = previewViewportBottom();
         renderScissored(context, left, viewportTop, right, viewportBottom, () -> {
             int y = viewportTop - this.previewScrollOffset;
-            context.drawTextWithShadow(this.textRenderer, Text.literal("Yaw " + (int) this.modelYaw + " Pitch " + (int) this.modelPitch + " Roll " + (int) this.modelRoll), left + 2, y + 2, 0xFF8F98A8);
-            int modelTop = y - 4;
-            int modelCenter = modelTop + 98;
-            float modelScale = Math.min(92.0F, Math.max(68.0F, (this.previewRight - this.previewLeft) / 3.9F));
+            int modelCenter = y + 114;
+            float modelScale = Math.min(108.0F, Math.max(78.0F, (this.previewRight - this.previewLeft) / 2.72F));
             SkinModelRenderer.render(context, this.textureId == null ? this.sourcePreview : this.textureId, this.slim, (this.previewLeft + this.previewRight) / 2, modelCenter, modelScale, this.modelYaw, this.modelPitch, this.modelRoll, this.showBaseLayer && this.showBaseHead, this.showBaseLayer && this.showBaseBody, this.showBaseLayer && this.showBaseRightArm, this.showBaseLayer && this.showBaseLeftArm, this.showBaseLayer && this.showBaseRightLeg, this.showBaseLayer && this.showBaseLeftLeg, this.showOverlayLayer && this.showOverlayHead, this.showOverlayLayer && this.showOverlayBody, this.showOverlayLayer && this.showOverlayRightArm, this.showOverlayLayer && this.showOverlayLeftArm, this.showOverlayLayer && this.showOverlayRightLeg, this.showOverlayLayer && this.showOverlayLeftLeg);
-            int dataTop = modelTop + 224;
-            context.drawTextWithShadow(this.textRenderer, Text.literal(this.entry == null ? "New editable skin" : this.entry.safeName()), left + 2, dataTop, 0xFFE6EAF0);
-            context.drawTextWithShadow(this.textRenderer, Text.literal("Model: " + (this.slim ? "Slim" : "Regular") + "  Tool: " + this.tool.label + "  Brush: " + this.brushSize), left + 2, dataTop + 12, 0xFFB7C0CF);
-            context.drawTextWithShadow(this.textRenderer, Text.literal("Layers: " + layerVisibilityLabel() + "  Color: #" + colorHex(this.selectedColor)), left + 2, dataTop + 24, 0xFF8F98A8);
-            if (this.hoverPixelX >= 0 && this.hoverPixelY >= 0) {
-                context.drawTextWithShadow(this.textRenderer, Text.literal("Pixel: " + this.hoverPixelX + ", " + this.hoverPixelY + "  " + uvZoneName(this.hoverPixelX, this.hoverPixelY) + "  #" + colorHex(SkinTextureTools.nativeToArgb(this.image.getColor(this.hoverPixelX, this.hoverPixelY)))), left + 2, dataTop + 36, 0xFF8F98A8);
-            }
-            int buttonY = dataTop + 58;
-            int buttonWidth = 72;
-            int gap = 5;
-            int totalWidth = buttonWidth * 3 + gap * 2;
-            int startX = (this.previewLeft + this.previewRight) / 2 - totalWidth / 2;
-            drawPreviewButton(context, mouseX, mouseY, startX, buttonY, startX + buttonWidth, buttonY + 18, this.slim ? "Slim" : "Regular", 0xFFB7C0CF);
-            drawPreviewButton(context, mouseX, mouseY, startX + buttonWidth + gap, buttonY, startX + buttonWidth * 2 + gap, buttonY + 18, "Overwrite", 0xFF9FE6A0);
-            drawPreviewButton(context, mouseX, mouseY, startX + (buttonWidth + gap) * 2, buttonY, startX + buttonWidth * 3 + gap * 2, buttonY + 18, "Save Copy", 0xFFE6EAF0);
-            int vanillaY = buttonY + 32;
-            context.drawTextWithShadow(this.textRenderer, Text.literal("Vanilla Skin Parts"), left + 2, vanillaY, 0xFFE6EAF0);
+
+            int infoTop = y + 232;
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(this.entry == null ? "New Skin" : this.entry.safeName()), (left + right) / 2, infoTop, 0xFFFFFFFF);
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(this.slim ? "Slim model" : "Classic model"), (left + right) / 2, infoTop + 13, 0xFFAAAAAA);
+
+            int modelButtonY = infoTop + 30;
+            int modelButtonWidth = Math.min(120, right - left - 8);
+            int modelButtonX = (left + right) / 2 - modelButtonWidth / 2;
+            drawMinecraftButton(context, mouseX, mouseY, modelButtonX, modelButtonY, modelButtonX + modelButtonWidth, modelButtonY + 20, this.slim ? "Model: Slim" : "Model: Classic");
+
+            int vanillaY = modelButtonY + 34;
+            context.drawTextWithShadow(this.textRenderer, Text.literal("Skin Customization"), left + 2, vanillaY, 0xFFFFFFFF);
             drawVanillaSkinParts(context, mouseX, mouseY, left + 2, vanillaY + 14);
         });
         drawPreviewScrollbar(context);
@@ -956,7 +1006,12 @@ public class EditSkinScreen extends Screen {
     }
 
     private void drawMinecraftButton(DrawContext context, int mouseX, int mouseY, int left, int top, int right, int bottom, String label) {
+        drawMinecraftButton(context, mouseX, mouseY, left, top, right, bottom, label, true);
+    }
+
+    private void drawMinecraftButton(DrawContext context, int mouseX, int mouseY, int left, int top, int right, int bottom, String label, boolean enabled) {
         ButtonWidget button = ButtonWidget.builder(Text.literal(label), value -> {}).dimensions(left, top, right - left, bottom - top).build();
+        button.active = enabled;
         button.render(context, mouseX, mouseY, 0.0F);
     }
 
@@ -1014,36 +1069,25 @@ public class EditSkinScreen extends Screen {
     private boolean handlePreviewClick(double mouseX, double mouseY) {
         int viewportTop = previewViewportTop();
         int y = viewportTop - this.previewScrollOffset;
-        int dataTop = y - 4 + 224;
-        int buttonY = dataTop + 58;
-        int buttonWidth = 72;
-        int gap = 5;
-        int totalWidth = buttonWidth * 3 + gap * 2;
-        int startX = (this.previewLeft + this.previewRight) / 2 - totalWidth / 2;
-        if (isInside(mouseX, mouseY, startX, buttonY, startX + buttonWidth, buttonY + 18)) {
+        int left = this.previewLeft + 8;
+        int right = this.previewRight - 12;
+        int infoTop = y + 232;
+        int modelButtonY = infoTop + 30;
+        int modelButtonWidth = Math.min(120, right - left - 8);
+        int modelButtonX = (left + right) / 2 - modelButtonWidth / 2;
+        if (isInside(mouseX, mouseY, modelButtonX, modelButtonY, modelButtonX + modelButtonWidth, modelButtonY + 20)) {
             playClick();
             toggleModel();
-            return true;
-        }
-        if (isInside(mouseX, mouseY, startX + buttonWidth + gap, buttonY, startX + buttonWidth * 2 + gap, buttonY + 18)) {
-            playClick();
-            overwrite();
-            return true;
-        }
-        if (isInside(mouseX, mouseY, startX + (buttonWidth + gap) * 2, buttonY, startX + buttonWidth * 3 + gap * 2, buttonY + 18)) {
-            playClick();
-            saveCopy();
             return true;
         }
         MinecraftClient minecraft = MinecraftClient.getInstance();
         if (minecraft == null || minecraft.options == null) {
             return false;
         }
-        int vanillaY = buttonY + 32 + 14;
-        int left = this.previewLeft + 10;
+        int vanillaY = modelButtonY + 34 + 14;
         GameOptions options = minecraft.options;
         int partGap = 4;
-        int columnWidth = Math.max(82, (this.previewRight - this.previewLeft - 28 - partGap) / 2);
+        int columnWidth = Math.max(72, (this.previewRight - this.previewLeft - 28 - partGap) / 2);
         int row = 0;
         int column = 0;
         for (PlayerModelPart part : PlayerModelPart.values()) {
@@ -1570,7 +1614,10 @@ public class EditSkinScreen extends Screen {
         boolean insideToolsViewport = isInside(mouseX, mouseY, this.toolsLeft, toolsViewportTop(), this.toolsRight, toolsViewportBottom());
         for (int i = 0; i < Tool.values().length; i++) {
             Tool value = Tool.values()[i];
-            if (insideToolsViewport && isInside(mouseX, toolMouseY, toolButtonLeft(i), toolButtonTop(i), toolButtonRight(i), toolButtonTop(i) + 16)) {
+            if (insideToolsViewport && isInside(mouseX, toolMouseY, toolButtonLeft(i), toolButtonTop(i), toolButtonRight(i), toolButtonTop(i) + 18)) {
+                if (value == this.tool) {
+                    return true;
+                }
                 playClick();
                 this.tool = value;
                 this.shapeActive = false;
@@ -1579,44 +1626,44 @@ public class EditSkinScreen extends Screen {
             }
         }
         int brushY = brushButtonY();
-        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 8, brushY, this.toolsLeft + 26, brushY + 18)) {
+        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 6, brushY, this.toolsLeft + 26, brushY + 20)) {
             playClick();
             this.brushSize = Math.max(1, this.brushSize - 1);
             setStatus("Brush size " + this.brushSize + ".");
             return true;
         }
-        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 54, brushY, this.toolsLeft + 72, brushY + 18)) {
+        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsRight - 26, brushY, this.toolsRight - 6, brushY + 20)) {
             playClick();
             this.brushSize = Math.min(8, this.brushSize + 1);
             setStatus("Brush size " + this.brushSize + ".");
             return true;
         }
-        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 8, gridToggleY(), this.toolsLeft + 90, gridToggleY() + 16)) {
+        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 6, gridToggleY(), this.toolsRight - 8, gridToggleY() + 18)) {
             playClick();
             this.showGrid = !this.showGrid;
             setStatus("Grid guide " + (this.showGrid ? "enabled" : "disabled") + ".");
             return true;
         }
-        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 8, uvToggleY(), this.toolsLeft + 90, uvToggleY() + 16)) {
+        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 6, uvToggleY(), this.toolsRight - 8, uvToggleY() + 18)) {
             playClick();
             this.showUvGuide = !this.showUvGuide;
             setStatus("UV guide " + (this.showUvGuide ? "enabled" : "disabled") + ".");
             return true;
         }
-        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 8, baseLayerToggleY(), this.toolsLeft + 90, baseLayerToggleY() + 16)) {
+        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 6, baseLayerToggleY(), this.toolsRight - 8, baseLayerToggleY() + 18)) {
             playClick();
             this.showBaseLayer = !this.showBaseLayer;
             setStatus("Base layer visibility " + (this.showBaseLayer ? "enabled" : "disabled") + ".");
             return true;
         }
-        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 8, overlayLayerToggleY(), this.toolsLeft + 90, overlayLayerToggleY() + 16)) {
+        if (insideToolsViewport && isInside(mouseX, toolMouseY, this.toolsLeft + 6, overlayLayerToggleY(), this.toolsRight - 8, overlayLayerToggleY() + 18)) {
             playClick();
             this.showOverlayLayer = !this.showOverlayLayer;
             setStatus("Overlay layer visibility " + (this.showOverlayLayer ? "enabled" : "disabled") + ".");
             return true;
         }
         for (int i = 0; i < 12; i++) {
-            if (insideToolsViewport && isInside(mouseX, toolMouseY, layerPartButtonLeft(i), layerPartButtonTop(i), layerPartButtonRight(i), layerPartButtonTop(i) + 15)) {
+            if (insideToolsViewport && isInside(mouseX, toolMouseY, layerPartButtonLeft(i), layerPartButtonTop(i), layerPartButtonRight(i), layerPartButtonTop(i) + 16)) {
                 playClick();
                 toggleLayerPart(i >= 6, i % 6);
                 setStatus("Layer part visibility changed.");
@@ -1656,12 +1703,12 @@ public class EditSkinScreen extends Screen {
     }
 
     private int paletteIndexAt(double mouseX, double mouseY) {
-        int columns = 8;
+        int columns = (this.paletteRight - this.paletteLeft) >= 333 ? 16 : 8;
         int swatch = 18;
-        int gap = 6;
+        int gap = 3;
         int totalWidth = columns * swatch + (columns - 1) * gap;
         int startX = this.paletteLeft + Math.max(0, (this.paletteRight - this.paletteLeft - totalWidth) / 2);
-        int startY = this.paletteTop + 15;
+        int startY = this.paletteTop;
         for (int i = 0; i < this.palette.length; i++) {
             int x = startX + (i % columns) * (swatch + gap);
             int rowY = startY + (i / columns) * 22;

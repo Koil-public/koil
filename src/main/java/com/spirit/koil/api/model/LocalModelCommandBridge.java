@@ -197,6 +197,22 @@ public final class LocalModelCommandBridge {
                                                                     );
                                                                     return 1;
                                                                 }))))))
+                        .then(literal("probe").then(argument("case", word())
+                                .suggests((context, builder) -> CommandSource.suggestMatching(
+                                        List.of("short", "structured", "repetition", "exact", "code", "long"), builder))
+                                .executes(context -> {
+                                    try {
+                                        String name = getString(context, "case");
+                                        int limit = LocalModelService.selectedAgentProfile().contextWindowTokens();
+                                        String prompt = com.spirit.koil.api.model.testing.ModelValidationPrompts.prompt(name, limit);
+                                        LocalModelRuntimeLog.write("model_probe", "case=" + name
+                                                + " inputChars=" + prompt.length() + " rawTokens=unknown contextLimit=" + limit);
+                                        return LocalModelService.ask(prompt) ? 1 : 0;
+                                    } catch (IllegalArgumentException invalid) {
+                                        chat(invalid.getMessage());
+                                        return 0;
+                                    }
+                                })))
                         .then(literal("diagnostics").executes(context -> {
                             showHardware(false);
                             return 1;
@@ -626,6 +642,7 @@ public final class LocalModelCommandBridge {
 
     private static void showHelp() {
         chat("/model status | info | diagnostics | rescan");
+        chat("/model probe <short|structured|repetition|exact|code|long> runs a fixed validation prompt");
         chat("/model start | stop | restart | cancel");
         chat("/model list [page] | catalog refresh | catalog search <query> | installed | logs | prompt");
         chat("/model install <id> | install-url <huggingface-url> | use <id> | switch <id> | uninstall <id>");

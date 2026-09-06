@@ -51,8 +51,8 @@ public class ChangeSkinScreen extends Screen {
     private int rowStart;
     private int createRowTop;
     private int createRowBottom;
-    private int rowHeight = 68;
-    private int createRowHeight = 108;
+    private int rowHeight = 92;
+    private int createRowHeight = 76;
     private Path draftPath;
     private String draftName = "";
     private boolean draftSlim;
@@ -66,7 +66,7 @@ public class ChangeSkinScreen extends Screen {
     private boolean draggingPreviewScrollbar;
     private int previewScrollbarDragOffset;
     private int previewScrollOffset;
-    private String status = "Create a skin from a PNG, fetch a player's skin, edit saved skins, or apply one locally.";
+    private String status = "Choose a saved skin, find a player, or import a Minecraft skin PNG.";
     private boolean loadingOnline;
 
     public ChangeSkinScreen(Screen parent) {
@@ -107,14 +107,15 @@ public class ChangeSkinScreen extends Screen {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         KoilVanillaScreenChrome.renderOptionsShell(context, this.client, this.width, this.height);
-        KoilVanillaScreenChrome.renderTitle(context, this.textRenderer, Text.literal("Options"), Text.literal("Skin Changer"));
+        KoilVanillaScreenChrome.renderTitle(context, this.textRenderer, Text.literal("Options"), Text.literal("Skins"));
         calculateLayout();
-        int headingY = this.previewTop + 12;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Current / Selected Preview"), this.previewLeft + 10, headingY, 0xFFE6EAF0);
+
+        context.drawTextWithShadow(this.textRenderer, Text.literal("Skin Preview"), this.previewLeft + 8, this.previewTop + 8, 0xFFFFFFFF);
+        context.drawTextWithShadow(this.textRenderer, Text.literal("Saved Skins"), this.listLeft + 8, this.listTop + 8, 0xFFFFFFFF);
+        String message = this.loadingOnline ? "Finding player skins..." : this.status;
+        context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(message, Math.max(80, this.listRight - this.listLeft - 16))), this.listLeft + 8, this.listTop + 20, this.loadingOnline ? 0xFFFFFF55 : 0xFFAAAAAA);
+
         drawPreviewScrollContent(context, mouseX, mouseY);
-        int libraryY = this.listTop + 12;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("Skin Library"), this.listLeft + 10, libraryY, 0xFFE6EAF0);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(this.loadingOnline ? "Fetching skin data and saving valid textures locally..." : this.status), this.listLeft + 10, libraryY + 12, this.loadingOnline ? 0xFFE6C46A : 0xFF9DA7B6);
         drawCreateSkinRow(context, mouseX, mouseY);
         drawSkinRows(context, mouseX, mouseY);
         drawFooterButtons(context, mouseX, mouseY);
@@ -122,20 +123,23 @@ public class ChangeSkinScreen extends Screen {
     }
 
     private void calculateLayout() {
-        int left = 38;
-        int right = this.width - 38;
-        int top = 34;
-        int bottom = this.height - 40;
-        int previewWidth = Math.max(270, Math.min(350, this.width / 3));
+        int margin = 32;
+        int left = margin;
+        int right = this.width - margin;
+        int top = 38;
+        int bottom = this.height - 42;
+        int available = Math.max(520, right - left);
+        int previewWidth = Math.max(220, Math.min(278, available * 29 / 100));
+
         this.previewLeft = left;
         this.previewTop = top;
         this.previewRight = left + previewWidth;
         this.previewBottom = bottom;
-        this.listLeft = this.previewRight + 16;
+        this.listLeft = this.previewRight + 12;
         this.listRight = right;
         this.listTop = top;
         this.listBottom = bottom;
-        this.createRowTop = this.listTop + 46;
+        this.createRowTop = this.listTop + 38;
         this.createRowBottom = this.createRowTop + this.createRowHeight;
         this.rowStart = this.createRowBottom + 8;
     }
@@ -153,7 +157,7 @@ public class ChangeSkinScreen extends Screen {
     }
 
     private int previewViewportTop() {
-        return this.previewTop + 30;
+        return this.previewTop + 24;
     }
 
     private int previewViewportBottom() {
@@ -161,7 +165,7 @@ public class ChangeSkinScreen extends Screen {
     }
 
     private int previewContentHeight() {
-        return 396;
+        return 342;
     }
 
     private int maxPreviewScrollOffset() {
@@ -170,7 +174,7 @@ public class ChangeSkinScreen extends Screen {
 
     private void drawPreviewScrollContent(DrawContext context, int mouseX, int mouseY) {
         this.previewScrollOffset = Math.max(0, Math.min(maxPreviewScrollOffset(), this.previewScrollOffset));
-        int left = this.previewLeft + 8;
+        int left = this.previewLeft + 6;
         int right = previewScrollbarTrackLeft() - 6;
         int viewportTop = previewViewportTop();
         int viewportBottom = previewViewportBottom();
@@ -178,21 +182,20 @@ public class ChangeSkinScreen extends Screen {
             int y = viewportTop - this.previewScrollOffset;
             Identifier previewSkin = previewSkin();
             boolean slim = previewSlim();
-            int modelTop = y - 8;
-            int modelCenter = modelTop + 92;
-            float modelScale = Math.min(90.0F, Math.max(66.0F, (this.previewRight - this.previewLeft) / 3.9F));
+            int modelCenter = y + 88;
+            float modelScale = Math.min(78.0F, Math.max(60.0F, (this.previewRight - this.previewLeft) / 3.35F));
             SkinModelRenderer.render(context, previewSkin, slim, (this.previewLeft + this.previewRight) / 2, modelCenter, modelScale, this.modelYaw, this.modelPitch, this.modelRoll);
-            int dataTop = modelTop + 214;
-            int dataBottom = dataTop + 58;
-            drawPanel(context, left, dataTop, right, dataBottom, 0x3320242C, 0x66727C8D);
-            String previewName = this.selected == null ? "Minecraft account skin" : this.selected.safeName();
-            String previewSource = this.selected == null ? "Session" : this.selected.safeSource();
-            context.drawTextWithShadow(this.textRenderer, Text.literal("Model Data"), left + 8, dataTop + 7, 0xFFE6EAF0);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(previewName), left + 8, dataTop + 20, 0xFFB7C0CF);
-            context.drawTextWithShadow(this.textRenderer, Text.literal((slim ? "Slim" : "Regular") + "  |  " + previewSource), left + 8, dataTop + 33, 0xFF8F98A8);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(textureLabel()), left + 8, dataTop + 46, 0xFF7F8898);
-            int vanillaY = dataBottom + 22;
-            context.drawTextWithShadow(this.textRenderer, Text.literal("Vanilla Skin Parts"), left + 2, vanillaY, 0xFFE6EAF0);
+
+            int infoTop = y + 178;
+            drawPanel(context, left + 2, infoTop, right - 2, infoTop + 52, 0x99000000, 0xFF777777);
+            String previewName = this.selected == null ? "Minecraft Account Skin" : this.selected.safeName();
+            String previewSource = this.selected == null ? "Account" : this.selected.safeSource();
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(previewName), (left + right) / 2, infoTop + 7, 0xFFFFFFFF);
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal((slim ? "Slim" : "Classic") + " model"), (left + right) / 2, infoTop + 20, 0xFFDDDDDD);
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal(previewSource), (left + right) / 2, infoTop + 33, 0xFFAAAAAA);
+
+            int vanillaY = infoTop + 64;
+            context.drawTextWithShadow(this.textRenderer, Text.literal("Skin Customization"), left + 2, vanillaY, 0xFFFFFFFF);
             drawVanillaSkinParts(context, mouseX, mouseY, left + 2, vanillaY + 14);
         });
         drawPreviewScrollbar(context);
@@ -296,16 +299,16 @@ public class ChangeSkinScreen extends Screen {
     private boolean handlePreviewClick(double mouseX, double mouseY) {
         int viewportTop = previewViewportTop();
         int y = viewportTop - this.previewScrollOffset;
-        int dataTop = y - 14 + 212;
-        int vanillaY = dataTop + 58 + 22 + 14;
-        int left = this.previewLeft + 10;
+        int infoTop = y + 178;
+        int vanillaY = infoTop + 64 + 14;
+        int left = this.previewLeft + 8;
         MinecraftClient minecraft = MinecraftClient.getInstance();
         if (minecraft == null || minecraft.options == null) {
             return false;
         }
         GameOptions options = minecraft.options;
         int partGap = 4;
-        int columnWidth = Math.max(82, (this.previewRight - this.previewLeft - 28 - partGap) / 2);
+        int columnWidth = Math.max(78, (this.previewRight - this.previewLeft - 28 - partGap) / 2);
         int row = 0;
         int column = 0;
         for (PlayerModelPart part : PlayerModelPart.values()) {
@@ -362,24 +365,28 @@ public class ChangeSkinScreen extends Screen {
     }
 
     private void drawCreateSkinRow(DrawContext context, int mouseX, int mouseY) {
-        drawPanel(context, this.listLeft + 6, this.createRowTop, this.listRight - 6, this.createRowBottom, 0x331B1F26, this.draftPath == null ? 0x664D5563 : 0xFFE6C46A);
-        int x = this.listLeft + 16;
-        int y = this.createRowTop + 9;
-        context.drawTextWithShadow(this.textRenderer, Text.literal("+ Upload skin"), x, y, 0xFFB7C0CF);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(this.draftPath == null ? "Open a PNG or type a player name, then press Save to fetch." : "Finish this skin card, then save or cancel."), x, y + 13, 0xFF8F98A8);
-        int fieldTop = this.createRowTop + 42;
+        drawPanel(context, this.listLeft + 4, this.createRowTop, this.listRight - 4, this.createRowBottom, 0x99000000, this.draftPath == null ? 0xFF666666 : 0xFFFFFF55);
+        int x = this.listLeft + 12;
+        int y = this.createRowTop + 8;
+        context.drawTextWithShadow(this.textRenderer, Text.literal(this.draftPath == null ? "Find or add a skin" : "Import skin PNG"), x, y, 0xFFFFFFFF);
+        context.drawTextWithShadow(this.textRenderer, Text.literal(this.draftPath == null ? "Enter a Minecraft player name, or browse for a PNG." : this.draftPath.getFileName().toString()), x, y + 12, 0xFFAAAAAA);
+
+        int fieldTop = this.createRowTop + 38;
         int fieldLeft = x;
-        int fieldRight = Math.min(this.listRight - 292, fieldLeft + 220);
-        drawTextField(context, fieldLeft, fieldTop, fieldRight, fieldTop + 20, this.draftName, this.draftNameFocused, this.draftPath == null ? "Skin name or player name" : "Skin name");
-        int openLeft = fieldRight + 8;
-        int saveLeft = openLeft + 58;
-        int cancelLeft = saveLeft + 58;
-        drawCardButton(context, mouseX, mouseY, openLeft, fieldTop, openLeft + 52, fieldTop + 20, "Open", 0xFFE6EAF0);
-        drawCardButton(context, mouseX, mouseY, saveLeft, fieldTop, saveLeft + 52, fieldTop + 20, "Save", 0xFF9FE6A0);
-        drawCardButton(context, mouseX, mouseY, cancelLeft, fieldTop, cancelLeft + 58, fieldTop + 20, "Cancel", 0xFFE69F9F);
-        drawCardButton(context, mouseX, mouseY, openLeft, fieldTop + 24, openLeft + 68, fieldTop + 42, this.draftSlim ? "Slim" : "Regular", 0xFFB7C0CF);
-        String footer = this.draftPath == null ? "Save fetches the typed player when no PNG is open." : "PNG: " + this.draftPath.getFileName().toString();
-        context.drawTextWithShadow(this.textRenderer, Text.literal(footer), x, this.createRowBottom - 15, 0xFF7F8898);
+        int actionsWidth = 238;
+        int fieldRight = Math.max(fieldLeft + 110, this.listRight - actionsWidth - 18);
+        drawTextField(context, fieldLeft, fieldTop, fieldRight, fieldTop + 20, this.draftName, this.draftNameFocused, this.draftPath == null ? "Player name or skin name" : "Skin name");
+
+        int gap = 6;
+        int firstLeft = fieldRight + gap;
+        int firstWidth = 76;
+        int secondLeft = firstLeft + firstWidth + gap;
+        int secondWidth = 76;
+        int thirdLeft = secondLeft + secondWidth + gap;
+        int thirdWidth = 68;
+        drawMinecraftButton(context, mouseX, mouseY, firstLeft, fieldTop, firstLeft + firstWidth, fieldTop + 20, this.draftPath == null ? "Browse..." : "Save");
+        drawMinecraftButton(context, mouseX, mouseY, secondLeft, fieldTop, secondLeft + secondWidth, fieldTop + 20, this.draftPath == null ? "Find Player" : "Cancel");
+        drawMinecraftButton(context, mouseX, mouseY, thirdLeft, fieldTop, thirdLeft + thirdWidth, fieldTop + 20, this.draftSlim ? "Slim" : "Classic");
     }
 
     private void drawTextField(DrawContext context, int left, int top, int right, int bottom, String value, boolean focused, String placeholder) {
@@ -396,25 +403,23 @@ public class ChangeSkinScreen extends Screen {
         if (this.entries == null) {
             this.entries = this.library.entries();
         }
-        int viewportHeight = listViewportHeight();
         int firstIndex = firstVisibleSkinIndex();
         int lastIndex = lastVisibleSkinIndex();
         if (this.entries.isEmpty()) {
-            context.drawTextWithShadow(this.textRenderer, Text.literal("No saved skins yet. Create one above or fetch a player's skin."), this.listLeft + 10, this.rowStart + 12, 0xFFB7C0CF);
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal("No saved skins yet"), (this.listLeft + this.listRight) / 2, this.rowStart + 18, 0xFFAAAAAA);
+            context.drawCenteredTextWithShadow(this.textRenderer, Text.literal("Find a player or import a PNG above."), (this.listLeft + this.listRight) / 2, this.rowStart + 32, 0xFF777777);
             return;
         }
         this.scrollOffset = clampScroll(this.scrollOffset, maxScrollOffset());
-        renderScissored(context, this.listLeft + 4, this.rowStart, this.listRight - 10, this.listBottom - 16, () -> {
+        renderScissored(context, this.listLeft + 4, this.rowStart, this.listRight - 10, this.listBottom - 10, () -> {
             for (int index = firstIndex; index <= lastIndex; index++) {
                 if (index < 0 || index >= this.entries.size()) {
                     continue;
                 }
                 SkinEntry entry = this.entries.get(index);
                 int rowY = this.rowStart + (int) Math.round(index * this.rowHeight - this.scrollOffset);
-                boolean active = this.selected != null && entry.id.equals(this.selected.id);
-                int fill = active ? 0x66425163 : 0x3320242C;
-                int border = active ? 0xFFB7C0CF : 0x44727C8D;
-                drawPanel(context, this.listLeft + 6, rowY + 2, this.listRight - 12, rowY + this.rowHeight - 4, fill, border);
+                boolean selectedRow = this.selected != null && entry.id.equals(this.selected.id);
+                drawPanel(context, this.listLeft + 4, rowY + 2, this.listRight - 12, rowY + this.rowHeight - 3, selectedRow ? 0xAA333333 : 0x88000000, selectedRow ? 0xFFFFFFFF : 0xFF666666);
                 if (entry.id.equals(this.editingEntryId)) {
                     drawEditableSavedRow(context, mouseX, mouseY, entry, rowY);
                 } else {
@@ -426,33 +431,45 @@ public class ChangeSkinScreen extends Screen {
     }
 
     private void drawSavedRow(DrawContext context, int mouseX, int mouseY, SkinEntry entry, int rowY) {
-        int textX = this.listLeft + 16;
-        int buttonWidth = 52;
-        int gap = 6;
-        int buttonsLeft = this.listRight - 184;
-        context.drawTextWithShadow(this.textRenderer, Text.literal(entry.safeName()), textX, rowY + 8, 0xFFE6EAF0);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(entry.modelLabel() + "  |  " + entry.width + "x" + entry.height + "  |  " + entry.safeSource()), textX, rowY + 21, 0xFFB7C0CF);
-        context.drawTextWithShadow(this.textRenderer, Text.literal(entry.id.equals(this.library.activeId()) ? "Applied" : "Saved"), textX, rowY + 34, entry.id.equals(this.library.activeId()) ? 0xFF9FE6A0 : 0xFF8F98A8);
-        int buttonY = rowY + 19;
-        drawListButton(context, buttonsLeft, buttonY, buttonsLeft + buttonWidth, buttonY + 18, "Edit", 0xFFE6EAF0);
-        drawListButton(context, buttonsLeft + buttonWidth + gap, buttonY, buttonsLeft + buttonWidth * 2 + gap, buttonY + 18, "Apply", 0xFF9FE6A0);
-        drawListButton(context, buttonsLeft + (buttonWidth + gap) * 2, buttonY, buttonsLeft + buttonWidth * 3 + gap * 2, buttonY + 18, "Delete", 0xFFE69F9F);
+        int modelX = this.listLeft + 34;
+        int modelY = rowY + 47;
+        Identifier skin = this.library.texture(entry);
+        SkinModelRenderer.render(context, skin, entry.isSlim(), modelX, modelY, 34.0F, 24.0F, 0.0F, 0.0F);
+
+        int textX = this.listLeft + 68;
+        int buttonWidth = 50;
+        int gap = 4;
+        int buttonsLeft = this.listRight - (buttonWidth * 3 + gap * 2 + 18);
+        boolean applied = entry.id.equals(this.library.activeId());
+        boolean selectedRow = this.selected != null && entry.id.equals(this.selected.id);
+        if (selectedRow) {
+            context.drawTextWithShadow(this.textRenderer, Text.literal(">"), textX - 10, rowY + 15, 0xFFFFFF55);
+        }
+        context.drawTextWithShadow(this.textRenderer, Text.literal(entry.safeName()), textX, rowY + 14, 0xFFFFFFFF);
+        context.drawTextWithShadow(this.textRenderer, Text.literal((entry.isSlim() ? "Slim" : "Classic") + "  •  " + entry.safeSource()), textX, rowY + 30, 0xFFAAAAAA);
+        context.drawTextWithShadow(this.textRenderer, Text.literal(applied ? "Currently applied" : "Saved in Koil"), textX, rowY + 46, applied ? 0xFF55FF55 : 0xFF777777);
+
+        int buttonY = rowY + 37;
+        drawMinecraftButton(context, mouseX, mouseY, buttonsLeft, buttonY, buttonsLeft + buttonWidth, buttonY + 20, "Edit");
+        drawMinecraftButton(context, mouseX, mouseY, buttonsLeft + buttonWidth + gap, buttonY, buttonsLeft + buttonWidth * 2 + gap, buttonY + 20, "Apply");
+        drawMinecraftButton(context, mouseX, mouseY, buttonsLeft + (buttonWidth + gap) * 2, buttonY, buttonsLeft + buttonWidth * 3 + gap * 2, buttonY + 20, "Delete");
     }
 
     private void drawEditableSavedRow(DrawContext context, int mouseX, int mouseY, SkinEntry entry, int rowY) {
-        int textX = this.listLeft + 16;
-        int fieldTop = rowY + 8;
-        int buttonWidth = 52;
-        int gap = 6;
-        int buttonsLeft = this.listRight - 184;
-        int fieldRight = Math.min(buttonsLeft - 10, textX + 230);
+        int textX = this.listLeft + 14;
+        int buttonWidth = 56;
+        int gap = 4;
+        int buttonsLeft = this.listRight - (buttonWidth * 3 + gap * 2 + 18);
+        int fieldTop = rowY + 12;
+        int fieldRight = Math.max(textX + 90, buttonsLeft - 8);
         drawTextField(context, textX, fieldTop, fieldRight, fieldTop + 20, this.editingName, this.editingNameFocused, entry.safeName());
-        context.drawTextWithShadow(this.textRenderer, Text.literal(entry.width + "x" + entry.height + "  |  " + entry.safeSource()), textX, rowY + 34, 0xFFB7C0CF);
-        int buttonY = rowY + 19;
-        drawListButton(context, buttonsLeft, buttonY, buttonsLeft + buttonWidth, buttonY + 18, "Open", 0xFFE6EAF0);
-        drawListButton(context, buttonsLeft + buttonWidth + gap, buttonY, buttonsLeft + buttonWidth * 2 + gap, buttonY + 18, "Save", 0xFF9FE6A0);
-        drawListButton(context, buttonsLeft + (buttonWidth + gap) * 2, buttonY, buttonsLeft + buttonWidth * 3 + gap * 2, buttonY + 18, "Cancel", 0xFFE69F9F);
-        drawListButton(context, buttonsLeft, rowY + 40, buttonsLeft + buttonWidth, rowY + 58, this.editingSlim ? "Slim" : "Regular", 0xFFB7C0CF);
+        context.drawTextWithShadow(this.textRenderer, Text.literal("Card settings  •  " + (this.editingSlim ? "Slim" : "Classic")), textX, rowY + 40, 0xFFAAAAAA);
+
+        int buttonY = rowY + 38;
+        drawMinecraftButton(context, mouseX, mouseY, buttonsLeft, buttonY, buttonsLeft + buttonWidth, buttonY + 20, "Editor");
+        drawMinecraftButton(context, mouseX, mouseY, buttonsLeft + buttonWidth + gap, buttonY, buttonsLeft + buttonWidth * 2 + gap, buttonY + 20, "Save");
+        drawMinecraftButton(context, mouseX, mouseY, buttonsLeft + (buttonWidth + gap) * 2, buttonY, buttonsLeft + buttonWidth * 3 + gap * 2, buttonY + 20, "Cancel");
+        drawMinecraftButton(context, mouseX, mouseY, textX, rowY + 64, textX + 92, rowY + 84, this.editingSlim ? "Slim" : "Classic");
     }
 
     private int footerButtonY() {
@@ -460,7 +477,7 @@ public class ChangeSkinScreen extends Screen {
     }
 
     private int footerButtonWidth() {
-        return 116;
+        return 108;
     }
 
     private int footerButtonGap() {
@@ -470,7 +487,7 @@ public class ChangeSkinScreen extends Screen {
     private int footerStartX() {
         int buttonWidth = footerButtonWidth();
         int gap = footerButtonGap();
-        return this.width / 2 - (buttonWidth * 3 + gap * 2) / 2;
+        return this.width / 2 - (buttonWidth * 4 + gap * 3) / 2;
     }
 
     private void drawFooterButtons(DrawContext context, int mouseX, int mouseY) {
@@ -479,8 +496,9 @@ public class ChangeSkinScreen extends Screen {
         int gap = footerButtonGap();
         int x = footerStartX();
         drawMinecraftButton(context, mouseX, mouseY, x, y, x + w, y + 20, "Back");
-        drawMinecraftButton(context, mouseX, mouseY, x + w + gap, y, x + w * 2 + gap, y + 20, "Use Account Skin");
-        drawMinecraftButton(context, mouseX, mouseY, x + (w + gap) * 2, y, x + w * 3 + gap * 2, y + 20, "Apply Selected");
+        drawMinecraftButton(context, mouseX, mouseY, x + (w + gap), y, x + w * 2 + gap, y + 20, "Account Skin");
+        drawMinecraftButton(context, mouseX, mouseY, x + (w + gap) * 2, y, x + w * 3 + gap * 2, y + 20, "Edit Selected");
+        drawMinecraftButton(context, mouseX, mouseY, x + (w + gap) * 3, y, x + w * 4 + gap * 3, y + 20, "Apply Selected");
     }
 
 
@@ -494,12 +512,17 @@ public class ChangeSkinScreen extends Screen {
             this.client.setScreen(this.parent);
             return true;
         }
-        if (isInside(mouseX, mouseY, x + w + gap, y, x + w * 2 + gap, y + 20)) {
+        if (isInside(mouseX, mouseY, x + (w + gap), y, x + w * 2 + gap, y + 20)) {
             playClick();
             useAccountSkin();
             return true;
         }
         if (isInside(mouseX, mouseY, x + (w + gap) * 2, y, x + w * 3 + gap * 2, y + 20)) {
+            playClick();
+            editEntryInEditor(this.selected);
+            return true;
+        }
+        if (isInside(mouseX, mouseY, x + (w + gap) * 3, y, x + w * 4 + gap * 3, y + 20)) {
             playClick();
             applySelected();
             return true;
@@ -891,7 +914,10 @@ public class ChangeSkinScreen extends Screen {
 
     private void drawPanel(DrawContext context, int left, int top, int right, int bottom, int fill, int border) {
         context.fill(left, top, right, bottom, fill);
-        context.drawBorder(left, top, right - left, bottom - top, border);
+        context.fill(left, top, right, top + 1, 0xFF000000);
+        context.fill(left, top, left + 1, bottom, 0xFF000000);
+        context.fill(left, bottom - 1, right, bottom, border);
+        context.fill(right - 1, top, right, bottom, border);
     }
 
     private boolean isInside(double mouseX, double mouseY, int left, int top, int right, int bottom) {
@@ -952,33 +978,39 @@ public class ChangeSkinScreen extends Screen {
     }
 
     private void handleCreateRowClick(double mouseX, double mouseY) {
-        int x = this.listLeft + 16;
-        int fieldTop = this.createRowTop + 42;
+        int x = this.listLeft + 12;
+        int fieldTop = this.createRowTop + 38;
         int fieldLeft = x;
-        int fieldRight = Math.min(this.listRight - 292, fieldLeft + 220);
-        int openLeft = fieldRight + 8;
-        int saveLeft = openLeft + 58;
-        int cancelLeft = saveLeft + 58;
+        int actionsWidth = 238;
+        int fieldRight = Math.max(fieldLeft + 110, this.listRight - actionsWidth - 18);
+        int gap = 6;
+        int firstLeft = fieldRight + gap;
+        int firstWidth = 76;
+        int secondLeft = firstLeft + firstWidth + gap;
+        int secondWidth = 76;
+        int thirdLeft = secondLeft + secondWidth + gap;
+        int thirdWidth = 68;
         this.draftNameFocused = isInside(mouseX, mouseY, fieldLeft, fieldTop, fieldRight, fieldTop + 20);
         this.editingNameFocused = false;
-        if (isInside(mouseX, mouseY, openLeft, fieldTop, openLeft + 52, fieldTop + 20)) {
+        if (isInside(mouseX, mouseY, firstLeft, fieldTop, firstLeft + firstWidth, fieldTop + 20)) {
             playClick();
-            openSkinFileChooser();
-        } else if (isInside(mouseX, mouseY, saveLeft, fieldTop, saveLeft + 52, fieldTop + 20)) {
+            if (this.draftPath == null) {
+                openSkinFileChooser();
+            } else {
+                saveDraftUpload();
+            }
+        } else if (isInside(mouseX, mouseY, secondLeft, fieldTop, secondLeft + secondWidth, fieldTop + 20)) {
             playClick();
             if (this.draftPath == null) {
                 fetchTypedSkin();
             } else {
-                saveDraftUpload();
+                clearDraft();
+                setStatus("Import cancelled.");
             }
-        } else if (isInside(mouseX, mouseY, cancelLeft, fieldTop, cancelLeft + 58, fieldTop + 20)) {
-            playClick();
-            clearDraft();
-            setStatus("Draft skin cancelled.");
-        } else if (isInside(mouseX, mouseY, openLeft, fieldTop + 24, openLeft + 68, fieldTop + 42)) {
+        } else if (isInside(mouseX, mouseY, thirdLeft, fieldTop, thirdLeft + thirdWidth, fieldTop + 20)) {
             playClick();
             this.draftSlim = !this.draftSlim;
-            setStatus("Draft model: " + (this.draftSlim ? "Slim" : "Regular") + ".");
+            setStatus("Import model: " + (this.draftSlim ? "Slim" : "Classic") + ".");
         }
     }
 
@@ -987,52 +1019,52 @@ public class ChangeSkinScreen extends Screen {
             handleEditableSavedRowClick(entry, rowY, mouseX, mouseY);
             return;
         }
-        int textX = this.listLeft + 16;
-        int buttonWidth = 52;
-        int gap = 6;
-        int buttonsLeft = this.listRight - 184;
-        int buttonY = rowY + 19;
+        int textX = this.listLeft + 68;
+        int buttonWidth = 50;
+        int gap = 4;
+        int buttonsLeft = this.listRight - (buttonWidth * 3 + gap * 2 + 18);
+        int buttonY = rowY + 37;
         this.selected = entry;
         this.editingNameFocused = false;
-        if (isInside(mouseX, mouseY, buttonsLeft, buttonY, buttonsLeft + buttonWidth, buttonY + 18)) {
+        if (isInside(mouseX, mouseY, buttonsLeft, buttonY, buttonsLeft + buttonWidth, buttonY + 20)) {
             playClick();
             startEditingEntry(entry);
-        } else if (isInside(mouseX, mouseY, buttonsLeft + buttonWidth + gap, buttonY, buttonsLeft + buttonWidth * 2 + gap, buttonY + 18)) {
+        } else if (isInside(mouseX, mouseY, buttonsLeft + buttonWidth + gap, buttonY, buttonsLeft + buttonWidth * 2 + gap, buttonY + 20)) {
             playClick();
             applyEntry(entry);
-        } else if (isInside(mouseX, mouseY, buttonsLeft + (buttonWidth + gap) * 2, buttonY, buttonsLeft + buttonWidth * 3 + gap * 2, buttonY + 18)) {
+        } else if (isInside(mouseX, mouseY, buttonsLeft + (buttonWidth + gap) * 2, buttonY, buttonsLeft + buttonWidth * 3 + gap * 2, buttonY + 20)) {
             playClick();
             confirmDeleteEntry(entry);
-        } else if (isInside(mouseX, mouseY, textX, rowY + 6, buttonsLeft - 8, rowY + this.rowHeight - 6)) {
+        } else if (isInside(mouseX, mouseY, this.listLeft + 8, rowY + 4, buttonsLeft - 6, rowY + this.rowHeight - 4)) {
             playClick();
             setStatus("Selected " + entry.safeName() + ".");
         }
     }
 
     private void handleEditableSavedRowClick(SkinEntry entry, int rowY, double mouseX, double mouseY) {
-        int textX = this.listLeft + 16;
-        int fieldTop = rowY + 8;
-        int buttonWidth = 52;
-        int gap = 6;
-        int buttonsLeft = this.listRight - 184;
-        int fieldRight = Math.min(buttonsLeft - 10, textX + 230);
-        int buttonY = rowY + 19;
+        int textX = this.listLeft + 14;
+        int buttonWidth = 56;
+        int gap = 4;
+        int buttonsLeft = this.listRight - (buttonWidth * 3 + gap * 2 + 18);
+        int fieldTop = rowY + 12;
+        int fieldRight = Math.max(textX + 90, buttonsLeft - 8);
+        int buttonY = rowY + 38;
         this.selected = entry;
         this.editingNameFocused = isInside(mouseX, mouseY, textX, fieldTop, fieldRight, fieldTop + 20);
-        if (isInside(mouseX, mouseY, buttonsLeft, buttonY, buttonsLeft + buttonWidth, buttonY + 18)) {
+        if (isInside(mouseX, mouseY, buttonsLeft, buttonY, buttonsLeft + buttonWidth, buttonY + 20)) {
             playClick();
             editEntryInEditor(entry);
-        } else if (isInside(mouseX, mouseY, buttonsLeft + buttonWidth + gap, buttonY, buttonsLeft + buttonWidth * 2 + gap, buttonY + 18)) {
+        } else if (isInside(mouseX, mouseY, buttonsLeft + buttonWidth + gap, buttonY, buttonsLeft + buttonWidth * 2 + gap, buttonY + 20)) {
             playClick();
             saveEditingEntry();
-        } else if (isInside(mouseX, mouseY, buttonsLeft + (buttonWidth + gap) * 2, buttonY, buttonsLeft + buttonWidth * 3 + gap * 2, buttonY + 18)) {
+        } else if (isInside(mouseX, mouseY, buttonsLeft + (buttonWidth + gap) * 2, buttonY, buttonsLeft + buttonWidth * 3 + gap * 2, buttonY + 20)) {
             playClick();
             cancelEditingEntry();
             setStatus("Cancelled skin card editing.");
-        } else if (isInside(mouseX, mouseY, buttonsLeft, rowY + 40, buttonsLeft + buttonWidth, rowY + 58)) {
+        } else if (isInside(mouseX, mouseY, textX, rowY + 64, textX + 92, rowY + 84)) {
             playClick();
             this.editingSlim = !this.editingSlim;
-            setStatus("Model changed to " + (this.editingSlim ? "Slim" : "Regular") + ".");
+            setStatus("Model changed to " + (this.editingSlim ? "Slim" : "Classic") + ".");
         }
     }
 

@@ -101,11 +101,6 @@ public class MixinCreditsScreen {
         ci.cancel();
     }
 
-    /*
-     * Vanilla only uses creditsHeight to determine how long the screen remains open.
-     * The side columns can be longer than Mojang's own credit list, so include the
-     * longest mod column in that lifetime calculation.
-     */
     @Inject(method = "init", at = @At("TAIL"))
     private void koil$prepareModCredits(CallbackInfo ci) {
         MinecraftClient client = MinecraftClient.getInstance();
@@ -118,11 +113,6 @@ public class MixinCreditsScreen {
 
         List<ModContainer> mods = new ArrayList<>();
         for (ModContainer mod : FabricLoader.getInstance().getAllMods()) {
-            /*
-             * Keep the credits list aligned with the Mod Menu's default presentation:
-             * iconless entries are hidden, and implementation/support families are
-             * separated from normal user-facing mods.
-             */
             if (!koil$matchesModMenuBaseCreditsFilter(mod)) {
                 continue;
             }
@@ -166,12 +156,6 @@ public class MixinCreditsScreen {
             }
         }
 
-        /*
-         * creditsHeight is normally credits.size() * 12.
-         * Our measured side-column height uses the same 12px cadence and includes
-         * each logo region, so taking the max keeps every mod credit block on-screen
-         * long enough to fully scroll past.
-         */
         this.creditsHeight = Math.max(
             this.creditsHeight,
             Math.max(leftHeight, rightHeight)
@@ -245,11 +229,6 @@ public class MixinCreditsScreen {
         context.getMatrices().pop();
     }
 
-    /*
-     * Dynamic textures are used instead of assuming an icon lives under
-     * assets/<mod-id>/. Fabric's metadata icon may legally point anywhere inside
-     * the mod JAR, including its root.
-     */
     @Inject(method = "removed", at = @At("TAIL"))
     private void koil$releaseModCreditIcons(CallbackInfo ci) {
         MinecraftClient client = MinecraftClient.getInstance();
@@ -294,7 +273,6 @@ public class MixinCreditsScreen {
                 }
             }
 
-            // Mirrors the existing Koil placement and vanilla's ~100px logo lead-in.
             y += 101;
         }
 
@@ -323,14 +301,9 @@ public class MixinCreditsScreen {
             y
         );
 
-        // Vanilla readCredits() inserts two empty lines after each section header.
         y += KOIL_LINE_HEIGHT * 2;
 
         if (KOIL_MOD_ID.equals(metadata.getId())) {
-            /*
-             * Preserve Koil's authored credit roles instead of reducing Koil itself
-             * to only generic Fabric metadata.
-             */
             y = koil$drawCreditGroup(
                 context,
                 renderer,
@@ -447,7 +420,6 @@ public class MixinCreditsScreen {
             );
         }
 
-        // Matches the two empty lines vanilla inserts after every title/name group.
         return y + KOIL_LINE_HEIGHT * 2;
     }
 
@@ -619,24 +591,14 @@ public class MixinCreditsScreen {
         ModMetadata metadata = mod.getMetadata();
         String modId = metadata.getId();
 
-        // Minecraft owns the center credits, and Java is a Loader builtin.
         if ("minecraft".equals(modId) || "java".equals(modId)) {
             return false;
         }
 
-        /*
-         * This matches ModMenuScreen's default picture preference:
-         * showIconlessMods starts false, so installed mods need a metadata icon.
-         */
         if (metadata.getIconPath(32).isEmpty()) {
             return false;
         }
 
-        /*
-         * ModMenuScreen's default FAMILY grouping classifies Fabric/Quilt internals
-         * and common support libraries separately. Credits only include its normal
-         * "Mods" family so those technical entries do not get individual credits.
-         */
         return "Mods".equals(koil$modMenuFamilyLabel(mod));
     }
 
@@ -651,7 +613,6 @@ public class MixinCreditsScreen {
             .map(MixinCreditsScreen::koil$safeLower)
             .orElse("unknown");
 
-        // Mirrors ModMenuScreen.familyLabel().
         if (modId.equals("fabricloader")
             || modId.startsWith("fabric-")
             || modId.startsWith("fabric_")

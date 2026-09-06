@@ -1,16 +1,21 @@
 package com.spirit.mixin.client.gui.revamp.option;
 
+import com.spirit.client.gui.content.mod.ModMenuScreen;
+import com.spirit.client.gui.content.shader.ShaderPackMenuScreen;
+import com.spirit.client.gui.macro.MacroScreen;
+import com.spirit.client.gui.main.KoilMenuScreen;
 import com.spirit.client.gui.options.ContentOptionsScreen;
 import com.spirit.client.gui.options.WorldDatapackScreenHelper;
-import com.spirit.client.gui.content.mod.ModMenuScreen;
-import com.spirit.client.gui.macro.MacroScreen;
+import com.spirit.client.gui.performance.PerformanceOptimizerScreen;
 import com.spirit.client.gui.skin.ChangeSkinScreen;
 import com.spirit.client.gui.skin.EditSkinScreen;
-import com.spirit.client.gui.content.shader.ShaderPackMenuScreen;
-import com.spirit.client.gui.performance.PerformanceOptimizerScreen;
+import com.spirit.client.gui.update.UpdateScreen;
+import com.spirit.client.gui.update.elements.UpdateState;
 import com.spirit.client.gui.video.KoilVideoOptionsScreen;
+import com.spirit.koil.api.design.ButtonHoverPhysics;
 import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
+import com.spirit.koil.api.util.file.media.image.ImageTextureService;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
@@ -19,30 +24,34 @@ import net.minecraft.client.gui.Element;
 import net.minecraft.client.gui.screen.ConfirmLinkScreen;
 import net.minecraft.client.gui.screen.CreditsScreen;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.screen.option.OptionsScreen;
 import net.minecraft.client.gui.screen.option.KeybindsScreen;
 import net.minecraft.client.gui.screen.option.MouseOptionsScreen;
+import net.minecraft.client.gui.screen.option.OptionsScreen;
 import net.minecraft.client.gui.screen.pack.PackScreen;
 import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.TexturedButtonWidget;
+import net.minecraft.client.option.GameOptions;
+import net.minecraft.text.Style;
 import net.minecraft.text.Text;
 import net.minecraft.text.TextContent;
 import net.minecraft.text.TranslatableTextContent;
-import net.minecraft.client.option.GameOptions;
-import org.spongepowered.asm.mixin.Final;
-import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Overwrite;
-import org.spongepowered.asm.mixin.Shadow;
+import net.minecraft.util.Identifier;
+import org.spongepowered.asm.mixin.*;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.awt.*;
+import java.io.File;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.nio.file.Path;
 
+import static com.spirit.Main.SUBLOGGER;
+import static com.spirit.Main.uiImageDirectory;
 import static com.spirit.koil.api.design.uiColorVal.*;
+import static com.spirit.koil.api.util.file.image.ExternalImageLoader.loadExternalPngTexture;
 
 @Environment(EnvType.CLIENT)
 @Mixin(OptionsScreen.class)
@@ -54,6 +63,11 @@ public class MixinOptionsScreen extends Screen {
     private static final String CREDITS_AND_ATTRIBUTION_TRANSLATION_KEY = "options.credits_and_attribution";
     private static final String ATTRIBUTION_URL = "https://aka.ms/MinecraftJavaAttribution";
     private static final String LICENSES_URL = "https://aka.ms/MinecraftJavaLicenses";
+    @Unique private static final Identifier KOIL_OPTIONS_BUTTON_FALLBACK = new Identifier("textures/gui/widgets.png");
+
+    @Unique private TexturedButtonWidget koil$optionsEntryButton;
+    @Unique private ButtonHoverPhysics koil$optionsHoverPhysics;
+    @Unique private boolean koil$optionsEntryOpensUpdate;
 
     @Shadow @Final private GameOptions settings;
 
@@ -149,13 +163,20 @@ public class MixinOptionsScreen extends Screen {
 
     @Inject(method = "init", at = @At("TAIL"))
     private void koil$replaceCreditsAndAttributionButton(CallbackInfo ci) {
+        this.koil$optionsEntryButton = null;
+        if (this.koil$optionsHoverPhysics == null) {
+            this.koil$optionsHoverPhysics = new ButtonHoverPhysics();
+        }
+        this.koil$optionsHoverPhysics.reset();
         if (!JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiRedesign").getAsBoolean()) {
             return;
         }
+
         for (Element child : new ArrayList<>(this.children())) {
             if (!(child instanceof ButtonWidget button) || !koil$isCreditsAndAttributionButton(button)) {
                 continue;
             }
+
             int x = button.getX();
             int y = button.getY();
             int width = button.getWidth();
@@ -163,30 +184,69 @@ public class MixinOptionsScreen extends Screen {
             this.remove(button);
 
             int gap = 2;
-            int available = Math.max(3, width - gap * 2);
+            int koilWidth = Math.min(20, Math.max(1, height));
+            int available = Math.max(3, width - koilWidth - gap * 3);
             int creditsWidth = Math.max(1, Math.round(available * 0.34F));
             int attributionWidth = Math.max(1, Math.round(available * 0.49F));
-            int licensesWidth = Math.max(1, width - creditsWidth - attributionWidth - gap * 2);
+            int licensesWidth = Math.max(1, width - creditsWidth - koilWidth - attributionWidth - gap * 3);
+
+            int creditsX = x;
+            int attributionX = creditsX + creditsWidth + gap;
+            int licensesX = attributionX + attributionWidth + gap;
+            int koilX = licensesX + licensesWidth + gap;
 
             this.addDrawableChild(ButtonWidget.builder(Text.literal("Credits"), pressed -> koil$openCredits())
-                    .dimensions(x, y, creditsWidth, height)
-                    .build());
+                .dimensions(creditsX, y, creditsWidth, height)
+                .build());
+
             this.addDrawableChild(ButtonWidget.builder(
-                            Text.literal("Attribution"),
-                            ConfirmLinkScreen.opening(ATTRIBUTION_URL, this, true)
-                    )
-                    .dimensions(x + creditsWidth + gap, y, attributionWidth, height)
-                    .build());
+                    Text.literal("Attribution"),
+                    ConfirmLinkScreen.opening(ATTRIBUTION_URL, this, true)
+                )
+                .dimensions(attributionX, y, attributionWidth, height)
+                .build());
+
             ButtonWidget licenses = ButtonWidget.builder(
-                            Text.literal("©"),
-                            ConfirmLinkScreen.opening(LICENSES_URL, this, true)
-                    )
-                    .dimensions(x + creditsWidth + gap + attributionWidth + gap, y, licensesWidth, height)
-                    .tooltip(Tooltip.of(Text.literal("Licenses")))
-                    .build();
+                    Text.literal("©"),
+                    ConfirmLinkScreen.opening(LICENSES_URL, this, true)
+                )
+                .dimensions(licensesX, y, licensesWidth, height)
+                .tooltip(Tooltip.of(Text.literal("Licenses")))
+                .build();
             this.addDrawableChild(licenses);
+
+            UpdateState.Status updateStatus = UpdateState.resolve();
+            this.koil$optionsEntryOpensUpdate = updateStatus.updateAvailable();
+            String textureFile = this.koil$optionsEntryOpensUpdate ? "koil_update.png" : "koil.png";
+            int koilY = y + Math.max(0, (height - koilWidth) / 2);
+            this.koil$optionsEntryButton = this.addDrawableChild(new TexturedButtonWidget(
+                koilX, koilY, koilWidth, koilWidth,
+                0, 0, 20,
+                koil$optionsButtonTexture(textureFile), 32, 64,
+                pressed -> {
+                    if (this.client == null) {
+                        return;
+                    }
+                    if (this.koil$optionsEntryOpensUpdate) {
+                        this.client.setScreen(new UpdateScreen(this));
+                    } else {
+                        this.client.setScreen(new KoilMenuScreen());
+                    }
+                }
+            ));
             return;
         }
+    }
+
+    @Unique
+    private Identifier koil$optionsButtonTexture(String fileName) {
+        File textureFile = new File(uiImageDirectory, fileName);
+        ImageTextureService.markFilePersistent(textureFile);
+        Identifier texture = loadExternalPngTexture(uiImageDirectory, fileName);
+        if (texture == null) {
+            SUBLOGGER.logE("Options Screen", "Missing Koil options button texture " + fileName + "; using safe vanilla fallback.");
+        }
+        return texture != null ? texture : KOIL_OPTIONS_BUTTON_FALLBACK;
     }
 
     private void koil$replaceSkinCustomizationButton(List<Element> snapshot) {
@@ -233,9 +293,9 @@ public class MixinOptionsScreen extends Screen {
         }
         String normalized = label.toLowerCase().replace(".", "").replace("…", "").trim();
         return normalized.equals("resource packs")
-                || normalized.equals("resource pack")
-                || normalized.contains("resource packs")
-                || normalized.contains("resource pack");
+            || normalized.equals("resource pack")
+            || normalized.contains("resource packs")
+            || normalized.contains("resource pack");
     }
 
     private boolean koil$isSkinCustomizationButton(ButtonWidget button) {
@@ -249,9 +309,9 @@ public class MixinOptionsScreen extends Screen {
         }
         String normalized = label.toLowerCase().replace(".", "").replace("…", "").trim();
         return normalized.equals("skin customization")
-                || normalized.equals("skin customisation")
-                || normalized.contains("skin customization")
-                || normalized.contains("skin customisation");
+            || normalized.equals("skin customisation")
+            || normalized.contains("skin customization")
+            || normalized.contains("skin customisation");
     }
 
     private void koil$replaceVideoOptionsButton(List<Element> snapshot) {
@@ -291,8 +351,8 @@ public class MixinOptionsScreen extends Screen {
         }
         String normalized = label.toLowerCase().replace(".", "").replace("…", "").trim();
         return normalized.equals("video settings")
-                || normalized.equals("video")
-                || normalized.contains("video settings");
+            || normalized.equals("video")
+            || normalized.contains("video settings");
     }
 
     private boolean koil$isControlsButton(ButtonWidget button) {
@@ -306,8 +366,8 @@ public class MixinOptionsScreen extends Screen {
         }
         String normalized = label.toLowerCase().replace(".", "").replace("…", "").trim();
         return normalized.equals("controls")
-                || normalized.equals("controls settings")
-                || normalized.contains("controls");
+            || normalized.equals("controls settings")
+            || normalized.contains("controls");
     }
 
     private boolean koil$isCreditsAndAttributionButton(ButtonWidget button) {
@@ -321,9 +381,9 @@ public class MixinOptionsScreen extends Screen {
         }
         String normalized = label.toLowerCase().replace(".", "").replace("…", "").trim();
         return normalized.equals("credits & attribution")
-                || normalized.equals("credits and attribution")
-                || normalized.contains("credits & attribution")
-                || normalized.contains("credits and attribution");
+            || normalized.equals("credits and attribution")
+            || normalized.contains("credits & attribution")
+            || normalized.contains("credits and attribution");
     }
 
     private String koil$translationKey(Text text) {
@@ -385,6 +445,39 @@ public class MixinOptionsScreen extends Screen {
             this.renderBackground(context);
             context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, 15, 16777215);
             super.render(context, mouseX, mouseY, delta);
+        }
+
+        koil$renderOptionsKoilHover(context, mouseX, mouseY, delta);
+    }
+
+    @Unique
+    private void koil$renderOptionsKoilHover(DrawContext context, int mouseX, int mouseY, float delta) {
+        if (this.koil$optionsEntryButton == null || this.koil$optionsHoverPhysics == null) {
+            return;
+        }
+
+        boolean hovered = this.koil$optionsEntryButton.isHovered();
+        this.koil$optionsHoverPhysics.beginFrame(
+            this.width,
+            this.height,
+            this.koil$optionsEntryButton.getX(),
+            this.koil$optionsEntryButton.getY(),
+            this.koil$optionsEntryButton.getWidth(),
+            this.koil$optionsEntryButton.getHeight(),
+            hovered
+        );
+
+        // Dense particles and pulses sit underneath the real widget.
+        this.koil$optionsHoverPhysics.renderBehind(context);
+        this.koil$optionsEntryButton.render(context, mouseX, mouseY, delta);
+        // Only sparse perimeter accents are allowed in front of the logo.
+        this.koil$optionsHoverPhysics.renderForeground(context);
+
+        if (hovered) {
+            Text tooltip = this.koil$optionsEntryOpensUpdate
+                ? Text.literal("Update Available!").setStyle(Style.EMPTY.withColor(uiColorSaveSuccessColor))
+                : Text.literal("Koil").setStyle(Style.EMPTY.withColor(0xFF8A80));
+            context.drawTooltip(this.textRenderer, List.of(tooltip), java.util.Optional.empty(), mouseX, mouseY + 10);
         }
     }
 

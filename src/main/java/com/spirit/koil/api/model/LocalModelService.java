@@ -26,6 +26,7 @@ import com.spirit.koil.api.model.catalog.LocalModelSelection;
 import com.spirit.koil.api.model.catalog.LocalModelSelectionStore;
 import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
+import com.spirit.koil.api.model.catalog.ModelRuntimeCompatibility;
 import com.spirit.koil.api.model.catalog.LocalModelAutomationEligibility;
 import com.spirit.koil.api.model.catalog.LocalModelReliabilityStore;
 import com.spirit.koil.api.model.install.LocalModelInstallationService;
@@ -101,13 +102,19 @@ public final class LocalModelService {
         }
         selection = LocalModelSelectionStore.load();
         runtime = new LocalModelRuntimeManager(configuration.maximumQueueDepth());
-        runtime.registerProvider(new ColibriLocalModelProvider(configuration));
-        if (selection.complete() && "llama_cpp".equals(selection.providerId())) {
+        if (selection.complete() && "colibri".equals(selection.providerId())) {
+            ModelRuntimeCompatibility compatibility = selectedRuntimeCompatibility(selection);
+            ColibriConfiguration managed = ColibriConfiguration.fromSelection(
+                    selection, configuration, compatibility);
+            runtime.registerProvider(new ColibriLocalModelProvider(managed, compatibility));
+            runtime.selectProvider("colibri");
+        } else if (selection.complete() && "llama_cpp".equals(selection.providerId())) {
             runtime.registerProvider(new LlamaCppLocalModelProvider(
                 LlamaCppConfiguration.fromSelection(selection, configuration.apiKey())
             ));
             runtime.selectProvider("llama_cpp");
         } else {
+            runtime.registerProvider(new ColibriLocalModelProvider(configuration));
             runtime.selectProvider("colibri");
         }
         ChatHudPanelRegistry.registerIfAbsent(new ModelGenerationChatPanel());
@@ -441,6 +448,16 @@ public final class LocalModelService {
     private static LocalModelAutomationEligibility.Evaluation currentAutomationEligibility() {
         LocalModelCatalogEntry entry = LocalModelCatalog.find(selection.catalogId()).orElse(null);
         return LocalModelAutomationEligibility.evaluate(entry);
+    }
+
+    private static ModelRuntimeCompatibility selectedRuntimeCompatibility(LocalModelSelection selected) {
+        if (selected == null) return null;
+        return LocalModelCatalog.find(selected.catalogId()).stream()
+                .flatMap(entry -> entry.runtimeCompatibility().stream())
+                .filter(value -> value.runtimeId().equals(selected.runtimeId()))
+                .filter(value -> selected.architectureId().isBlank()
+                        || value.architectureId().equals(selected.architectureId()))
+                .findFirst().orElse(null);
     }
 
     public static void revokeIneligibleAutomation(
@@ -780,16 +797,6 @@ public final class LocalModelService {
             }
             UUID providerRequestId = UUID.randomUUID();
             this.activeProviderRoundId.set(providerRequestId);
-            boolean streamUserFacingVoice = this.mode == RequestMode.ASK
-                || this.mode == RequestMode.AUTOMATION
-                || this.mode == RequestMode.ASK_DEEP
-                && (this.finalizationRequested.get()
-                || this.deepThought != null
-                && this.deepThought.session().phase == DeepThoughtSession.Phase.FINALIZE);
-            ModelVoiceService.StreamingSpeech streamingSpeech = streamUserFacingVoice
-                && ModelVoiceService.settings().enabled()
-                ? ModelVoiceService.beginStreaming()
-                : null;
             ModelGenerationHudState.replaceText(this.displayId, "");
             boolean directVerifiedResult = !this.formattingCorrectionActive
                 && AutomationToolCallLatencyPolicy.useDirectVerifiedResultRound(
@@ -813,6 +820,14 @@ public final class LocalModelService {
                 : this.mode == RequestMode.ASK && !this.groundedAskFinalizing
                 ? this.tools
                 : List.of();
+            // Tool/deep-thought rounds are internal work. Speak only direct chat
+            // while streaming; completed tool/deep-thought answers use complete().
+            boolean streamUserFacingVoice = this.mode == RequestMode.ASK && requestTools.isEmpty()
+                || this.mode == RequestMode.ASK_DEEP && (this.finalizationRequested.get()
+                || this.deepThought != null
+                && this.deepThought.session().phase == DeepThoughtSession.Phase.FINALIZE);
+            ModelVoiceService.StreamingSpeech streamingSpeech = streamUserFacingVoice
+                && ModelVoiceService.settings().enabled() ? ModelVoiceService.beginStreaming() : null;
             if (this.mode == RequestMode.AUTOMATION && this.capabilityProfile.stagedExecution()) {
                 requestTools = limitToolsForProfile(requestTools, remainingRequiredToolIds(),
                     this.capabilityProfile.maximumRecommendedToolsPerRound());
@@ -930,7 +945,11 @@ public final class LocalModelService {
                 .sum();
             LocalModelRuntimeLog.write(
                 "request_context",
-                this.mode.name().toLowerCase(java.util.Locale.ROOT)
+                "request=" + providerRequestId + " display=" + this.displayId
+                    + " kms=" + (ModelGenerationHudState.snapshot(this.displayId) == null ? "unknown"
+                    : ModelGenerationHudState.snapshot(this.displayId).sessionNumber())
+                    + " conversation=" + this.conversation.id() + " mode="
+                    + this.mode.name().toLowerCase(java.util.Locale.ROOT)
                     + " | system_chars=" + promptContract.length()
                     + " | history_chars=" + requestContextCharacters
                     + " | tools=" + requestTools.size()
@@ -1115,7 +1134,6 @@ public final class LocalModelService {
         }
 
         private int conversationMessageBudget(RequestMode requestMode) {
-            if (ModelExperimentalFeatures.snapshot().gigatokenEnabled()) return 48;
             if (requestMode == RequestMode.AUTOMATION) {
                 return 20;
             }
@@ -1142,7 +1160,6 @@ public final class LocalModelService {
         }
 
         private int conversationCharacterBudget(RequestMode requestMode) {
-            if (ModelExperimentalFeatures.snapshot().gigatokenEnabled()) return 64 * 1024;
             double parameters = selectedModelParametersBillions();
             if (parameters <= 3.5D) {
                 return requestMode == RequestMode.AUTOMATION ? 16 * 1024 : 12 * 1024;
@@ -1197,6 +1214,10 @@ public final class LocalModelService {
             );
             if (this.mode == RequestMode.ASK_DEEP) {
                 handleDeepThoughtResponse(response);
+                return;
+            }
+            if (looksLikeInternalToolReasoning(response.text())) {
+                continueInternalToolReasoning(response.text());
                 return;
             }
             if (this.mode != RequestMode.AUTOMATION) {
@@ -2131,6 +2152,39 @@ public final class LocalModelService {
                 this.displayId + " | attempt=" + this.continuationCorrectionCount
             );
             submitGeneration();
+        }
+
+        private void continueInternalToolReasoning(String assistantText) {
+            if (this.continuationCorrectionCount >= this.thinking.maximumContinuationCorrections()) {
+                fail("internal_reasoning_without_action",
+                    "The model repeatedly produced internal reasoning instead of a tool call or a final answer.", null);
+                return;
+            }
+            this.continuationCorrectionCount++;
+            archiveVisibleSummary(assistantText);
+            this.conversation.add(ModelMessage.assistant(assistantText));
+            String correction = this.mode == RequestMode.AUTOMATION
+                ? "Your previous response was internal reasoning, not a user-facing result. Do not expose chain-of-thought. Continue the current objective now: call one supplied tool with valid arguments when work is needed, or give one concise final result only when no tool is needed. Do not describe a future action."
+                : "Your previous response was internal reasoning, not the answer. Do not expose chain-of-thought. Answer the user's latest request now in concise natural English, with no discussion of your own prior response or reasoning process.";
+            this.conversation.add(ModelMessage.user(correction));
+            ModelGenerationHudState.state(this.displayId, ModelRequestState.REPLANNING,
+                "converting internal reasoning into a final answer");
+            LocalModelRuntimeLog.write("tool_continuation_retry",
+                this.displayId + " | internal_reasoning attempt=" + this.continuationCorrectionCount);
+            submitGeneration();
+        }
+
+        private static boolean looksLikeInternalToolReasoning(String text) {
+            String normalized = text == null ? "" : text.toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("\\s+", " ").strip();
+            return normalized.length() > 120 && (
+                normalized.startsWith("okay, let me")
+                    || normalized.startsWith("hmm")
+                    || normalized.contains("i need to figure out what the user")
+                    || normalized.contains("my previous response")
+                    || normalized.contains("i was supposed to")
+                    || normalized.contains("let me try to figure out")
+            );
         }
 
         private void continueMalformedAskCommand(String assistantText, String validationDetail) {

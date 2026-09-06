@@ -201,7 +201,7 @@ public final class AutomationCliViewModel {
                 "failure type list", "selected_node = " + nodeId, "", "waiting for failure_type", "", "", "automation feedback");
         if (types == null || types.isEmpty()) {
             upsertDetailed("feedback:type:none", "feedback", "feedback_type_empty", 1, "[block]", "failure_types", "no registered failure types for " + nodeType, true,
-                    "", "failure registry", "", "no deterministic failure type", "missing registry entries", "add a JSON entry under koil/automation/failure_types", "automation feedback");
+                    "", "failure registry", "", "no deterministic failure type", "missing registry entries", "add a JSON entry under koil/sys/automation/failure_types", "automation feedback");
             publishFeedbackChatResult("Select what went wrong", "No failure types for " + nodeType, "blocked");
             persist();
             return;

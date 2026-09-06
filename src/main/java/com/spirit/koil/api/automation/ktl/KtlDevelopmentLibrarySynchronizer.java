@@ -24,8 +24,8 @@ import java.util.Set;
  * project root and continue to use the missing-only built-in installer.
  */
 public final class KtlDevelopmentLibrarySynchronizer {
-    private static final String SOURCE_RELATIVE = "src/main/resources/koil/automation";
-    private static final String RUN_RELATIVE = "run/koil/automation";
+    private static final String SOURCE_RELATIVE = "src/main/resources/koil/sys/automation";
+    private static final String RUN_RELATIVE = "run/koil/sys/automation";
     private static final String STATE_RELATIVE = ".gradle/koil/ktl-sync.properties";
     private static final String LOCK_RELATIVE = ".gradle/koil/ktl-sync.lock";
     private static final Set<String> RUNTIME_OWNED_PREFIXES = Set.of(

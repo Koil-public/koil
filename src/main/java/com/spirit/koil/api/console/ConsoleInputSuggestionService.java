@@ -6,6 +6,7 @@ import com.mojang.brigadier.suggestion.Suggestions;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.chat.input.CommandSuggestionFuturePoller;
 import com.spirit.koil.api.minecraft.MinecraftRegistrySuggestions;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.command.CommandSource;
 import net.minecraft.registry.Registries;
@@ -106,7 +107,7 @@ public final class ConsoleInputSuggestionService {
             for (String templateId : assets.templates.keySet()) {
                 suggestions.add(new ConsoleInputSuggestion("KTL", templateId + ".ktl", "registered automation task", 28));
             }
-            Path root = Path.of("koil/automation");
+            Path root = KoilInstancePaths.automationRoot();
             if (Files.isDirectory(root)) {
                 Files.walk(root)
                         .filter(path -> Files.isRegularFile(path) && path.toString().endsWith(".ktl"))

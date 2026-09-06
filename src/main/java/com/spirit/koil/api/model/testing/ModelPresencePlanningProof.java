@@ -67,7 +67,6 @@ public final class ModelPresencePlanningProof {
                         "composer:experimental_compact_context",
                         "composer:experimental_feature:persistent_history",
                         "composer:experimental_feature:associative_memory",
-                        "composer:experimental_feature:gigatoken",
                         "composer:experimental_feature:expert_prefetch",
                         "composer:experimental_feature:completion_mode",
                         "composer:experimental_feature:no_fail"

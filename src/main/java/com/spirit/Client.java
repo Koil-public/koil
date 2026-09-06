@@ -25,6 +25,7 @@ import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
 import com.spirit.koil.api.registry.client.ActiveWorldContentResourceBridge;
 import com.spirit.koil.api.screen.KoilRemoteScreenClientBridge;
+import com.spirit.koil.api.design.particle.KoilScreenSpriteClientBridge;
 import com.spirit.koil.api.stats.global.GlobalActivityClient;
 import com.spirit.koil.api.world.WorldCommandBridge;
 import com.spirit.koil.api.world.WorldInstanceResourceProfileService;
@@ -70,6 +71,7 @@ public class Client implements ClientModInitializer {
         RichChatPrivacyNoticeClient.register();
         RichChatSyncClientBridge.registerReceiver();
         KoilRemoteScreenClientBridge.registerReceiver();
+        KoilScreenSpriteClientBridge.registerReceiver();
         ClientTickEvents.START_CLIENT_TICK.register(client -> AutomationRouter.tick());
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
             LocalModelService.cancelActiveWork();

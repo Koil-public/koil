@@ -3,6 +3,7 @@ package com.spirit.koil.api.automation.feedback;
 import com.google.gson.*;
 import com.spirit.koil.api.automation.AutomationReporter;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -12,8 +13,8 @@ import java.time.Instant;
 import java.util.*;
 
 public final class AutomationImprovementService {
-    private static final Path EVENTS = Path.of("koil/automation/feedback/events.jsonl");
-    private static final Path OUTPUT_ROOT = Path.of("koil/automation/improvements");
+    private static final Path EVENTS = KoilInstancePaths.automationRoot().resolve("feedback/events.jsonl");
+    private static final Path OUTPUT_ROOT = KoilInstancePaths.automationRoot().resolve("improvements");
     private static final Path PLAN_FILE = OUTPUT_ROOT.resolve("improvement-plan.json");
     private static final Path KTL_INDEX_FILE = OUTPUT_ROOT.resolve("generated-feedback-improvements.ktl");
     private static final Path PATCH_QUEUE_FILE = OUTPUT_ROOT.resolve("patch-queue.jsonl");

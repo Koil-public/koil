@@ -33,6 +33,13 @@ public final class ColibriProviderProof {
     }
 
     public static void main(String[] args) throws Exception {
+        ColibriStreamDecoder incomplete = new ColibriStreamDecoder(UUID.randomUUID(), new StreamingModelObserver() {});
+        boolean rejected = false;
+        try { incomplete.finishOpenBlocks(); }
+        catch (ColibriStreamDecoder.ProtocolException expected) {
+            rejected = "incomplete_stream".equals(expected.code());
+        }
+        require(rejected, "HTTP EOF without message_stop must not report successful inference");
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         String apiKey = "proof-secret";
         server.createContext("/health", exchange -> json(exchange, 200, "{\"status\":\"ok\"}"));

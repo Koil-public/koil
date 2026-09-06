@@ -3,6 +3,7 @@ package com.spirit.koil.api.automation.feedback;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.spirit.koil.api.automation.cli.AutomationCliRow;
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -11,7 +12,7 @@ import java.nio.file.Path;
 import java.util.*;
 
 public final class AutomationFailureRegistry {
-    private static final Path ROOT = Path.of("koil/automation/failure_types");
+    private static final Path ROOT = KoilInstancePaths.automationRoot().resolve("failure_types");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
     private static volatile boolean bootstrapped;
 

@@ -1,5 +1,6 @@
 package com.spirit.koil.api.model.tool;
 
+import com.spirit.koil.api.util.file.KoilInstancePaths;
 import net.minecraft.client.MinecraftClient;
 
 import java.io.IOException;
@@ -28,7 +29,7 @@ public final class ModelWorkspaceRegistry {
         ));
         roots.put("automation", new Workspace(
                 "automation",
-                runRoot.resolve("koil/automation").toAbsolutePath().normalize(),
+                KoilInstancePaths.automationRoot(),
                 true,
                 "Active KTL automation files for this instance"
         ));

@@ -44,16 +44,16 @@ public class MixinKeybindsScreen extends GameOptionsScreen {
     @Inject(method = "init", at = @At("TAIL"))
     private void koil$addMovedControlOptions(CallbackInfo ci) {
         this.koil$sneakButton = this.addDrawableChild(
-                this.gameOptions.getSneakToggled().createWidget(this.gameOptions, 0, 0, 90)
+            this.gameOptions.getSneakToggled().createWidget(this.gameOptions, 0, 0, 90)
         );
         this.koil$sprintButton = this.addDrawableChild(
-                this.gameOptions.getSprintToggled().createWidget(this.gameOptions, 0, 0, 90)
+            this.gameOptions.getSprintToggled().createWidget(this.gameOptions, 0, 0, 90)
         );
         this.koil$autoJumpButton = this.addDrawableChild(
-                this.gameOptions.getAutoJump().createWidget(this.gameOptions, 0, 0, 90)
+            this.gameOptions.getAutoJump().createWidget(this.gameOptions, 0, 0, 90)
         );
         this.koil$operatorButton = this.addDrawableChild(
-                this.gameOptions.getOperatorItemsTab().createWidget(this.gameOptions, 0, 0, 120)
+            this.gameOptions.getOperatorItemsTab().createWidget(this.gameOptions, 0, 0, 120)
         );
         this.koil$indevButton = ButtonWidget.builder(Text.literal("Indev"), button -> {
         }).dimensions(0, 0, 90, 20).build();
@@ -70,8 +70,8 @@ public class MixinKeybindsScreen extends GameOptionsScreen {
         boolean controlling = FabricLoader.getInstance().getModContainer("controlling").isPresent();
         if (this.controlsList instanceof KoilListBoundsAccess bounds) {
             bounds.koil$setListBounds(
-                    KoilVanillaScreenChrome.listTop(controlling),
-                    KoilVanillaScreenChrome.keybindListBottom(this.height, controlling)
+                KoilVanillaScreenChrome.listTop(controlling),
+                koil$keybindListBottom(controlling)
             );
         }
         if (controlling && this.width >= 620) {
@@ -93,19 +93,19 @@ public class MixinKeybindsScreen extends GameOptionsScreen {
             return;
         }
 
-        int gap = 4;
-        int available = Math.max(1, this.width - 16);
-        int operatorWidth = Math.max(82, Math.min(132, available / 3));
-        int gridWidth = Math.max(90, available - operatorWidth - 8);
-        int columnWidth = Math.max(42, (gridWidth - gap) / 2);
-        int actualWidth = columnWidth * 2 + gap + 8 + operatorWidth;
-        int x = Math.max(4, (this.width - actualWidth) / 2);
-        int topY = this.height - 76;
-        koil$place(this.koil$autoJumpButton, x, topY, columnWidth);
-        koil$place(this.koil$sprintButton, x + columnWidth + gap, topY, columnWidth);
-        koil$place(this.koil$indevButton, x, topY + 24, columnWidth);
-        koil$place(this.koil$sneakButton, x + columnWidth + gap, topY + 24, columnWidth);
-        koil$place(this.koil$operatorButton, x + columnWidth * 2 + gap + 8, topY + 12, operatorWidth);
+        // Match vanilla KeybindsScreen geometry when Controlling is not present:
+        // two centered 150 px columns, a 10 px gutter, and 24 px row spacing.
+        int buttonWidth = Math.min(150, Math.max(40, (this.width - 30) / 2));
+        int pairWidth = buttonWidth * 2 + 10;
+        int leftX = (this.width - pairWidth) / 2;
+        int rightX = leftX + buttonWidth + 10;
+        int topY = this.height - 101;
+
+        koil$place(this.koil$autoJumpButton, leftX, topY, buttonWidth);
+        koil$place(this.koil$sprintButton, rightX, topY, buttonWidth);
+        koil$place(this.koil$sneakButton, leftX, topY + 24, buttonWidth);
+        koil$place(this.koil$operatorButton, rightX, topY + 24, buttonWidth);
+        koil$place(this.koil$indevButton, (this.width - buttonWidth) / 2, topY + 48, buttonWidth);
     }
 
     @Unique
@@ -116,6 +116,14 @@ public class MixinKeybindsScreen extends GameOptionsScreen {
         widget.setX(x);
         widget.setY(y);
         widget.setWidth(Math.max(1, width));
+    }
+
+    @Unique
+    private int koil$keybindListBottom(boolean controlling) {
+        if (controlling) {
+            return KoilVanillaScreenChrome.keybindListBottom(this.height, true);
+        }
+        return Math.max(42, this.height - 112);
     }
 
     /**
@@ -130,12 +138,12 @@ public class MixinKeybindsScreen extends GameOptionsScreen {
             MinecraftClient client = MinecraftClient.getInstance();
             boolean hasControllingLayout = FabricLoader.getInstance().getModContainer("controlling").isPresent();
             KoilVanillaScreenChrome.renderListShell(
-                    context,
-                    client,
-                    this.width,
-                    this.height,
-                    KoilVanillaScreenChrome.listTop(hasControllingLayout),
-                    KoilVanillaScreenChrome.keybindListBottom(this.height, hasControllingLayout)
+                context,
+                client,
+                this.width,
+                this.height,
+                KoilVanillaScreenChrome.listTop(hasControllingLayout),
+                koil$keybindListBottom(hasControllingLayout)
             );
             KoilVanillaScreenChrome.renderTitle(context, this.textRenderer, Text.literal("Options"), this.title);
 

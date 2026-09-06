@@ -44,7 +44,6 @@ public final class ModelExperimentalFeatures {
             return new Snapshot(
                     bool(root, "persistentConversationHistory"),
                     bool(root, "persistentAssociativeMemory"),
-                    bool(root, "gigatokenEnabled"),
                     bool(root, "expertPrefetchExperimentEnabled"),
                     bool(root, "completionModeEnabled"),
                     bool(root, "noFailEnabled")
@@ -62,7 +61,9 @@ public final class ModelExperimentalFeatures {
                     : new JsonObject();
             root.addProperty("persistentConversationHistory", settings.persistentConversationHistory());
             root.addProperty("persistentAssociativeMemory", settings.persistentAssociativeMemory());
-            root.addProperty("gigatokenEnabled", settings.gigatokenEnabled());
+            // Remove the legacy switch: Gigatoken is now an automatic runtime
+            // accelerator selected only after exact tokenizer qualification.
+            root.remove("gigatokenEnabled");
             root.addProperty("expertPrefetchExperimentEnabled", settings.expertPrefetchEnabled());
             root.addProperty("completionModeEnabled", settings.completionModeEnabled());
             root.addProperty("noFailEnabled", settings.noFailEnabled());
@@ -84,7 +85,6 @@ public final class ModelExperimentalFeatures {
     public enum Feature {
         PERSISTENT_CONVERSATION_HISTORY,
         PERSISTENT_ASSOCIATIVE_MEMORY,
-        GIGATOKEN,
         EXPERT_PREFETCH,
         COMPLETION_MODE,
         NO_FAIL
@@ -93,17 +93,15 @@ public final class ModelExperimentalFeatures {
     public record Snapshot(
             boolean persistentConversationHistory,
             boolean persistentAssociativeMemory,
-            boolean gigatokenEnabled,
             boolean expertPrefetchEnabled,
             boolean completionModeEnabled,
             boolean noFailEnabled
     ) {
-        public static Snapshot disabled() { return new Snapshot(false, false, false, false, false, false); }
+        public static Snapshot disabled() { return new Snapshot(false, false, false, false, false); }
         public boolean enabled(Feature feature) {
             return switch (feature) {
                 case PERSISTENT_CONVERSATION_HISTORY -> persistentConversationHistory;
                 case PERSISTENT_ASSOCIATIVE_MEMORY -> persistentAssociativeMemory;
-                case GIGATOKEN -> gigatokenEnabled;
                 case EXPERT_PREFETCH -> expertPrefetchEnabled;
                 case COMPLETION_MODE -> completionModeEnabled;
                 case NO_FAIL -> noFailEnabled;
@@ -113,7 +111,6 @@ public final class ModelExperimentalFeatures {
             return new Snapshot(
                     feature == Feature.PERSISTENT_CONVERSATION_HISTORY ? value : persistentConversationHistory,
                     feature == Feature.PERSISTENT_ASSOCIATIVE_MEMORY ? value : persistentAssociativeMemory,
-                    feature == Feature.GIGATOKEN ? value : gigatokenEnabled,
                     feature == Feature.EXPERT_PREFETCH ? value : expertPrefetchEnabled,
                     feature == Feature.COMPLETION_MODE ? value : completionModeEnabled,
                     feature == Feature.NO_FAIL ? value : noFailEnabled

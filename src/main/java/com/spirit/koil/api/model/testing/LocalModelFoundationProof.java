@@ -71,6 +71,14 @@ public final class LocalModelFoundationProof {
     }
 
     public static void main(String[] args) throws Exception {
+        String longProbe = ModelValidationPrompts.prompt("long", 32768);
+        require(longProbe.contains("FACT-0001 = cobalt-raven")
+                && longProbe.contains("silver-anchor") && longProbe.contains("violet-engine")
+                && longProbe.length() < 32768 - 8192, "long probe lost sentinels or exceeded its conservative ceiling");
+        boolean rejectedProbe = false;
+        try { ModelValidationPrompts.prompt("long", 512); }
+        catch (IllegalArgumentException expected) { rejectedProbe = true; }
+        require(rejectedProbe, "unknown/small context must reject the long probe");
         proveModelPresentationContracts();
         proveVoiceCatalogAndSynthesis();
         proveWorkspaceToolContracts();

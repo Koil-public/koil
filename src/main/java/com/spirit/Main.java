@@ -12,6 +12,7 @@ import com.spirit.koil.api.registry.ContentCommandBridge;
 import com.spirit.koil.api.registry.DynamicContentHolderRegistry;
 import com.spirit.koil.api.registry.DynamicRegistryManager;
 import com.spirit.koil.api.screen.KoilRemoteScreenServerBridge;
+import com.spirit.koil.api.design.particle.KoilScreenSpriteServerBridge;
 import com.spirit.koil.api.stats.global.KoilGlobalActivityServer;
 import com.spirit.koil.api.util.console.log.SubFileLogger;
 import com.spirit.koil.api.util.console.log.KoilThreadLogger;
@@ -216,7 +217,7 @@ public class Main implements ModInitializer {
     }
 
     public static final String VERSION = "0.70.25";
-    public static final String BETA_VERSION = "0.70.26-unfinished.13";
+    public static final String BETA_VERSION = "0.70.26-unfinished.14";
     public static final String FREQUENT_BETA_VERSION = "0.70.26-frequent.0";
     public static final Identifier LOGO_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/icon.png");
     public static final Identifier AUTOMATION_TEXTURE = new Identifier(KOIL_ID, "textures/gui/icons/automation.png");
@@ -299,7 +300,7 @@ public class Main implements ModInitializer {
         }
     }
 
-    private static String resolveRequestedTheme() {
+    public static String resolveRequestedTheme() {
         try {
             return JSONFileEditor.getValueFromJson("./koil/sys/config.json", "uiTheme").getAsString();
         } catch (Exception ignored) {
@@ -372,6 +373,7 @@ public class Main implements ModInitializer {
         KoilGlobalActivityServer.register();
         RichChatSyncServerBridge.register();
         KoilRemoteScreenServerBridge.registerCommands();
+        KoilScreenSpriteServerBridge.registerCommands();
         KoilCommandPauseBridge.register();
         AttentionCommandBridge.register();
         AutomationPresenceServerBridge.register();

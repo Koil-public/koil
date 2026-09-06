@@ -87,7 +87,10 @@ public final class ColibriConfigurationStore {
                 Duration.ofSeconds(integer(root, "requestTimeoutSeconds", 1800)),
                 integer(root, "kvSlots", 1),
                 integer(root, "maximumRestartAttempts", 1),
-                Duration.ofSeconds(integer(root, "restartBackoffSeconds", 5))
+                Duration.ofSeconds(integer(root, "restartBackoffSeconds", 5)),
+                bool(root, "managedRuntime", false),
+                string(root, "catalogId", ""),
+                string(root, "engineId", "")
         );
     }
 
@@ -107,10 +110,13 @@ public final class ColibriConfigurationStore {
         root.addProperty("kvSlots", configuration.kvSlots());
         root.addProperty("maximumRestartAttempts", configuration.maximumRestartAttempts());
         root.addProperty("restartBackoffSeconds", configuration.restartBackoff().toSeconds());
+        root.addProperty("managedRuntime", configuration.managedRuntime());
+        root.addProperty("catalogId", configuration.catalogId());
+        root.addProperty("engineId", configuration.engineId());
         var experiments = com.spirit.koil.api.model.ModelExperimentalFeatures.snapshot();
         root.addProperty("persistentConversationHistory", experiments.persistentConversationHistory());
         root.addProperty("persistentAssociativeMemory", experiments.persistentAssociativeMemory());
-        root.addProperty("gigatokenEnabled", experiments.gigatokenEnabled());
+        root.remove("gigatokenEnabled");
         root.addProperty("expertPrefetchExperimentEnabled", experiments.expertPrefetchEnabled());
         root.addProperty("completionModeEnabled", experiments.completionModeEnabled());
         root.addProperty("noFailEnabled", experiments.noFailEnabled());
@@ -135,7 +141,10 @@ public final class ColibriConfigurationStore {
                 value.requestTimeout(),
                 value.kvSlots(),
                 value.maximumRestartAttempts(),
-                value.restartBackoff()
+                value.restartBackoff(),
+                value.managedRuntime(),
+                value.catalogId(),
+                value.engineId()
         );
     }
 

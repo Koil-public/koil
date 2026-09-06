@@ -188,7 +188,6 @@ public final class ChatComposerMenuBridge {
                     ),
                     experimentalEntry("persistent_history", "persistent conversation history", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_CONVERSATION_HISTORY),
                     experimentalEntry("associative_memory", "persistent associative memory", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY),
-                    experimentalEntry("gigatoken", "gigaToken", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.GIGATOKEN),
                     experimentalEntry("expert_prefetch", "expert prefetch", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH),
                     experimentalEntry("completion_mode", "completion mode", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.COMPLETION_MODE),
                     experimentalEntry("no_fail", "no-fail", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.NO_FAIL)
@@ -233,7 +232,6 @@ public final class ChatComposerMenuBridge {
             com.spirit.koil.api.model.ModelExperimentalFeatures.Feature feature = switch (id) {
                 case "persistent_history" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_CONVERSATION_HISTORY;
                 case "associative_memory" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY;
-                case "gigatoken" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.GIGATOKEN;
                 case "expert_prefetch" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH;
                 case "completion_mode" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.COMPLETION_MODE;
                 case "no_fail" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.NO_FAIL;
