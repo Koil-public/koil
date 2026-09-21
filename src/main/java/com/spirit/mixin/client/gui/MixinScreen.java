@@ -26,7 +26,7 @@ import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import com.spirit.koil.api.util.file.json.JSONFileEditor;
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.api.chat.ChatHudPanelStack;
-import com.spirit.koil.api.design.particle.KoilScreenSpriteOverlay;
+import com.spirit.koil.api.design.particle.ScreenSpriteOverlay;
 import com.spirit.koil.api.chat.MenuChatScreen;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -113,7 +113,7 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
 
     @Inject(method = "render", at = @At("TAIL"))
     private void koil$renderScreenSprites(DrawContext context, int mouseX, int mouseY, float delta, CallbackInfo ci) {
-        KoilScreenSpriteOverlay.render(context, this.width, this.height, mouseX, mouseY);
+        ScreenSpriteOverlay.render(context, this.width, this.height, mouseX, mouseY);
     }
 
     @Override
@@ -236,7 +236,9 @@ public abstract class MixinScreen extends AbstractParentElement implements Drawa
         if (keyCode == GLFW.GLFW_KEY_T
                 && !((Object) this instanceof ChatScreen)
                 && !((Object) this instanceof MenuChatScreen)
-                && MenuChatScreen.canOpenMenuChat(this.getFocused())
+                // The IDE is itself a typing surface even when no TextFieldWidget owns focus.
+                && !((Object) this instanceof FileEditorScreen)
+                && MenuChatScreen.canOpenMenuChat((Screen) (Object) this)
                 && this.client != null) {
             boolean worldLoaded = this.client.world != null
                     && this.client.player != null

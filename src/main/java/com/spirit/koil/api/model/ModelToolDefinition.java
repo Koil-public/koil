@@ -16,8 +16,40 @@ public record ModelToolDefinition(
         Duration timeout,
         boolean cancellationSupported,
         boolean confirmationRequired,
-        Set<String> resultStates
+        Set<String> resultStates,
+        ToolExecutionPolicy executionPolicy
 ) {
+    /**
+     * Backward-compatible constructor. Existing registries remain conservative
+     * until they explicitly opt into speculation or preparation.
+     */
+    public ModelToolDefinition(
+            String id,
+            String description,
+            JsonObject inputSchema,
+            List<String> preconditions,
+            Set<String> sideEffects,
+            boolean reversible,
+            Duration timeout,
+            boolean cancellationSupported,
+            boolean confirmationRequired,
+            Set<String> resultStates
+    ) {
+        this(
+                id,
+                description,
+                inputSchema,
+                preconditions,
+                sideEffects,
+                reversible,
+                timeout,
+                cancellationSupported,
+                confirmationRequired,
+                resultStates,
+                ToolExecutionPolicy.conservative()
+        );
+    }
+
     public ModelToolDefinition {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("tool id is required");
@@ -29,5 +61,22 @@ public record ModelToolDefinition(
         sideEffects = sideEffects == null ? Set.of() : Set.copyOf(sideEffects);
         timeout = timeout == null || timeout.isNegative() || timeout.isZero() ? Duration.ofSeconds(30) : timeout;
         resultStates = resultStates == null ? Set.of() : Set.copyOf(resultStates);
+        executionPolicy = executionPolicy == null ? ToolExecutionPolicy.conservative() : executionPolicy;
+    }
+
+    public ModelToolDefinition withExecutionPolicy(ToolExecutionPolicy policy) {
+        return new ModelToolDefinition(
+                this.id,
+                this.description,
+                this.inputSchema,
+                this.preconditions,
+                this.sideEffects,
+                this.reversible,
+                this.timeout,
+                this.cancellationSupported,
+                this.confirmationRequired,
+                this.resultStates,
+                policy
+        );
     }
 }

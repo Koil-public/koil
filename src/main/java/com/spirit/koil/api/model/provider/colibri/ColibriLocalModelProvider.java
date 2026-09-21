@@ -7,6 +7,7 @@ import com.google.gson.JsonParser;
 import com.spirit.koil.api.model.LocalModelProvider;
 import com.spirit.koil.api.model.LocalModelOwnedProcessRegistry;
 import com.spirit.koil.api.model.LocalModelRuntimeLog;
+import com.spirit.koil.api.model.catalog.LocalModelRuntimePlatform;
 import com.spirit.koil.api.model.catalog.LocalModelReliabilityStore;
 import com.spirit.koil.api.model.catalog.ModelRuntimeCompatibility;
 import com.spirit.koil.api.model.install.LocalModelInstallationService;
@@ -42,9 +43,7 @@ import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.nio.file.Files;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -399,6 +398,21 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
             }
 
             @Override
+            public void onReasoningDelta(java.util.UUID requestId, String delta) {
+                observer.onReasoningDelta(requestId, delta);
+            }
+
+            @Override
+            public void onExposedData(java.util.UUID requestId, com.spirit.koil.api.model.ModelExposedData exposed) {
+                observer.onExposedData(requestId, exposed);
+            }
+
+            @Override
+            public void onTelemetry(java.util.UUID requestId, com.spirit.koil.api.model.ModelRuntimeTelemetry telemetry) {
+                observer.onTelemetry(requestId, telemetry);
+            }
+
+            @Override
             public void onToolCall(java.util.UUID requestId, com.spirit.koil.api.model.ModelToolCall call) {
                 observer.onState(requestId, ModelRequestState.SELECTING_TOOL, call.toolId());
                 observer.onToolCall(requestId, call);
@@ -453,11 +467,22 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
                     }
                     if (line.isEmpty()) {
                         if (data.length() > 0) {
-                            int before = decoder.text().length();
+                            int beforeActivity = decoder.streamedOutputUnits();
+                            int beforeTextUnits = decoder.streamedTextUnits();
                             decoder.accept(eventName, data.toString());
-                            if (!generatingAnnounced && decoder.text().length() > before) {
+                            if (!generatingAnnounced && decoder.streamedOutputUnits() > beforeActivity) {
                                 generatingAnnounced = true;
                                 firstToken = System.nanoTime();
+                                observer.onState(
+                                        request.id(),
+                                        decoder.streamedReasoningUnits() > 0 && decoder.streamedTextUnits() == 0
+                                                ? ModelRequestState.THINKING
+                                                : ModelRequestState.GENERATING,
+                                        decoder.streamedReasoningUnits() > 0 && decoder.streamedTextUnits() == 0
+                                                ? "reasoning"
+                                                : "writing"
+                                );
+                            } else if (generatingAnnounced && beforeTextUnits == 0 && decoder.streamedTextUnits() > 0) {
                                 observer.onState(request.id(), ModelRequestState.GENERATING, "writing");
                             }
                             if (firstToken != 0L && decoder.liveCompletionTokens() > 0) {
@@ -505,6 +530,7 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
             observer.onComplete(new StreamingModelResponse(
                     request.id(),
                     decoder.text(),
+                    decoder.reasoningText(),
                     decoder.toolCalls(),
                     usage,
                     decoder.finishReason()
@@ -559,7 +585,9 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
     private JsonObject requestPayload(StreamingModelRequest request) {
         JsonObject root = new JsonObject();
         root.addProperty("model", this.configuration.modelId());
-        root.addProperty("max_tokens", request.maximumOutputTokens());
+        if (!request.unboundedOutput()) {
+            root.addProperty("max_tokens", request.maximumOutputTokens());
+        }
         root.addProperty("stream", true);
         if (!request.systemPrompt().isBlank()) {
             root.addProperty("system", request.systemPrompt());
@@ -613,7 +641,7 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
             messages.add(entry);
         }
         root.add("messages", messages);
-        if (!request.tools().isEmpty() && capabilities().toolCalling()) {
+        if (!request.tools().isEmpty()) {
             JsonArray tools = new JsonArray();
             for (ModelToolDefinition definition : request.tools()) {
                 JsonObject tool = new JsonObject();
@@ -623,9 +651,6 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
                 tools.add(tool);
             }
             root.add("tools", tools);
-        } else if (!request.tools().isEmpty()) {
-            LocalModelRuntimeLog.write("colibri_tools_omitted",
-                    this.configuration.modelId() + " does not have engine/checkpoint tool capability");
         }
         String slot = request.metadata().get("cache_slot");
         if (slot != null && !slot.isBlank()) {
@@ -751,24 +776,11 @@ public final class ColibriLocalModelProvider implements LocalModelProvider {
     private List<String> command(int port) {
         Path executable = this.configuration.executable().toAbsolutePath().normalize();
         Path model = this.configuration.modelDirectory().toAbsolutePath().normalize();
-        List<String> command = new ArrayList<>();
-        command.add(executable.toString());
-        command.add("serve");
-        command.add("--model");
-        command.add(model.toString());
-        command.add("--host");
-        command.add("127.0.0.1");
-        command.add("--port");
-        command.add(Integer.toString(port));
-        command.add("--model-id");
-        command.add(this.configuration.modelId());
-        command.add("--max-queue");
-        command.add(Integer.toString(this.configuration.maximumQueueDepth()));
-        command.add("--queue-timeout");
-        command.add(Long.toString(this.configuration.queueTimeout().toSeconds()));
-        command.add("--kv-slots");
-        command.add(Integer.toString(this.configuration.kvSlots()));
-        return command;
+        return LocalModelRuntimePlatform.launchCommand(executable, List.of(
+                "serve", "--model", model.toString(), "--host", "127.0.0.1", "--port", Integer.toString(port),
+                "--model-id", this.configuration.modelId(), "--max-queue", Integer.toString(this.configuration.maximumQueueDepth()),
+                "--queue-timeout", Long.toString(this.configuration.queueTimeout().toSeconds()), "--kv-slots", Integer.toString(this.configuration.kvSlots())
+        ));
     }
 
     private Request.Builder authenticated(Request.Builder builder) {

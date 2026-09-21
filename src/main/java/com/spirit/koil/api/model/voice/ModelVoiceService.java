@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -53,6 +54,7 @@ public final class ModelVoiceService {
     );
     private static final ScheduledThreadPoolExecutor FLUSH_TIMER = flushTimer();
     private static final AtomicLong SPEECH_EPOCH = new AtomicLong();
+    private static final ConcurrentHashMap<UUID, StreamingSpeech> PRESENTED_STREAMS = new ConcurrentHashMap<>();
     private static final AtomicReference<Clip> ACTIVE_CLIP = new AtomicReference<>();
     private static final java.util.Set<CompletableFuture<Path>> ACTIVE_AUDIO =
             ConcurrentHashMap.newKeySet();
@@ -102,6 +104,54 @@ public final class ModelVoiceService {
         return new StreamingSpeech(SPEECH_EPOCH.get());
     }
 
+    /**
+     * Starts a voice stream whose spoken boundary follows the materialized text
+     * visible to the user. Replacing an existing stream for the same request
+     * discards its incomplete phrase buffer without cancelling unrelated audio.
+     */
+    public static StreamingSpeech beginPresentedStreaming(UUID requestId) {
+        StreamingSpeech speech = beginStreaming();
+        if (requestId == null) return speech;
+        StreamingSpeech previous = PRESENTED_STREAMS.put(requestId, speech);
+        if (previous != null && previous != speech) previous.discard();
+        return speech;
+    }
+
+    /**
+     * Advances voice only to text that has already crossed the visual
+     * materialization boundary. Calls are cheap and idempotent, so multiple HUD
+     * surfaces may report the same presented text in one frame.
+     */
+    public static boolean hasPresentedStream(UUID requestId) {
+        return requestId != null && PRESENTED_STREAMS.containsKey(requestId);
+    }
+
+    public static void syncPresentedText(UUID requestId, String presentedText) {
+        if (requestId == null) return;
+        StreamingSpeech speech = PRESENTED_STREAMS.get(requestId);
+        if (speech == null) return;
+        speech.acceptPresented(presentedText == null ? "" : presentedText);
+    }
+
+    /**
+     * Finalizes a presentation-bound stream after the complete response is
+     * actually visible (for example, after it has been inserted into chat).
+     */
+    public static void finishPresentedStreaming(UUID requestId, String visibleFinalText) {
+        if (requestId == null) return;
+        StreamingSpeech speech = PRESENTED_STREAMS.remove(requestId);
+        if (speech == null) return;
+        speech.acceptPresented(visibleFinalText == null ? "" : visibleFinalText);
+        speech.finish();
+    }
+
+    /** Drops a presentation-bound stream that will no longer become user-facing. */
+    public static void discardPresentedStreaming(UUID requestId) {
+        if (requestId == null) return;
+        StreamingSpeech speech = PRESENTED_STREAMS.remove(requestId);
+        if (speech != null) speech.discard();
+    }
+
     /** Speaks only a finalized, user-facing model answer. */
     public static void speakFinalAnswer(String answer) {
         if (answer == null || answer.isBlank() || !settings.enabled()) {
@@ -118,6 +168,10 @@ public final class ModelVoiceService {
      */
     public static void stopSpeaking(String reason) {
         SPEECH_EPOCH.incrementAndGet();
+        for (StreamingSpeech speech : List.copyOf(PRESENTED_STREAMS.values())) {
+            if (speech != null) speech.discard();
+        }
+        PRESENTED_STREAMS.clear();
         Clip clip = ACTIVE_CLIP.getAndSet(null);
         closeClip(clip);
         CancellationException cancelled = new CancellationException(
@@ -385,9 +439,30 @@ public final class ModelVoiceService {
         private final long epoch;
         private ScheduledFuture<?> pendingFlush;
         private boolean finished;
+        private String acceptedPresentedText = "";
 
         private StreamingSpeech(long epoch) {
             this.epoch = epoch;
+        }
+
+        public synchronized void acceptPresented(String fullPresentedText) {
+            if (cancelled()) {
+                stopWithoutFlush();
+                return;
+            }
+            if (this.finished) return;
+            String safe = fullPresentedText == null ? "" : fullPresentedText;
+            if (safe.equals(this.acceptedPresentedText)) return;
+            if (!safe.startsWith(this.acceptedPresentedText)) {
+                // A provider rewrite should start a fresh response round, which
+                // replaces this presentation-bound stream. Until then, never move
+                // voice beyond a visible prefix that no longer matches the screen.
+                return;
+            }
+            if (safe.length() <= this.acceptedPresentedText.length()) return;
+            String delta = safe.substring(this.acceptedPresentedText.length());
+            this.acceptedPresentedText = safe;
+            accept(delta);
         }
 
         public synchronized void accept(String delta) {

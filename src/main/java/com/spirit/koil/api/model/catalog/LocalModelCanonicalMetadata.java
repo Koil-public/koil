@@ -87,9 +87,9 @@ public record LocalModelCanonicalMetadata(
                 "",
                 "",
                 Maturity.SUPPORTED,
-                "llama_cpp_embedded",
-                type.equals("Thinking") || type.equals("Reasoning") ? "model_native" : "",
-                "llama_cpp_native",
+                legacyChatAdapter(family),
+                legacyReasoningAdapter(family, type),
+                legacyToolAdapter(family),
                 List.of(safe(quantization).isBlank() ? "GGUF" : "GGUF " + safe(quantization)),
                 runnable,
                 runnable ? "" : "No supported Koil implementation is registered."
@@ -118,6 +118,38 @@ public record LocalModelCanonicalMetadata(
             family.append(word);
         }
         return family.isEmpty() ? display : family.toString();
+    }
+
+    private static String legacyChatAdapter(String family) {
+        String normalized = safe(family).toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("qwen")) return "qwen_embedded";
+        if (normalized.contains("deepseek")) return "deepseek_embedded";
+        if (normalized.contains("gemma")) return "gemma_embedded";
+        if (normalized.contains("granite")) return "granite_embedded";
+        if (normalized.contains("glm")) return "glm_embedded";
+        if (normalized.contains("kimi") || normalized.contains("moonshot")) return "kimi_embedded";
+        if (normalized.contains("gpt-oss")) return "gpt_oss_embedded";
+        return "llama_cpp_embedded";
+    }
+
+    private static String legacyReasoningAdapter(String family, String type) {
+        String normalized = safe(family).toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("qwen3")) return "qwen_native";
+        if (normalized.contains("deepseek")) return "deepseek_native";
+        if (normalized.contains("gpt-oss")) return "gpt_oss_native";
+        return type.equals("Thinking") || type.equals("Reasoning") ? "model_native" : "";
+    }
+
+    private static String legacyToolAdapter(String family) {
+        String normalized = safe(family).toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("qwen")) return "qwen_tools";
+        if (normalized.contains("deepseek")) return "deepseek_tools";
+        if (normalized.contains("gemma")) return "gemma_tools";
+        if (normalized.contains("granite")) return "granite_tools";
+        if (normalized.contains("glm")) return "glm_tools";
+        if (normalized.contains("kimi") || normalized.contains("moonshot")) return "kimi_tools";
+        if (normalized.contains("gpt-oss")) return "gpt_oss_tools";
+        return "llama_cpp_native";
     }
 
     private static String legacyType(String display) {

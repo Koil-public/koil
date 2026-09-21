@@ -1,32 +1,33 @@
 package com.spirit.koil.api.model.format;
 
+import com.spirit.koil.api.chat.RichChatStructuralContinuation;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class RichChatModelOutputSanitizer {
-    public static final int MAXIMUM_OUTPUT_CHARACTERS = 16_384;
     private static final Pattern MASKED_LINK = Pattern.compile("\\[([^\\]\\n]{1,256})]\\(([^)\\n]{1,2048})\\)");
+    private static final Pattern ORPHAN_RENDERER_TOKEN = Pattern.compile(
+            "(?<![A-Za-z0-9_])(?:CODE|TABLE):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}:\\d+(?!\\d)"
+    );
     private static final String[] INLINE_MARKERS = {"***", "**", "__", "--", "||", "`", "*"};
 
     private RichChatModelOutputSanitizer() {
     }
 
     public static Result sanitize(String input) {
-        String normalized = input == null ? "" : input.replace("\r\n", "\n").replace('\r', '\n');
-        StringBuilder cleaned = new StringBuilder(Math.min(normalized.length(), MAXIMUM_OUTPUT_CHARACTERS));
+        String normalized = sanitizeRendererControls(input == null ? "" : input.replace("\r\n", "\n").replace('\r', '\n'));
+        StringBuilder cleaned = new StringBuilder(Math.min(normalized.length(), 65_536));
         boolean changed = false;
-        for (int index = 0; index < normalized.length() && cleaned.length() < MAXIMUM_OUTPUT_CHARACTERS; index++) {
+        for (int index = 0; index < normalized.length(); index++) {
             char value = normalized.charAt(index);
             if (value == '\n' || value == '\t' || !Character.isISOControl(value)) {
                 cleaned.append(value);
             } else {
                 changed = true;
             }
-        }
-        if (normalized.length() > MAXIMUM_OUTPUT_CHARACTERS) {
-            changed = true;
         }
         String value = sanitizeMaskedLinks(cleaned.toString());
         changed |= !value.equals(cleaned.toString());
@@ -55,7 +56,45 @@ public final class RichChatModelOutputSanitizer {
      * complete table/command-link fences may already become live Rich Chat.
      */
     public static String normalizeStreamingPreview(String input) {
-        return unwrapStructuralFences(compactChatSpacing(normalizeSoftLineBreaks(input)));
+        return unwrapStructuralFences(compactChatSpacing(normalizeSoftLineBreaks(sanitizeRendererControls(input))));
+    }
+
+    /**
+     * Removes renderer-only control glyphs from model-authored source before Rich Chat
+     * parsing. U+E380 is accepted only as a legacy structural marker and is normalized
+     * to the public `-# ` syntax. Other Koil bridge PUA markers are internal transport
+     * tokens and must never be accepted from model text, where they can surface as tofu
+     * squares or spoof renderer structure.
+     */
+    public static String sanitizeRendererControls(String input) {
+        String value = input == null ? "" : input;
+        if (value.isEmpty()) return value;
+        StringBuilder out = new StringBuilder(value.length());
+        for (int index = 0; index < value.length(); index++) {
+            char c = value.charAt(index);
+            if (c == RichChatStructuralContinuation.SUBTEXT) {
+                out.append("-# ");
+                continue;
+            }
+            // Koil's Rich Chat bridges reserve these PUA bands for parser/renderer
+            // sentinels. They are valid only after the corresponding bridge creates
+            // them, never in raw provider output.
+            if ((c >= '\uE340' && c <= '\uE3FF') || c == '\uE730' || c == '\uE731') {
+                continue;
+            }
+            if (c == '\uFFFD') {
+                // A replacement glyph communicates malformed source but drawing it in
+                // Minecraft is visually indistinguishable from the missing-glyph boxes
+                // this sanitizer is meant to prevent. Keep the text readable instead.
+                out.append('?');
+                continue;
+            }
+            out.append(c);
+        }
+        // If an internal PUA delimiter was already removed upstream, never allow its
+        // UUID transport payload to become user-visible model output. These exact tokens
+        // are generated only by Rich Chat's code/table bridges.
+        return ORPHAN_RENDERER_TOKEN.matcher(out.toString()).replaceAll("");
     }
 
     /**

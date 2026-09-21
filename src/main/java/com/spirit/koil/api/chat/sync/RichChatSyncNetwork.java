@@ -18,6 +18,8 @@ import java.util.UUID;
 public final class RichChatSyncNetwork {
     public static final Identifier CLIENT_UPLOAD_PACKET = new Identifier("koil", "rich_chat_sync_upload");
     public static final Identifier SERVER_DELIVER_PACKET = new Identifier("koil", "rich_chat_sync_deliver");
+    public static final Identifier CLIENT_LONG_COMMAND_PACKET = new Identifier("koil", "rich_chat_long_command");
+    public static final int MAX_LONG_COMMAND = 32767;
     private static final int MAX_TEXT = 32767;
     private static final int MAX_NAME = 256;
     private static final int MAX_PATH = 1024;

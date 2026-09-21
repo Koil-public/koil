@@ -23,12 +23,16 @@ import com.spirit.koil.api.automation.ktl.AutomationKtlSkillRegistry;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.model.planning.AutomationThinkingPolicy;
+import com.spirit.koil.api.model.planning.AutomationProgressGuard;
+import com.spirit.koil.api.model.planning.ValidatedAutomationPlan;
 import com.spirit.koil.api.model.planning.AutomationToolCallLatencyPolicy;
 import com.spirit.koil.api.model.planning.InformationToolCallLatencyPolicy;
 import com.spirit.koil.api.model.prompt.LocalModelAutomationPrompt;
 import com.spirit.koil.api.model.tool.ModelWorkspaceRegistry;
 import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
 import com.spirit.koil.api.model.tool.MinecraftKnowledgeModelToolRegistry;
+import com.spirit.koil.api.model.tool.MinecraftCommandModelToolRegistry;
+import com.spirit.koil.api.model.tool.DeepThoughtReadOnlyToolCoordinator;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
 import com.spirit.koil.api.model.chat.ModelGenerationChatPanel;
 import com.spirit.koil.api.model.chat.ModelRequestMetricsPresentation;
@@ -40,6 +44,7 @@ import com.spirit.koil.api.model.ManagedModelRequest;
 import com.spirit.koil.api.model.ModelConversation;
 import com.spirit.koil.api.model.ModelContextWindowState;
 import com.spirit.koil.api.model.ModelMessage;
+import com.spirit.koil.api.model.ModelObjectiveLedger;
 import com.spirit.koil.api.model.ModelRequestState;
 import com.spirit.koil.api.model.ModelActivityState;
 import com.spirit.koil.api.model.ModelExecutionEvent;
@@ -79,16 +84,46 @@ public final class LocalModelFoundationProof {
         try { ModelValidationPrompts.prompt("long", 512); }
         catch (IllegalArgumentException expected) { rejectedProbe = true; }
         require(rejectedProbe, "unknown/small context must reject the long probe");
+        proveReadOnlyAskToolBoundary();
         proveModelPresentationContracts();
         proveVoiceCatalogAndSynthesis();
         proveWorkspaceToolContracts();
         provePromptToolSelection();
+        proveOrderedTaskExecution();
         proveRichChatTablesAndSharedRegistrySuggestions();
         proveConversationBounds();
         proveNonBlockingCommandSuggestionPolling();
         proveStreamingQueueAndToolEvents();
+        proveSlowGenerationIgnoresConfiguredTimeout();
         proveCancellation();
         System.out.println("Local model foundation proof passed.");
+    }
+
+    private static void proveReadOnlyAskToolBoundary() {
+        require(LocalModelToolCatalog.informationToolsForPrompt("What is the capital of France?").isEmpty(),
+                "stable learned-knowledge question was burdened with unnecessary tool schemas");
+        var diagnosticTools = LocalModelToolCatalog.informationToolsForPrompt("search the current compiler failure docs");
+        require(diagnosticTools.stream().anyMatch(tool ->
+                        com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry.SEARCH.equals(tool.id())),
+                "fresh/external information request did not receive the narrow search capability");
+        require(diagnosticTools.size() < LocalModelToolCatalog.readOnlyInformationTools().size(),
+                "prompt-aware /ask routing regressed to the complete read-only tool catalog");
+        require(diagnosticTools.stream().noneMatch(tool -> tool.confirmationRequired()
+                        || MinecraftKnowledgeModelToolRegistry.COMMAND_TOOL_ID.equals(tool.id())
+                        || tool.id().equals("minecraft.command")
+                        || tool.id().startsWith("workspace.mkdir")
+                        || tool.id().startsWith("workspace.create")
+                        || tool.id().startsWith("workspace.copy")
+                        || tool.id().startsWith("workspace.move")
+                        || tool.id().startsWith("workspace.write")
+                        || tool.id().startsWith("workspace.append")
+                        || tool.id().startsWith("workspace.replace")
+                        || tool.id().startsWith("workspace.delete")
+                        || tool.id().startsWith("workspace.restore")
+                        || !DeepThoughtReadOnlyToolCoordinator.supports(tool.id())),
+                "conversational information tools exposed an action or command capability");
+        require(!DeepThoughtReadOnlyToolCoordinator.supports(MinecraftKnowledgeModelToolRegistry.COMMAND_TOOL_ID),
+                "conversational read-only coordinator exposed command syntax inspection");
     }
 
     private static void proveModelPresentationContracts() {
@@ -113,11 +148,11 @@ public final class LocalModelFoundationProof {
                         && ModelGenerationChatPanel.statusHighlightPixelOffset("Writing", true) == 0,
                 "empty and hierarchy-present status geometry did not remain distinct");
         var traceIndicator = ModelChatMessageBridge.indicator(
-                "-# §8├─§r §7Thought§r | I’m checking the request.\n-# §8└─§r §aResult§r | Complete."
+                "-# §8├─§r §7Thinking§r | I’m checking the request.\n-# §8└─§r §aResult§r | Complete."
         );
         var traceTooltip = ModelChatMessageBridge.traceTooltipLines(traceIndicator);
         require(traceTooltip.size() == 2
-                        && traceTooltip.get(0).getString().contains("Thought | I’m checking")
+                        && traceTooltip.get(0).getString().contains("Thinking | I’m checking")
                         && traceTooltip.get(0).getSiblings().stream().anyMatch(part -> part.getStyle().getColor() != null)
                         && traceTooltip.stream().noneMatch(line -> line.getString().contains("§") || line.getString().contains("-#")),
                 "final model message indicator did not retain a styled safe activity hierarchy");
@@ -480,8 +515,9 @@ public final class LocalModelFoundationProof {
         require(directAsk.depth() == ConversationalReasoningPolicy.Depth.DIRECT
                         && directAsk.maximumOutputTokens() <= 192,
                 "simple /ask greeting did not select the bounded direct-response path");
-        require(LocalModelSystemPrompt.directConversationPrompt().length() < 1_600
-                        && LocalModelSystemPrompt.directConversationPrompt().contains("/ask has no action tools")
+        require(LocalModelSystemPrompt.directConversationPrompt().length() < 1_800
+                        && LocalModelSystemPrompt.directConversationPrompt().contains("No tool schemas are supplied in this direct turn")
+                        && LocalModelSystemPrompt.directConversationPrompt().contains("safe tool schemas")
                         && LocalModelSystemPrompt.directConversationPrompt().contains("latest user's language"),
                 "direct /ask cold-start contract was not compact and truth-preserving");
         String directAutomationPrompt = LocalModelSystemPrompt.directAutomationToolPrompt()
@@ -496,10 +532,11 @@ public final class LocalModelFoundationProof {
                         && LocalModelSystemPrompt.directAutomationResultPrompt().contains("latest structured tool result")
                         && LocalModelSystemPrompt.directAutomationResultPrompt().contains("§aCompleted§r"),
                 "verified direct-action final response lost its compact evidence/formatting contract");
-        require(LocalModelSystemPrompt.directInformationToolPrompt().length() < 1_800
-                        && LocalModelSystemPrompt.directInformationToolPrompt().contains("exactly one supplied read-only tool")
-                        && LocalModelSystemPrompt.directInformationToolPrompt().contains("Never claim that an action occurred"),
-                "small-model read-only lookup prompt lost its compact permission/evidence contract");
+        require(LocalModelSystemPrompt.directInformationToolPrompt().length() < 2_200
+                        && LocalModelSystemPrompt.directInformationToolPrompt().contains("explicitly permitted in /ask")
+                        && LocalModelSystemPrompt.directInformationToolPrompt().contains("never create, edit, delete, move, rename")
+                        && LocalModelSystemPrompt.directInformationToolPrompt().contains("never start, cancel, reconfigure, or control Automation"),
+                "small-model safe /ask tool prompt lost its permission/evidence boundary");
         var jumpThinking = AutomationThinkingPolicy.evaluate("jump", false);
         var jumpTools = LocalModelToolCatalog.toolsForPrompt("jump", jumpThinking.includePlanTool());
         var jumpLatency = AutomationToolCallLatencyPolicy.evaluate(
@@ -701,9 +738,9 @@ public final class LocalModelFoundationProof {
         );
         require(commandSequence.stream().anyMatch(tool -> "minecraft.command".equals(tool.id())),
                 "Minecraft-only inventory/title actions did not expose the permission-bound command tool");
-        require(commandSequence.stream().anyMatch(tool ->
-                        MinecraftKnowledgeModelToolRegistry.COMMAND_TOOL_ID.equals(tool.id())),
-                "Minecraft command objective did not expose live Minecraft knowledge");
+        require(LocalModelToolCatalog.toolsForPrompt("show me command syntax").stream().anyMatch(tool ->
+                        MinecraftCommandModelToolRegistry.HELP_TOOL_ID.equals(tool.id())),
+                "Minecraft command knowledge request did not expose live Brigadier discovery");
         require(LocalModelToolCatalog.requiresFreshApproval("movement.walk_relative"),
                 "side-effecting movement did not require fresh standard-mode approval");
         require(!LocalModelToolCatalog.requiresFreshApproval(
@@ -753,6 +790,17 @@ public final class LocalModelFoundationProof {
         require(LocalModelToolCatalog.toolsForPrompt("eliminate zombie").stream()
                         .anyMatch(tool -> "entity.kill".equals(tool.id())),
                 "single-word combat synonym did not expose entity.kill");
+        var selfKill = LocalModelToolCatalog.toolsForPrompt("kill me");
+        require(selfKill.stream().anyMatch(tool -> "minecraft.command".equals(tool.id())),
+                "self-kill did not route to minecraft.command");
+        require(selfKill.stream().noneMatch(tool -> "entity.kill".equals(tool.id())),
+                "self-kill incorrectly exposed entity.kill combat automation");
+        var commandHelp = LocalModelToolCatalog.toolsForPrompt("show me the syntax for a modded command");
+        require(commandHelp.stream().anyMatch(tool -> MinecraftCommandModelToolRegistry.HELP_TOOL_ID.equals(tool.id()))
+                        && commandHelp.stream().anyMatch(tool -> MinecraftCommandModelToolRegistry.INSPECT_TOOL_ID.equals(tool.id())),
+                "command knowledge request did not expose live command discovery and validation");
+        require(LocalModelToolCatalog.requiredToolIdsForPrompt("kill me").equals(java.util.Set.of("minecraft.command")),
+                "self-kill objective ledger did not require only minecraft.command");
         require(LocalModelToolCatalog.requiredToolIdsForPrompt("grep sessionId java")
                         .contains("workspace.search"),
                 "workspace shorthand did not become a required search operation");
@@ -965,11 +1013,23 @@ public final class LocalModelFoundationProof {
                 ModelRequestState.OBSERVING_RESULT, ModelActivityState.OBSERVING,
                 "minecraft.knowledge — completed", resultData, System.currentTimeMillis()
         ));
+        JsonObject skillData = new JsonObject();
+        skillData.addProperty("toolId", "skill.search");
+        skillData.addProperty("skillId", "skill.proof.example");
+        ModelGenerationHudState.appendEvent(hudRequest, new ModelExecutionEvent(
+                hudRequest, "proof", "skill-proof", ModelExecutionEvent.Type.TOOL_STARTED,
+                ModelRequestState.INSPECTING, ModelActivityState.DISCOVERING,
+                "Searching installed Skills", skillData, System.currentTimeMillis()
+        ));
         var snapshot = ModelGenerationHudState.visibleSnapshot();
         require(snapshot != null && snapshot.automationRequest(),
                 "generation HUD lost the request mode");
         require(snapshot.activity().contains("Inspect the active command tree"),
                 "generation HUD did not preserve visible activity");
+        require(snapshot.events().stream().anyMatch(event ->
+                        event.type() == ModelGenerationHudState.ActivityEventType.SKILL_START
+                                && event.summary().contains("Searching installed Skills")),
+                "skill-backed capability activity was not classified as SKILL");
         require(snapshot.activity().contains("Tool")
                         && snapshot.activity().contains("Minecraft Knowledge")
                         && snapshot.activity().contains("Request")
@@ -1203,6 +1263,182 @@ public final class LocalModelFoundationProof {
         }
     }
 
+    private static void proveSlowGenerationIgnoresConfiguredTimeout() throws Exception {
+        FakeLocalModelProvider provider = new FakeLocalModelProvider(30L);
+        provider.fixedResponse("slow but valid model output");
+        try (LocalModelRuntimeManager manager = new LocalModelRuntimeManager(2)) {
+            manager.registerProvider(provider);
+            Capture capture = new Capture();
+            StreamingModelRequest slowRequest = new StreamingModelRequest(
+                    UUID.randomUUID(),
+                    "timeout-proof",
+                    "Proof system prompt",
+                    List.of(ModelMessage.user("think as long as needed")),
+                    List.of(),
+                    StreamingModelRequest.UNBOUNDED_OUTPUT_TOKENS,
+                    Duration.ofMillis(5L),
+                    Map.of("source", "timeout-proof")
+            );
+            StreamingModelResponse response = manager.submit(slowRequest, capture)
+                    .completion().get(5L, TimeUnit.SECONDS);
+            require("slow but valid model output".equals(response.text()),
+                    "configured request timeout incorrectly terminated active model generation");
+            require(capture.states.contains(ModelRequestState.COMPLETED),
+                    "slow generation did not reach a provider terminal state");
+        }
+    }
+
+    private static void proveOrderedTaskExecution() {
+        ModelObjectiveLedger ledger = ModelObjectiveLedger.parse(
+                "walk, then jump, then put me in creative mode"
+        );
+        require(ledger.totalTaskCount() == 3,
+                "ordered task ledger did not preserve all three requested actions");
+        require(ledger.currentTaskIndex() == 1
+                        && ledger.pendingToolIds().contains("movement.walk_relative"),
+                "ordered task ledger did not start at walk");
+        require(!ledger.gate("player.jump").allowed(),
+                "ordered task gate allowed jump before walk completed");
+        require(!ledger.gate("minecraft.command").allowed(),
+                "ordered task gate allowed creative-mode command before earlier tasks completed");
+
+        ValidatedAutomationPlan outOfOrder = new ValidatedAutomationPlan(
+                "ordered-proof-bad", "walk then jump",
+                List.of(
+                        new ValidatedAutomationPlan.Step(
+                                "ordered-proof-bad-1", 1, "player.jump", new JsonObject(), "", List.of(), "", "", "side_effect"
+                        ),
+                        new ValidatedAutomationPlan.Step(
+                                "ordered-proof-bad-2", 2, "movement.walk_relative", new JsonObject(), "", List.of(), "", "", "side_effect"
+                        )
+                )
+        );
+        require(!ledger.alignPlan(outOfOrder).valid(),
+                "ordered plan validation accepted a future task before the current task");
+
+        ModelToolCall walkCall = new ModelToolCall("walk-proof", "movement.walk_relative", new JsonObject());
+        require(ledger.bindCall(walkCall).bound(), "walk call did not bind to current task occurrence");
+        ledger.record(new ModelToolResult("walk-proof", "movement.walk_relative", "completed", new JsonObject(), "", ""));
+        require(ledger.currentTaskIndex() == 2 && ledger.pendingToolIds().contains("player.jump"),
+                "walk completion did not advance exactly one task");
+        ModelToolCall jumpCall = new ModelToolCall("jump-proof", "player.jump", new JsonObject());
+        require(ledger.bindCall(jumpCall).bound(), "jump call did not bind to current task occurrence");
+        ledger.record(new ModelToolResult("jump-proof", "player.jump", "completed", new JsonObject(), "", ""));
+        require(ledger.currentTaskIndex() == 3 && ledger.pendingToolIds().contains("minecraft.command"),
+                "jump completion did not advance to the creative-mode task");
+        ModelToolCall creativeCall = new ModelToolCall("creative-proof", "minecraft.command", new JsonObject());
+        require(ledger.bindCall(creativeCall).bound(), "creative call did not bind to current task occurrence");
+        ledger.record(new ModelToolResult("creative-proof", "minecraft.command", "completed", new JsonObject(), "", ""));
+        require(ledger.allCompleted(),
+                "ordered task ledger did not require/complete every requested action");
+
+        ModelObjectiveLedger mixedChain = ModelObjectiveLedger.parse(
+                "jump, then set the time to day, then give me 4 apples."
+        );
+        require(mixedChain.totalTaskCount() == 3,
+                "mixed ordered tool chain did not preserve all requested tasks");
+        require(mixedChain.currentTaskIndex() == 1 && mixedChain.pendingToolIds().contains("player.jump"),
+                "mixed ordered tool chain did not start at jump");
+        ModelToolCall mixedJump = new ModelToolCall("mixed-jump", "player.jump", new JsonObject());
+        require(mixedChain.bindCall(mixedJump).bound(), "mixed jump did not bind");
+        mixedChain.record(new ModelToolResult("mixed-jump", "player.jump", "completed", new JsonObject(), "", ""));
+        require(mixedChain.currentTaskIndex() == 2 && mixedChain.pendingToolIds().contains("world.set_time"),
+                "mixed chain did not advance from jump to world time");
+        ModelToolCall mixedTime = new ModelToolCall("mixed-time", "world.set_time", new JsonObject());
+        require(mixedChain.bindCall(mixedTime).bound(), "mixed world-time step did not bind");
+        mixedChain.record(new ModelToolResult("mixed-time", "world.set_time", "completed", new JsonObject(), "", ""));
+        require(mixedChain.currentTaskIndex() == 3 && mixedChain.pendingToolIds().contains("minecraft.command"),
+                "mixed chain did not advance from world time to give command");
+
+        ModelObjectiveLedger repeated = ModelObjectiveLedger.parse("jump, then jump");
+        require(repeated.totalTaskCount() == 2, "repeated identical capability collapsed into one task");
+        ModelToolCall repeatedOne = new ModelToolCall("jump-1", "player.jump", new JsonObject());
+        require(repeated.bindCall(repeatedOne).bound(), "first repeated jump did not bind");
+        repeated.record(new ModelToolResult("jump-1", "player.jump", "completed", new JsonObject(), "", ""));
+        require(!repeated.allCompleted() && repeated.currentTaskIndex() == 2,
+                "one jump incorrectly satisfied both jump occurrences");
+        ModelToolCall repeatedTwo = new ModelToolCall("jump-2", "player.jump", new JsonObject());
+        require(repeated.bindCall(repeatedTwo).bound(), "second repeated jump did not bind");
+        repeated.record(new ModelToolResult("jump-2", "player.jump", "completed", new JsonObject(), "", ""));
+        require(repeated.allCompleted(), "second repeated jump occurrence could not complete independently");
+
+        ModelObjectiveLedger boundOnly = ModelObjectiveLedger.parse("jump, then jump");
+        boundOnly.record(new ModelToolResult("unbound-jump", "player.jump", "completed", new JsonObject(), "", ""));
+        require(boundOnly.currentTaskIndex() == 1,
+                "an unbound matching tool result incorrectly advanced the ordered task ledger");
+
+        ModelObjectiveLedger unresolved = ModelObjectiveLedger.parse("perform my custom action, then jump");
+        require(unresolved.totalTaskCount() == 2 && unresolved.currentTaskIndex() == 1,
+                "unrecognized task clause was silently dropped from the ordered objective");
+        require(unresolved.shouldGroundAgainstCurrentTask("minecraft.command"),
+                "unresolved current task did not expose task-local grounding for a viable consequential capability");
+        require(!unresolved.shouldGroundAgainstCurrentTask("player.jump"),
+                "future task capability was incorrectly grounded against the unresolved current task");
+        ModelToolCall lateBound = new ModelToolCall("late-bound", "minecraft.command", new JsonObject());
+        require(unresolved.bindCall(lateBound).bound(),
+                "current unresolved task could not late-bind a concrete consequential capability");
+        unresolved.record(new ModelToolResult("late-bound", "minecraft.command", "completed", new JsonObject(), "", ""));
+        require(unresolved.currentTaskIndex() == 2 && unresolved.pendingToolIds().contains("player.jump"),
+                "late-bound task completion did not advance to the next preserved occurrence");
+
+        StringBuilder many = new StringBuilder();
+        for (int index = 0; index < 1_000; index++) {
+            if (index > 0) many.append(" then ");
+            many.append("jump");
+        }
+        ModelObjectiveLedger large = ModelObjectiveLedger.parse(many.toString());
+        require(large.totalTaskCount() == 1_000,
+                "ordered task ledger imposed an unintended small total-task cap");
+        require(large.promptSummary().contains("later tasks not expanded here"),
+                "large task ledger did not window provider-facing context");
+
+        ModelObjectiveLedger repeatedCommands = ModelObjectiveLedger.parse("kill me, then kill me, then kill me");
+        require(repeatedCommands.totalTaskCount() == 3,
+                "three explicit identical command occurrences were not preserved as three ordered tasks");
+        require(repeatedCommands.snapshot().stream().allMatch(value -> "minecraft.command".equals(value.toolId())),
+                "repeated self-kill occurrences did not all resolve to minecraft.command");
+
+        AutomationProgressGuard progress = new AutomationProgressGuard();
+        ModelToolCall jump = new ModelToolCall("repeat-jump", "player.jump", new JsonObject());
+        require(progress.before(jump).allowed(), "first repeated-task action was unexpectedly blocked");
+        progress.record(jump, new ModelToolResult("repeat-jump", "player.jump", "completed", new JsonObject(), "", ""));
+        require(progress.before(jump).allowed(),
+                "a successful tool result was incorrectly treated as proof that a broader objective was complete");
+        progress.record(jump, new ModelToolResult("repeat-jump", "player.jump", "completed", new JsonObject(), "", ""));
+        require(!progress.before(jump).allowed(),
+                "unchanged same-occurrence action was not stopped after the bounded recovery retry");
+
+        JsonObject reached = new JsonObject();
+        JsonObject reachedStructured = new JsonObject();
+        reachedStructured.addProperty("objectiveReached", true);
+        reached.add("structuredResult", reachedStructured);
+        AutomationProgressGuard explicitReached = new AutomationProgressGuard();
+        ModelToolCall reachedCall = new ModelToolCall("explicit-reached", "player.jump", new JsonObject());
+        require(explicitReached.before(reachedCall).allowed(), "explicit objective-reached probe was blocked initially");
+        explicitReached.record(reachedCall,
+                new ModelToolResult("explicit-reached", "player.jump", "completed", reached, "", ""));
+        require(!explicitReached.before(reachedCall).allowed(),
+                "explicit objectiveReached=true did not close the current occurrence");
+
+        progress.nextTask();
+        require(progress.before(jump).allowed(),
+                "new ordered task could not legitimately repeat the exact same capability/arguments");
+
+        // Real executor ordering: the ledger may advance/clear the progress
+        // scope inside recordToolResult() before AutomationProgressGuard.record()
+        // sees the just-finished async result. That old result must stay bound
+        // to its launch occurrence instead of poisoning the new occurrence.
+        AutomationProgressGuard asyncProgress = new AutomationProgressGuard();
+        ModelToolCall firstKill = new ModelToolCall("kill-occurrence-1", "minecraft.command", commandArguments("kill @s"));
+        require(asyncProgress.before(firstKill).allowed(), "first repeated command occurrence was blocked");
+        asyncProgress.nextTask();
+        asyncProgress.record(firstKill,
+                new ModelToolResult("kill-occurrence-1", "minecraft.command", "completed", new JsonObject(), "", ""));
+        ModelToolCall secondKill = new ModelToolCall("kill-occurrence-2", "minecraft.command", commandArguments("kill @s"));
+        require(asyncProgress.before(secondKill).allowed(),
+                "late result from the previous occurrence poisoned an identical next task");
+    }
+
     private static void proveCancellation() throws Exception {
         FakeLocalModelProvider provider = new FakeLocalModelProvider(30L);
         provider.fixedResponse("this response is intentionally long enough to cancel during streaming");
@@ -1240,6 +1476,12 @@ public final class LocalModelFoundationProof {
                 Duration.ofSeconds(3),
                 Map.of("source", "proof")
         );
+    }
+
+    private static JsonObject commandArguments(String command) {
+        JsonObject arguments = new JsonObject();
+        arguments.addProperty("command", command);
+        return arguments;
     }
 
     private static void require(boolean condition, String message) {

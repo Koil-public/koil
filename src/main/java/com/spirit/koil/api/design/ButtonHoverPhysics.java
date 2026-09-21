@@ -1,6 +1,6 @@
 package com.spirit.koil.api.design;
 
-import com.spirit.koil.api.design.particle.KoilUiParticleEngine;
+import com.spirit.koil.api.design.particle.UiParticleEngine;
 import net.minecraft.client.gui.DrawContext;
 
 /**
@@ -8,10 +8,10 @@ import net.minecraft.client.gui.DrawContext;
  *
  * <p>The original button-facing API is intentionally retained so current
  * screens do not need to know about particle registry or simulation details.
- * New UI code can use {@link KoilUiParticleEngine} directly.</p>
+ * New UI code can use {@link UiParticleEngine} directly.</p>
  */
 public final class ButtonHoverPhysics {
-    private final KoilUiParticleEngine engine = new KoilUiParticleEngine();
+    private final UiParticleEngine engine = new UiParticleEngine();
 
     public void reset() {
         engine.reset();
@@ -46,7 +46,7 @@ public final class ButtonHoverPhysics {
         return engine.getCurrentEffectId();
     }
 
-    public KoilUiParticleEngine engine() {
+    public UiParticleEngine engine() {
         return engine;
     }
 }

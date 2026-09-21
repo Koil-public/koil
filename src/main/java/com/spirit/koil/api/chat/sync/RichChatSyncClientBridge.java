@@ -2,7 +2,6 @@ package com.spirit.koil.api.chat.sync;
 
 import com.spirit.koil.api.chat.RichChatAttachment;
 import com.spirit.koil.api.chat.RichChatMessageData;
-import com.spirit.koil.api.chat.RichChatScope;
 import com.spirit.koil.api.chat.LocalOverflowChatBridge;
 import com.spirit.koil.api.chat.RichChatPreviewFormatter;
 import com.spirit.koil.api.chat.LocalMultilineChatBridge;
@@ -35,6 +34,37 @@ public final class RichChatSyncClientBridge {
 
     public static boolean canSync() {
         return ClientPlayNetworking.canSend(RichChatSyncNetwork.CLIENT_UPLOAD_PACKET);
+    }
+
+    /**
+     * Returns whether the connected server understands Koil's long-command packet.
+     * This is intentionally separate from rich-message sync so callers can fall back
+     * without assuming every Koil networking feature is available remotely.
+     */
+    public static boolean canSendLongCommand() {
+        return ClientPlayNetworking.canSend(RichChatSyncNetwork.CLIENT_LONG_COMMAND_PACKET);
+    }
+
+    /**
+     * Sends one command body without a leading slash over Koil's packet channel.
+     * The server executes it with the sending player's normal command source, so
+     * permissions and Brigadier validation remain authoritative on the server.
+     */
+    public static boolean sendLongCommand(String command) {
+        if (command == null || !canSendLongCommand()) {
+            return false;
+        }
+        String normalized = command.trim();
+        while (normalized.startsWith("/")) {
+            normalized = normalized.substring(1).trim();
+        }
+        if (normalized.isBlank() || normalized.length() > RichChatSyncNetwork.MAX_LONG_COMMAND) {
+            return false;
+        }
+        PacketByteBuf buffer = PacketByteBufs.create();
+        buffer.writeString(normalized, RichChatSyncNetwork.MAX_LONG_COMMAND);
+        ClientPlayNetworking.send(RichChatSyncNetwork.CLIENT_LONG_COMMAND_PACKET, buffer);
+        return true;
     }
 
     public static void send(RichChatMessageData message) {

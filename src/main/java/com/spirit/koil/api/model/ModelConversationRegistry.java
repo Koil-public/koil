@@ -10,6 +10,7 @@ public final class ModelConversationRegistry {
     private final Map<String, ModelConversation> conversations = new ConcurrentHashMap<>();
     private final int maximumMessages;
     private final int maximumCharacters;
+    private final java.util.concurrent.atomic.AtomicLong resetEpoch = new java.util.concurrent.atomic.AtomicLong();
 
     public ModelConversationRegistry(int maximumMessages, int maximumCharacters) {
         this.maximumMessages = Math.max(2, maximumMessages);
@@ -29,10 +30,17 @@ public final class ModelConversationRegistry {
         if (conversation != null) {
             conversation.clear();
         }
+        this.resetEpoch.incrementAndGet();
     }
 
     public void clearAll() {
         this.conversations.values().forEach(ModelConversation::clear);
         this.conversations.clear();
+        this.resetEpoch.incrementAndGet();
+    }
+
+    /** Changes only when an explicit conversation reset occurs. */
+    public long resetEpoch() {
+        return this.resetEpoch.get();
     }
 }

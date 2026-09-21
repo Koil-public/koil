@@ -153,7 +153,7 @@ public final class AutomationModeController {
         var settings = ModelExperimentalFeatures.snapshot();
         java.util.ArrayList<String> names = new java.util.ArrayList<>(6);
         if (settings.persistentConversationHistory()) names.add("Persistent Conversation History");
-        if (settings.persistentAssociativeMemory()) names.add("Persistent Associative Memory");
+        if (settings.persistentKnowledge()) names.add("Persistent Knowledge");
         if (settings.expertPrefetchEnabled()) names.add("Expert Prefetch");
         if (settings.completionModeEnabled()) names.add("Completion Mode");
         if (settings.noFailEnabled()) names.add("No-Fail");

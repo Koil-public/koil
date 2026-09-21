@@ -14,6 +14,21 @@ public final class LocalModelCatalogProof {
 
     public static void main(String[] args) throws Exception {
         require(LocalModelCatalog.entries().size() > 100, "expanded canonical roster was not loaded");
+        require(LocalModelCatalog.entries().stream().anyMatch(entry -> entry.canonical().architecture()
+                        == LocalModelCanonicalMetadata.Architecture.EMBEDDING),
+                "catalog must retain specialized embedding metadata");
+        require(LocalModelCatalog.generationEntries().stream().noneMatch(entry -> {
+                    LocalModelCanonicalMetadata.Architecture architecture = entry.canonical().architecture();
+                    return architecture == LocalModelCanonicalMetadata.Architecture.EMBEDDING
+                            || architecture == LocalModelCanonicalMetadata.Architecture.RERANKER;
+                }),
+                "embedding and reranker entries must not appear in generation selection");
+        LocalModelCatalogEntry embedding = LocalModelCatalog.find("hf-qwen-qwen3-embedding-4b").orElseThrow();
+        require(embedding.runnable(), "pinned embedding GGUF must use the existing installer path");
+        require(embedding.canonical().architecture() == LocalModelCanonicalMetadata.Architecture.EMBEDDING,
+                "pinned embedding GGUF lost its specialized role");
+        require(LocalModelCatalog.generationEntries().stream().noneMatch(entry -> entry.id().equals(embedding.id())),
+                "pinned embedding GGUF leaked into generation selection");
         Set<String> ids = new HashSet<>();
         int qwenChoices = 0;
         int gptOssChoices = 0;
@@ -40,6 +55,8 @@ public final class LocalModelCatalogProof {
                 LocalModelRuntimeResolver.Resolution resolution = LocalModelRuntimeResolver.resolve(entry);
                 require(resolution.available(), "runnable model had no runtime resolution");
                 ModelRuntimeCompatibility selected = resolution.selected();
+                boolean embeddingRole = entry.canonical().architecture()
+                        == LocalModelCanonicalMetadata.Architecture.EMBEDDING;
                 if ("colibri".equals(selected.providerId())) {
                     colibriChoices++;
                     require(selected.installsRepositorySnapshot(),
@@ -51,15 +68,23 @@ public final class LocalModelCatalogProof {
                 } else {
                     require("llama_cpp".equals(selected.providerId()),
                             "runnable text model resolved to an unknown provider");
-                    require(entry.contextTokens() == 32_768, "verified llama.cpp context metadata drifted");
+                    require(entry.contextTokens() == (embeddingRole ? 40_960 : 32_768),
+                            "verified llama.cpp context metadata drifted");
                 }
-                require(entry.capabilityTags().contains(LocalModelCapabilityTag.CHAT),
-                        "runnable local text model omitted the chat capability tag");
+                require(embeddingRole
+                                ? !entry.capabilityTags().contains(LocalModelCapabilityTag.CHAT)
+                                : entry.capabilityTags().contains(LocalModelCapabilityTag.CHAT),
+                        "specialized embedding role leaked into chat capability selection");
+                if (embeddingRole) {
+                    require(selected.protocolCapabilities().contains("openai_embeddings"),
+                            "embedding role omitted the dedicated llama.cpp endpoint protocol");
+                }
                 if (entry.toolCalling()) {
                     require(entry.capabilityTags().contains(LocalModelCapabilityTag.AUTOMATION_TOOLS),
                             "tool-capable runnable model omitted the Automation tools tag");
                 }
-                require(entry.complexReasoningEstimatePercent() > 0, "runnable catalog reasoning estimate was missing");
+                require(embeddingRole || entry.complexReasoningEstimatePercent() > 0,
+                        "runnable catalog reasoning estimate was missing");
             } else {
                 unavailableChoices++;
                 require(entry.artifacts().isEmpty(), "unavailable catalog entry exposed an unverified download");
@@ -72,7 +97,8 @@ public final class LocalModelCatalogProof {
                 require(artifact.sha256().length() == 64, "artifact digest was incomplete");
             });
             String id = entry.id();
-            if (entry.runnable()) {
+            if (entry.runnable() && entry.canonical().architecture()
+                    != LocalModelCanonicalMetadata.Architecture.EMBEDDING) {
                 require(!id.contains("-vl") && !id.contains("audio") && !id.contains("embedding")
                                 && !id.contains("reranker") && !id.endsWith("-base"),
                         "non-text-generation model leaked into the runnable local chat/tool catalog");

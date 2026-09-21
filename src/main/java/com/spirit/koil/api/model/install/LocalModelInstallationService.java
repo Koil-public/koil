@@ -3,11 +3,17 @@ package com.spirit.koil.api.model.install;
 import com.spirit.koil.api.model.BinaryStorageFormatter;
 import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
+import com.spirit.koil.api.model.catalog.EmbeddingModelSelectionStore;
 import com.spirit.koil.api.model.catalog.LocalModelRuntimeResolver;
 import com.spirit.koil.api.model.catalog.LocalModelSelection;
 import com.spirit.koil.api.model.catalog.LocalModelSelectionStore;
 import com.spirit.koil.api.model.catalog.ModelArtifact;
+import com.spirit.koil.api.model.catalog.ModelArtifactInspection;
+import com.spirit.koil.api.model.catalog.ModelArtifactInspector;
 import com.spirit.koil.api.model.catalog.ModelRuntimeCompatibility;
+import com.spirit.koil.api.model.provider.llamacpp.LlamaCppComputeMode;
+import com.spirit.koil.api.model.provider.llamacpp.LlamaCppComputeSettings;
+import com.spirit.koil.api.model.provider.llamacpp.LlamaCppComputeSettingsStore;
 import com.spirit.koil.api.util.file.KoilInstancePaths;
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
@@ -17,22 +23,18 @@ import okhttp3.ResponseBody;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
-import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -40,9 +42,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 public final class LocalModelInstallationService {
     public static final Path ROOT = KoilInstancePaths.modelRoot();
@@ -51,6 +50,7 @@ public final class LocalModelInstallationService {
     private static final long STORAGE_HEADROOM = 1024L * 1024L * 1024L;
     private static final LocalModelInstallationService INSTANCE = new LocalModelInstallationService();
     private final ManagedRuntimeInstaller runtimeInstaller = new ManagedRuntimeInstaller();
+    private final LlamaCppMetalRuntimeInstaller metalRuntimeInstaller = new LlamaCppMetalRuntimeInstaller();
     private final HuggingFaceSnapshotInstaller snapshotInstaller = new HuggingFaceSnapshotInstaller();
 
     private final OkHttpClient http = new OkHttpClient.Builder()
@@ -123,6 +123,169 @@ public final class LocalModelInstallationService {
         return true;
     }
 
+    /**
+     * Resolves the runtime variant needed by the requested llama.cpp compute mode.
+     * The official upstream Intel-macOS archive is CPU-only, so GPU/hybrid on
+     * that platform uses Koil's separately staged, exact-commit Metal build.
+     */
+    public synchronized CompletableFuture<LocalModelSelection> ensureSelectedRuntimeForCompute(
+            LocalModelSelection selected,
+            LlamaCppComputeSettings computeSettings
+    ) {
+        LlamaCppComputeSettings settings = computeSettings == null
+                ? LlamaCppComputeSettings.defaults()
+                : computeSettings;
+        if (selected != null
+                && selected.complete()
+                && ManagedRuntimeCatalog.LLAMA_CPP_RUNTIME_ID.equals(selected.runtimeId())
+                && settings.mode() != LlamaCppComputeMode.CPU
+                && this.metalRuntimeInstaller.requiredForCurrentPlatform()) {
+            if (this.snapshot.state().active()) {
+                return CompletableFuture.failedFuture(new IllegalStateException(
+                        "Another model installation operation is already active."));
+            }
+            this.cancellation.set(false);
+            update(ModelInstallationState.CHECKING, selected.catalogId(),
+                    "Checking Intel macOS Metal runtime.", "llama.cpp " + LlamaCppMetalRuntimeInstaller.VERSION, 0L, 0L);
+            CompletableFuture<LocalModelSelection> result = new CompletableFuture<>();
+            this.worker.execute(() -> {
+                try {
+                    Files.createDirectories(RUNTIME_ROOT);
+                    ManagedRuntimeInstallation runtime = this.metalRuntimeInstaller.ensureInstalled(
+                            RUNTIME_ROOT,
+                            (stage, detail, file, done, totalBytes) -> {
+                                ModelInstallationState state = switch (stage) {
+                                    case "downloading" -> ModelInstallationState.DOWNLOADING_RUNTIME;
+                                    case "building" -> ModelInstallationState.BUILDING_RUNTIME;
+                                    case "extracting" -> ModelInstallationState.EXTRACTING_RUNTIME;
+                                    default -> ModelInstallationState.CHECKING;
+                                };
+                                update(state, selected.catalogId(), detail, file, Math.max(0L, done), Math.max(0L, totalBytes));
+                            },
+                            () -> this.cancellation.get()
+                    );
+                    makeExecutable(runtime.executable());
+                    LocalModelSelection refreshed = withRuntimeExecutable(selected, runtime.executable());
+                    LocalModelSelection current = LocalModelSelectionStore.load();
+                    if (sameSelection(current, selected)) {
+                        LocalModelSelectionStore.save(refreshed);
+                    }
+                    update(ModelInstallationState.READY, selected.catalogId(),
+                            "Intel macOS Metal runtime is ready.", runtime.executable().getFileName().toString(), 0L, 0L);
+                    result.complete(refreshed);
+                } catch (ManagedRuntimeInstaller.CancelledException cancelled) {
+                    update(ModelInstallationState.CANCELLED, selected.catalogId(),
+                            "Metal runtime build was cancelled. The previous runtime remains selected.", "", 0L, 0L);
+                    result.completeExceptionally(new IllegalStateException("Metal runtime build was cancelled.", cancelled));
+                } catch (Exception failure) {
+                    update(ModelInstallationState.FAILED, selected.catalogId(), message(failure), "", 0L, 0L);
+                    result.completeExceptionally(failure);
+                }
+            });
+            return result;
+        }
+        return ensureSelectedRuntimeCurrent(selected);
+    }
+
+    /**
+     * Refreshes only the managed runtime for an already-selected model. This is
+     * used when a compute-mode change requires a GPU-capable llama.cpp build;
+     * the GGUF itself is neither downloaded nor rewritten.
+     */
+    public synchronized CompletableFuture<LocalModelSelection> ensureSelectedRuntimeCurrent(LocalModelSelection selected) {
+        if (selected == null || !selected.complete()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("a complete model selection is required"));
+        }
+        if (this.snapshot.state().active()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Another model installation operation is already active."));
+        }
+        ManagedRuntimeArtifact expected = ManagedRuntimeCatalog.current(selected.runtimeId()).orElse(null);
+        if (expected == null) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "No verified managed runtime exists for " + selected.runtimeId() + " on this platform."));
+        }
+        this.cancellation.set(false);
+        update(ModelInstallationState.CHECKING, selected.catalogId(),
+                "Checking the selected managed runtime.", expected.fileName(), 0L, expected.sizeBytes());
+        CompletableFuture<LocalModelSelection> result = new CompletableFuture<>();
+        this.worker.execute(() -> {
+            try {
+                Files.createDirectories(RUNTIME_ROOT);
+                ManagedRuntimeInstallation runtime = this.runtimeInstaller.installed(selected.runtimeId(), RUNTIME_ROOT);
+                if (runtime == null) {
+                    runtime = this.runtimeInstaller.ensureInstalled(
+                            selected.runtimeId(),
+                            RUNTIME_ROOT,
+                            (stage, detail, file, done, totalBytes) -> {
+                                ModelInstallationState state = switch (stage) {
+                                    case "downloading" -> ModelInstallationState.DOWNLOADING_RUNTIME;
+                                    case "extracting" -> ModelInstallationState.EXTRACTING_RUNTIME;
+                                    case "building" -> ModelInstallationState.BUILDING_RUNTIME;
+                                    default -> ModelInstallationState.EXTRACTING_RUNTIME;
+                                };
+                                update(state, selected.catalogId(), detail, file, Math.max(0L, done), expected.sizeBytes());
+                            },
+                            () -> this.cancellation.get()
+                    );
+                }
+                makeExecutable(runtime.executable());
+                LocalModelSelection refreshed = new LocalModelSelection(
+                        selected.catalogId(),
+                        selected.providerId(),
+                        selected.runtimeId(),
+                        selected.architectureId(),
+                        selected.modelId(),
+                        runtime.executable(),
+                        selected.installationRoot(),
+                        selected.modelPath(),
+                        selected.tokenizerId(),
+                        selected.runtimeProfileId(),
+                        selected.contextTokens()
+                );
+                LocalModelSelection current = LocalModelSelectionStore.load();
+                if (sameSelection(current, selected)) {
+                    LocalModelSelectionStore.save(refreshed);
+                }
+                update(ModelInstallationState.READY, selected.catalogId(),
+                        "Managed runtime is current.", expected.fileName(), expected.sizeBytes(), expected.sizeBytes());
+                result.complete(refreshed);
+            } catch (ManagedRuntimeInstaller.CancelledException cancelled) {
+                update(ModelInstallationState.CANCELLED, selected.catalogId(),
+                        "Runtime update was cancelled. The previous runtime remains intact.", expected.fileName(), 0L, expected.sizeBytes());
+                result.completeExceptionally(new IllegalStateException("Runtime update was cancelled.", cancelled));
+            } catch (Exception failure) {
+                update(ModelInstallationState.FAILED, selected.catalogId(), message(failure), expected.fileName(), 0L, expected.sizeBytes());
+                result.completeExceptionally(failure);
+            }
+        });
+        return result;
+    }
+
+    private static LocalModelSelection withRuntimeExecutable(LocalModelSelection selected, Path executable) {
+        return new LocalModelSelection(
+                selected.catalogId(),
+                selected.providerId(),
+                selected.runtimeId(),
+                selected.architectureId(),
+                selected.modelId(),
+                executable.toAbsolutePath().normalize(),
+                selected.installationRoot(),
+                selected.modelPath(),
+                selected.tokenizerId(),
+                selected.runtimeProfileId(),
+                selected.contextTokens()
+        );
+    }
+
+    private static boolean sameSelection(LocalModelSelection left, LocalModelSelection right) {
+        return left != null && right != null
+                && left.catalogId().equals(right.catalogId())
+                && left.providerId().equals(right.providerId())
+                && left.runtimeId().equals(right.runtimeId())
+                && left.modelId().equals(right.modelId())
+                && java.util.Objects.equals(left.modelPath(), right.modelPath());
+    }
+
     public boolean cancel() {
         if (!this.snapshot.state().active() || !this.cancellation.compareAndSet(false, true)) {
             return false;
@@ -180,6 +343,12 @@ public final class LocalModelInstallationService {
         ManagedRuntimeInstallation runtime = compat == null
                 ? null
                 : this.runtimeInstaller.installed(compat.runtimeId(), RUNTIME_ROOT);
+        if (compat != null
+                && "llama_cpp".equals(compat.providerId())
+                && LlamaCppComputeSettingsStore.load().mode() != LlamaCppComputeMode.CPU) {
+            ManagedRuntimeInstallation metal = this.metalRuntimeInstaller.installed(RUNTIME_ROOT);
+            if (metal != null) runtime = metal;
+        }
         if (compat == null || runtime == null) {
             return LocalModelSelection.none();
         }
@@ -187,18 +356,31 @@ public final class LocalModelInstallationService {
         Path modelPath = compat.artifactFormat() == com.spirit.koil.api.model.catalog.ModelArtifactFormat.GGUF_FILE
                 ? directory.resolve(entry.primaryFileName()).toAbsolutePath().normalize()
                 : directory.toAbsolutePath().normalize();
+        ModelArtifactInspection inspection = ModelArtifactInspector.inspect(modelPath, compat.artifactFormat());
+        String architectureId = compat.architectureId();
+        String tokenizerFamily = compat.tokenizerFamily();
+        int contextTokens = compat.maximumContextTokens() > 0 ? compat.maximumContextTokens() : entry.contextTokens();
+        if (inspection.present()) {
+            if (!inspection.architectureId().isBlank()) {
+                architectureId = compat.artifactFormat() == com.spirit.koil.api.model.catalog.ModelArtifactFormat.GGUF_FILE
+                        ? "gguf/" + inspection.architectureId()
+                        : inspection.architectureId();
+            }
+            if (!inspection.tokenizerFamily().isBlank()) tokenizerFamily = inspection.tokenizerFamily();
+            if (inspection.contextTokens() > 0) contextTokens = inspection.contextTokens();
+        }
         return new LocalModelSelection(
                 entry.id(),
                 compat.providerId(),
                 compat.runtimeId(),
-                compat.architectureId(),
+                architectureId,
                 entry.modelId(),
                 runtime.executable(),
                 directory.toAbsolutePath().normalize(),
                 modelPath,
-                compat.tokenizerFamily(),
+                tokenizerFamily,
                 "",
-                compat.maximumContextTokens() > 0 ? compat.maximumContextTokens() : entry.contextTokens()
+                contextTokens
         );
     }
 
@@ -207,12 +389,16 @@ public final class LocalModelInstallationService {
         if (!selection.complete()) {
             return false;
         }
-        LocalModelSelectionStore.save(selection);
+        if (entry.canonical().architecture() == com.spirit.koil.api.model.catalog.LocalModelCanonicalMetadata.Architecture.EMBEDDING) {
+            EmbeddingModelSelectionStore.save(selection);
+        } else {
+            LocalModelSelectionStore.save(selection);
+        }
         return true;
     }
 
     public List<LocalModelCatalogEntry> installedEntries() {
-        return LocalModelCatalog.entries().stream().filter(this::installed).toList();
+        return LocalModelCatalog.generationEntries().stream().filter(this::installed).toList();
     }
 
     public long installedBytes(LocalModelCatalogEntry entry) {
@@ -305,6 +491,10 @@ public final class LocalModelInstallationService {
         LocalModelSelection selected = LocalModelSelectionStore.load();
         if (entry.id().equals(selected.catalogId())) {
             LocalModelSelectionStore.clear();
+        }
+        LocalModelSelection embedding = EmbeddingModelSelectionStore.load();
+        if (entry.id().equals(embedding.catalogId())) {
+            EmbeddingModelSelectionStore.clear();
         }
         return new UninstallResult(true, removedBytes, entry.displayName() + " was uninstalled.");
     }
@@ -434,7 +624,11 @@ public final class LocalModelInstallationService {
                     "",
                     compat.maximumContextTokens() > 0 ? compat.maximumContextTokens() : entry.contextTokens()
             );
-            LocalModelSelectionStore.save(selection);
+            if (entry.canonical().architecture() == com.spirit.koil.api.model.catalog.LocalModelCanonicalMetadata.Architecture.EMBEDDING) {
+                EmbeddingModelSelectionStore.save(selection);
+            } else {
+                LocalModelSelectionStore.save(selection);
+            }
             update(ModelInstallationState.READY, entry.id(), entry.displayName() + " is installed and selected.", "",
                     plannedTotal, plannedTotal);
         } catch (ManagedRuntimeInstaller.CancelledException cancelledByInstaller) {

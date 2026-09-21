@@ -1,0 +1,33 @@
+version: 2
+kind: task_template
+id: template.crafting_craft_item
+template_id: crafting/craft/item
+semantic_operation: sem.crafting.craft_item
+params: [item.id, count.value, recipe.id]
+metadata:
+  semantic_operations: [sem.crafting.craft_item]
+  target_kinds: [item]
+  required_params: [item.id]
+  optional_params: [count.value, recipe.id]
+  tags: [crafting, inventory, transaction]
+  description: Craft the requested missing quantity through deterministic synchronized grid transactions and verify each inventory result
+  visibility: internal
+  model_callable: false
+  resource_locks: [screen, cursor, inventory]
+  side_effects: [inventory]
+  timeout_ticks: 1600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.crafting.prepare_exact_recipe
+    params:
+      item.id: ${item.id}
+      count.value: ${count.value}
+      recipe.id: ${recipe.id}
+  - type: run_primitive
+    action: cap.crafting.verify_exact_recipe
+    params:
+      item.id: ${item.id}
+      count.value: ${count.value}
+  - type: return
+    label: crafted

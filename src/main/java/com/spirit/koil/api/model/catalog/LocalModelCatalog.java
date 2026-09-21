@@ -2137,7 +2137,7 @@ public final class LocalModelCatalog {
                         List.of("Safetensors"),
                         32_768
                 ),
-                localSpecializedModel(
+                localEmbeddingModel(
                         "Qwen3-Embedding",
                         "4B",
                         4,
@@ -2151,8 +2151,15 @@ public final class LocalModelCatalog {
                         "embedding",
                         "",
                         "",
-                        List.of("Safetensors"),
-                        32_768
+                        List.of("Safetensors", "GGUF"),
+                        40_960,
+                        2_560,
+                        artifact(
+                                "Qwen/Qwen3-Embedding-4B-GGUF",
+                                "Qwen3-Embedding-4B-Q4_K_M.gguf",
+                                2_496_703_776L,
+                                "2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b"
+                        )
                 ),
                 localSpecializedModel(
                         "Qwen3-Embedding",
@@ -4476,6 +4483,14 @@ public final class LocalModelCatalog {
                 return HuggingFaceLocalModelDiscovery.merge(BUILT_IN_ENTRIES);
         }
 
+        /** Chat/model-selection view; specialized retrieval models remain catalog metadata only. */
+        public static List<LocalModelCatalogEntry> generationEntries() {
+                return entries().stream().filter(entry -> {
+                        Architecture architecture = entry.canonical().architecture();
+                        return architecture != Architecture.EMBEDDING && architecture != Architecture.RERANKER;
+                }).toList();
+        }
+
         public static List<LocalModelCatalogEntry> builtInEntries() {
                 return BUILT_IN_ENTRIES;
         }
@@ -4630,6 +4645,47 @@ public final class LocalModelCatalog {
                         formats,
                         context,
                         context
+                );
+        }
+
+        private static LocalModelCatalogEntry localEmbeddingModel(
+                String family,
+                String capability,
+                double total,
+                double active,
+                Architecture architecture,
+                String type,
+                List<String> modifiers,
+                List<String> modalities,
+                String repository,
+                Maturity maturity,
+                String template,
+                String reasoning,
+                String tools,
+                List<String> formats,
+                int context,
+                int dimensions,
+                ModelArtifact artifact
+        ) {
+                if (architecture != Architecture.EMBEDDING || dimensions <= 0 || artifact == null) {
+                        throw new IllegalArgumentException("embedding catalog metadata is incomplete");
+                }
+                String id = "hf-" + repository.toLowerCase(Locale.ROOT)
+                        .replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
+                List<ModelArtifact> artifacts = List.of(artifact);
+                LocalModelCanonicalMetadata canonical = new LocalModelCanonicalMetadata(
+                        family, family, capability, total, active, architecture, type, modifiers, modalities,
+                        context, context, repository, "", maturity, template, reasoning, tools,
+                        canonicalRuntimeFormats(formats, artifacts), true, ""
+                );
+                long downloadBytes = artifact.sizeBytes();
+                return new LocalModelCatalogEntry(
+                        id, family + " " + capability + " Embedding", "llama_cpp", "llama.cpp-b10173", id,
+                        parameterLabel(total, active, capability), quantizationLabel(artifacts), licenseFor(repository),
+                        context, roundedGiB(downloadBytes + 2L * GIB), roundedGiB(downloadBytes + 4L * GIB),
+                        0, false, List.of(),
+                        "Pinned local llama.cpp embedding GGUF; it is selectable only by the knowledge engine.",
+                        artifacts, canonical
                 );
         }
 

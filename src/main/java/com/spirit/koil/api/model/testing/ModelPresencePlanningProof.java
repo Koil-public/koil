@@ -35,12 +35,20 @@ public final class ModelPresencePlanningProof {
 
     public static void main(String[] args) {
         proveSessionPlanningDefaults();
+        proveModelCatalogComposerEntry();
         proveValidatedReviewedAuthorization();
         proveTypedTimelineAndPlanRows();
         provePresenceWirePrivacyAndGeometry();
         proveCombinedModelExecutorPresence();
         proveNoFailVerificationComposition();
         System.out.println("Model presence and reviewed-planning proof passed.");
+    }
+
+    private static void proveModelCatalogComposerEntry() {
+        require("Browse & manage models…".equals(ChatComposerMenuBridge.MODEL_CATALOG_LABEL)
+                        && ChatComposerMenuBridge.handleAction(ChatComposerMenuBridge.MODEL_CATALOG_ACTION)
+                        == ChatComposerMenuBridge.ActionResult.OPEN_MODEL_CATALOG,
+                "Model catalog popup action did not open the browser");
     }
 
     private static void proveSessionPlanningDefaults() {

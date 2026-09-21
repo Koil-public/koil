@@ -4,6 +4,8 @@ import com.spirit.client.gui.PopupMenu;
 import com.spirit.koil.api.automation.AutomationModeController;
 import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.model.LocalModelService;
+import com.spirit.koil.api.model.provider.llamacpp.LlamaCppComputeMode;
+import com.spirit.koil.api.model.provider.llamacpp.LlamaCppComputeSettings;
 import com.spirit.koil.api.model.catalog.LocalModelCatalog;
 import com.spirit.koil.api.model.catalog.LocalModelCatalogEntry;
 import com.spirit.koil.api.model.catalog.LocalModelFamilySelection;
@@ -26,6 +28,11 @@ public final class ChatComposerMenuBridge {
     public static final String MODEL_SECTION = "composer:model";
     public static final String MODEL_ACTIVE_SELECTOR = "composer:model_active_selector";
     public static final String MODEL_COMPLEXITY_SELECTOR = "composer:model_complexity_selector";
+    public static final String MODEL_CATALOG_ACTION = "composer:model_setup";
+    public static final String MODEL_CATALOG_LABEL = "Browse & manage models…";
+    public static final String MODEL_COMPUTE_SELECTOR = "composer:model_compute_selector";
+    public static final String MODEL_HYBRID_LAYERS_SELECTOR = "composer:model_hybrid_layers_selector";
+    public static final String MODEL_MAX_TUNE_ACTION = "composer:model_max_tune";
     public static final String VOICE_SELECTOR = "composer:voice_selector";
     public static final String EXPERIMENTAL_SELECTOR = "composer:automation_experimental";
 
@@ -83,9 +90,8 @@ public final class ChatComposerMenuBridge {
         if (MODEL_SECTION.equals(section)) {
             List<PopupMenu.MenuEntry> entries = new ArrayList<>();
             ModelSelectionSnapshot selection = modelSelectionSnapshot();
-            if (selection.families().isEmpty()) {
-                entries.add(new PopupMenu.MenuEntry("composer:model_setup", "Open model setup…"));
-            } else {
+            entries.add(new PopupMenu.MenuEntry(MODEL_CATALOG_ACTION, MODEL_CATALOG_LABEL));
+            if (!selection.families().isEmpty()) {
                 entries.add(new PopupMenu.MenuEntry(
                         MODEL_ACTIVE_SELECTOR,
                         "Active: " + selection.activeFamily(),
@@ -103,6 +109,15 @@ public final class ChatComposerMenuBridge {
                         ">"
                 ));
             }
+            LlamaCppComputeSettings compute = visibleComputeSettings();
+            entries.add(new PopupMenu.MenuEntry(
+                    MODEL_COMPUTE_SELECTOR,
+                    "Compute: " + computeMenuLabel(compute),
+                    compute.mode() == LlamaCppComputeMode.MAX ? 0xFF55AA55 : 0,
+                    compute.mode() == LlamaCppComputeMode.MAX ? "•" : "",
+                    0xFFAAB4C3,
+                    ">"
+            ));
             var settings = ModelVoiceService.settings();
             entries.add(new PopupMenu.MenuEntry(
                     "composer:voice_toggle",
@@ -172,6 +187,34 @@ public final class ChatComposerMenuBridge {
                     }).toList())
                     .orElse(List.of());
         }
+        if (MODEL_COMPUTE_SELECTOR.equals(selector)) {
+            LlamaCppComputeSettings settings = visibleComputeSettings();
+            return List.of(
+                    computeModeEntry(settings, LlamaCppComputeMode.MAX),
+                    new PopupMenu.MenuEntry(
+                            MODEL_MAX_TUNE_ACTION,
+                            LocalModelService.latestLlamaCppMaxTuning().isPresent()
+                                    ? "Retune MAX for this machine…"
+                                    : "Tune MAX for this machine…",
+                            LocalModelService.activeLlamaCppMaxTuning() != null ? 0xFFFFAA55 : 0,
+                            LocalModelService.activeLlamaCppMaxTuning() != null ? "•" : ""
+                    ),
+                    computeModeEntry(settings, LlamaCppComputeMode.GPU),
+                    computeModeEntry(settings, LlamaCppComputeMode.HYBRID),
+                    new PopupMenu.MenuEntry(
+                            MODEL_HYBRID_LAYERS_SELECTOR,
+                            "Hybrid GPU layers: " + settings.hybridGpuLayers(),
+                            settings.mode() == LlamaCppComputeMode.HYBRID ? 0xFF55AA55 : 0,
+                            settings.mode() == LlamaCppComputeMode.HYBRID ? "•" : "",
+                            0xFFAAB4C3,
+                            ">"
+                    ),
+                    computeModeEntry(settings, LlamaCppComputeMode.CPU)
+            );
+        }
+        if (MODEL_HYBRID_LAYERS_SELECTOR.equals(selector)) {
+            return hybridLayerEntries(visibleComputeSettings());
+        }
         if (EXPERIMENTAL_SELECTOR.equals(selector)) {
             return List.of(
                     new PopupMenu.MenuEntry(
@@ -187,7 +230,7 @@ public final class ChatComposerMenuBridge {
                             AutomationModeController.isExperimentalCompactAgentEnabled() ? "•" : ""
                     ),
                     experimentalEntry("persistent_history", "persistent conversation history", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_CONVERSATION_HISTORY),
-                    experimentalEntry("associative_memory", "persistent associative memory", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY),
+                    experimentalEntry("persistent_knowledge", "persistent knowledge", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_KNOWLEDGE),
                     experimentalEntry("expert_prefetch", "expert prefetch", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH),
                     experimentalEntry("completion_mode", "completion mode", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.COMPLETION_MODE),
                     experimentalEntry("no_fail", "no-fail", com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.NO_FAIL)
@@ -231,7 +274,7 @@ public final class ChatComposerMenuBridge {
             String id = actionId.substring("composer:experimental_feature:".length());
             com.spirit.koil.api.model.ModelExperimentalFeatures.Feature feature = switch (id) {
                 case "persistent_history" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_CONVERSATION_HISTORY;
-                case "associative_memory" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY;
+                case "persistent_knowledge", "associative_memory" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_KNOWLEDGE;
                 case "expert_prefetch" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH;
                 case "completion_mode" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.COMPLETION_MODE;
                 case "no_fail" -> com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.NO_FAIL;
@@ -261,8 +304,39 @@ public final class ChatComposerMenuBridge {
             selectModel(modelId);
             return ActionResult.HANDLED;
         }
-        if ("composer:model_setup".equals(actionId)) {
-            return ActionResult.OPEN_MODEL_SETUP_COMMAND;
+        if (MODEL_CATALOG_ACTION.equals(actionId)) {
+            return ActionResult.OPEN_MODEL_CATALOG;
+        }
+        if (MODEL_MAX_TUNE_ACTION.equals(actionId)) {
+            tuneMaxPerformance();
+            return ActionResult.HANDLED;
+        }
+        if (actionId.startsWith("composer:compute:")) {
+            String modeId = actionId.substring("composer:compute:".length());
+            LlamaCppComputeMode mode = switch (modeId) {
+                case "cpu" -> LlamaCppComputeMode.CPU;
+                case "max", "auto" -> LlamaCppComputeMode.MAX;
+                case "gpu" -> LlamaCppComputeMode.GPU;
+                case "hybrid" -> LlamaCppComputeMode.HYBRID;
+                default -> null;
+            };
+            if (mode != null) {
+                applyComputeSettings(LocalModelService.llamaCppComputeSettings().withMode(mode));
+                return ActionResult.HANDLED;
+            }
+        }
+        if (actionId.startsWith("composer:hybrid_layers:")) {
+            String rawLayers = actionId.substring("composer:hybrid_layers:".length());
+            try {
+                int layers = Integer.parseInt(rawLayers);
+                LlamaCppComputeSettings next = LocalModelService.llamaCppComputeSettings()
+                        .withMode(LlamaCppComputeMode.HYBRID)
+                        .withHybridGpuLayers(layers);
+                applyComputeSettings(next);
+            } catch (NumberFormatException ignored) {
+                LocalModelControlChatFeedback.error("That hybrid GPU-layer value is invalid.");
+            }
+            return ActionResult.HANDLED;
         }
         if ("composer:voice_toggle".equals(actionId)) {
             ModelVoiceService.setEnabled(!ModelVoiceService.settings().enabled());
@@ -280,6 +354,144 @@ public final class ChatComposerMenuBridge {
             return ActionResult.HANDLED;
         }
         return ActionResult.NOT_HANDLED;
+    }
+
+    private static LlamaCppComputeSettings visibleComputeSettings() {
+        LlamaCppComputeSettings active = LocalModelService.activeLlamaCppComputeSettings();
+        return active == null ? LocalModelService.llamaCppComputeSettings() : active;
+    }
+
+    private static PopupMenu.MenuEntry computeModeEntry(
+            LlamaCppComputeSettings settings,
+            LlamaCppComputeMode mode
+    ) {
+        boolean selected = settings.mode() == mode;
+        String label = mode == LlamaCppComputeMode.MAX
+                ? mode.displayName() + (LocalModelService.latestLlamaCppMaxTuning().isPresent() ? " [saved]" : " [untuned]")
+                : mode.displayName();
+        return new PopupMenu.MenuEntry(
+                "composer:compute:" + mode.name().toLowerCase(java.util.Locale.ROOT),
+                label,
+                selected ? 0xFF55AA55 : 0,
+                selected ? "•" : ""
+        );
+    }
+
+    private static List<PopupMenu.MenuEntry> hybridLayerEntries(LlamaCppComputeSettings settings) {
+        int current = settings.hybridGpuLayers();
+        int modelLayers = knownModelLayerCount();
+        int[] presets = {1, 2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 256};
+        java.util.SortedSet<Integer> values = new java.util.TreeSet<>();
+        for (int layers : presets) {
+            if (modelLayers <= 1 || layers < modelLayers) values.add(layers);
+        }
+        if (modelLayers > 1) values.add(modelLayers - 1);
+        if (modelLayers <= 1 || current < modelLayers) values.add(current);
+
+        List<PopupMenu.MenuEntry> entries = new ArrayList<>();
+        for (int layers : values) {
+            boolean selected = current == layers;
+            entries.add(new PopupMenu.MenuEntry(
+                    "composer:hybrid_layers:" + layers,
+                    layers + (layers == 1 ? " GPU layer" : " GPU layers"),
+                    selected ? 0xFF55AA55 : 0,
+                    selected ? "•" : ""
+            ));
+        }
+        return List.copyOf(entries);
+    }
+
+    private static int knownModelLayerCount() {
+        try {
+            String actual = LocalModelService.health().diagnostics().getOrDefault("actualGpuLayers", "");
+            int slash = actual.indexOf('/');
+            if (slash < 0 || slash + 1 >= actual.length()) return -1;
+            return Integer.parseInt(actual.substring(slash + 1).trim());
+        } catch (Exception ignored) {
+            return -1;
+        }
+    }
+
+    private static String computeMenuLabel(LlamaCppComputeSettings settings) {
+        return switch (settings.mode()) {
+            case CPU -> "CPU";
+            case MAX -> "MAX";
+            case GPU -> "GPU";
+            case HYBRID -> "Hybrid " + settings.hybridGpuLayers();
+        };
+    }
+
+    private static void tuneMaxPerformance() {
+        if (LocalModelService.activeLlamaCppMaxTuning() != null) {
+            LocalModelControlChatFeedback.info(
+                    "MAX autotuning is already running: " + LocalModelService.llamaCppMaxTuningStatus());
+            return;
+        }
+        LocalModelControlChatFeedback.info(
+                "Starting MAX autotune. Preparing benchmark for CPU, GPU, hybrid placement, CPU thread counts, polling, and batch geometry, then keep the fastest measured profile for this machine/model/runtime.");
+        LocalModelService.tuneLlamaCppMaxPerformance().whenComplete((result, failure) -> {
+            MinecraftClient client = MinecraftClient.getInstance();
+            Runnable feedback = () -> {
+                if (failure != null) {
+                    LocalModelControlChatFeedback.error("MAX autotune failed: " + rootMessage(failure));
+                    return;
+                }
+                if (result == null || result.winner() == null) {
+                    LocalModelControlChatFeedback.error("MAX autotune finished without a valid winner.");
+                    return;
+                }
+                var winner = result.winner();
+                LocalModelControlChatFeedback.success(
+                        "MAX tuned: " + winner.profile().summary()
+                                + " | prompt=" + String.format(java.util.Locale.ROOT, "%.2f", winner.benchmark().promptTokensPerSecond()) + " t/s"
+                                + " | generation=" + String.format(java.util.Locale.ROOT, "%.2f", winner.benchmark().generationTokensPerSecond()) + " t/s"
+                                + " | TTFT=" + String.format(java.util.Locale.ROOT, "%.0f", winner.benchmark().timeToFirstTokenMillis()) + " ms"
+                                + " | tested=" + result.candidates().size()
+                                + " | rejected=" + result.failedCandidates());
+            };
+            if (client == null) feedback.run(); else client.execute(feedback);
+        });
+    }
+
+    private static void applyComputeSettings(LlamaCppComputeSettings settings) {
+        LlamaCppComputeSettings requested = settings == null ? LlamaCppComputeSettings.defaults() : settings;
+        LocalModelControlChatFeedback.info("Applying " + requested.mode().displayName()
+                + (requested.mode() == LlamaCppComputeMode.HYBRID
+                ? " with " + requested.hybridGpuLayers() + " GPU layers."
+                : "."));
+        LocalModelService.configureLlamaCppCompute(requested).whenComplete((ignored, failure) -> {
+            MinecraftClient client = MinecraftClient.getInstance();
+            Runnable feedback = () -> {
+                if (failure != null) {
+                    LocalModelControlChatFeedback.error(
+                            "Compute switch failed: " + rootMessage(failure)
+                    );
+                } else {
+                    LocalModelControlChatFeedback.success(
+                            "Compute set to " + requested.mode().displayName()
+                                    + (requested.mode() == LlamaCppComputeMode.HYBRID
+                                    ? " with " + requested.hybridGpuLayers() + " GPU layers."
+                                    : ".")
+                    );
+                }
+            };
+            if (client == null) {
+                feedback.run();
+            } else {
+                client.execute(feedback);
+            }
+        });
+    }
+
+    private static String rootMessage(Throwable failure) {
+        Throwable current = failure;
+        while ((current instanceof java.util.concurrent.CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
+            current = current.getCause();
+        }
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 
     private static void selectModel(String modelId) {
@@ -301,7 +513,7 @@ public final class ChatComposerMenuBridge {
     }
 
     private static ModelSelectionSnapshot modelSelectionSnapshot() {
-        List<LocalModelCatalogEntry> known = LocalModelCatalog.entries();
+        List<LocalModelCatalogEntry> known = LocalModelCatalog.generationEntries();
         List<LocalModelCatalogEntry> installed = LocalModelInstallationService.instance().installedEntries();
         List<LocalModelFamilySelection.FamilyOption> families = LocalModelFamilySelection.families(known, installed);
         LocalModelCatalogEntry selected = LocalModelCatalog.find(LocalModelService.selectedCatalogId()).orElse(null);
@@ -345,7 +557,9 @@ public final class ChatComposerMenuBridge {
                 || VOICE_SELECTOR.equals(actionId)
                 || EXPERIMENTAL_SELECTOR.equals(actionId)
                 || MODEL_ACTIVE_SELECTOR.equals(actionId)
-                || MODEL_COMPLEXITY_SELECTOR.equals(actionId);
+                || MODEL_COMPLEXITY_SELECTOR.equals(actionId)
+                || MODEL_COMPUTE_SELECTOR.equals(actionId)
+                || MODEL_HYBRID_LAYERS_SELECTOR.equals(actionId);
     }
 
     private record ModelSelectionSnapshot(
@@ -357,6 +571,6 @@ public final class ChatComposerMenuBridge {
     public enum ActionResult {
         NOT_HANDLED,
         HANDLED,
-        OPEN_MODEL_SETUP_COMMAND
+        OPEN_MODEL_CATALOG
     }
 }

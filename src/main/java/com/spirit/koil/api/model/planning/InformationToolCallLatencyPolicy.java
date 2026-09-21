@@ -31,6 +31,38 @@ public final class InformationToolCallLatencyPolicy {
         return new Decision(true, "small_model_read_only_lookup", MAXIMUM_OUTPUT_TOKENS, true);
     }
 
+
+    /**
+     * Automation counterpart to the Ask-mode compact information path. This
+     * does not execute a tool directly and does not bypass the normal
+     * GenerationSession/coordinator pipeline. It only allows a small local
+     * model to receive a compact first-round contract when every supplied
+     * capability is read-only and the Automation reasoning policy itself says
+     * the objective does not need planning or deep reasoning.
+     */
+    public static Decision evaluateAutomation(
+        double modelParametersBillions,
+        AutomationThinkingPolicy.Decision reasoning,
+        List<ModelToolDefinition> tools,
+        boolean firstProviderRound
+    ) {
+        if (!firstProviderRound) return Decision.full("continuation_round");
+        if (modelParametersBillions > 3.5D) return Decision.full("larger_model");
+        if (reasoning == null) return Decision.full("missing_reasoning_policy");
+        if (reasoning.deepActive() || reasoning.includePlanTool()
+            || reasoning.depth() != AutomationThinkingPolicy.Depth.DIRECT) {
+            return Decision.full("automation_reasoning_not_direct");
+        }
+        if (tools == null || tools.isEmpty()) return Decision.full("no_information_tool");
+        boolean unsafe = tools.stream()
+            .filter(tool -> !"automation.cancel".equals(tool.id()))
+            .anyMatch(tool -> tool.confirmationRequired() || !tool.sideEffects().isEmpty());
+        if (unsafe) return Decision.full("non_read_only_tool");
+        boolean hasEvidenceTool = tools.stream().anyMatch(tool -> !"automation.cancel".equals(tool.id()));
+        if (!hasEvidenceTool) return Decision.full("no_information_tool");
+        return new Decision(true, "small_model_automation_read_only_lookup", MAXIMUM_OUTPUT_TOKENS, true);
+    }
+
     public record Decision(
         boolean directToolDecision,
         String reason,

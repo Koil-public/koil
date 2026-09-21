@@ -65,7 +65,7 @@ public final class AutomationCapabilityRegistry {
                 compiled.capabilityId(),
                 compiled.objective(),
                 compiled.action(),
-                new AutomationRequest(request.rawInput(), request.runCommand(), request.directTemplate(), executionId)
+                new AutomationRequest(request.rawInput(), request.runCommand(), request.directTemplate(), executionId, request.telemetryRequestId(), request.telemetryParentSpanId())
         );
     }
 
@@ -811,7 +811,7 @@ public final class AutomationCapabilityRegistry {
         schema.getAsJsonObject("properties").add("quantity", enumString("exact", "all"));
         return definition(
                 "entity.kill",
-                "Find and defeat a measured collection of live entity targets using player movement and combat. Use quantity=all to snapshot all matching live targets in the bounded radius; defeating one member never completes the collection.",
+                "Physically hunt and defeat live world entities using normal movement/combat. Use for mobs/players as combat targets, not for killing the current player as a command effect; self-kill belongs to minecraft.command. quantity=all snapshots all matching targets in radius.",
                 schema,
                 List.of("entity"),
                 List.of("selector", "radius", "count", "quantity"),
@@ -917,7 +917,7 @@ public final class AutomationCapabilityRegistry {
         require(schema, "command");
         return new AutomationCapabilityDefinition(
                 "minecraft.command",
-                "Submit one Minecraft slash command through the current player's normal command path after explicit player confirmation. Submission does not prove server success.",
+                "Execute one command through the current player's normal command path. Use for command-native player/world/server effects and vanilla or modded commands advertised by the live Brigadier tree. If name/syntax is uncertain, use minecraft.command_help then minecraft.command_inspect first. Do not use entity.kill for /kill @s-style self effects. Submission alone does not prove success.",
                 schema,
                 List.of("command"),
                 List.of(),

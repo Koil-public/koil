@@ -47,8 +47,9 @@ import static com.spirit.koil.api.model.catalog.LocalModelCanonicalMetadata.Matu
  */
 public final class HuggingFaceLocalModelDiscovery {
     private static final String API = "https://huggingface.co/api/models";
+    private static final String HUGGING_BAY_HOSTED_API = "https://huggingbay.xyz/api/hosted-local-models?limit=100&tool=llama.cpp";
     private static final String USER_AGENT = "Koil-LocalModelCatalog/1";
-    private static final Path CACHE_PATH = Path.of("koil", "sys", "model", "hugging-face-catalog-cache.json");
+    private static final Path CACHE_PATH = Path.of("koil", "sys", "model", "model-catalog-cache.json");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(25);
     private static final Duration REFRESH_INTERVAL = Duration.ofHours(12);
@@ -190,6 +191,10 @@ public final class HuggingFaceLocalModelDiscovery {
             List<LocalModelCatalogEntry> builtIns
     ) {
         try {
+            URI uri = URI.create(rawUrl == null ? "" : rawUrl.strip());
+            if ("huggingbay.xyz".equalsIgnoreCase(uri.getHost())) {
+                return registerHuggingBayDirectFile(uri, builtIns);
+            }
             DirectHuggingFaceFile direct = parseDirectFile(rawUrl);
             JsonObject detail = modelInfo(direct.repository(), true).orElse(null);
             if (detail == null) {
@@ -220,6 +225,26 @@ public final class HuggingFaceLocalModelDiscovery {
             persistCache();
             return new DirectFileResult(true, registered,
                     "Resolved exact Hugging Face GGUF with verified size and SHA-256.");
+        } catch (Exception exception) {
+            return DirectFileResult.failed(safeMessage(exception));
+        }
+    }
+
+    private static DirectFileResult registerHuggingBayDirectFile(URI uri, List<LocalModelCatalogEntry> builtIns) {
+        try {
+            DirectHuggingBayFile direct = parseHuggingBayFile(uri);
+            ModelArtifact artifact = artifactFromHuggingBay(direct).orElse(null);
+            if (artifact == null) {
+                return DirectFileResult.failed("Hugging Bay did not expose a verifiable content length and SHA-256 digest.");
+            }
+            LocalModelCatalogEntry candidate = knownDirectCandidate(direct.fileName(), artifact, builtIns).orElse(null);
+            if (candidate == null) {
+                return DirectFileResult.failed("This Hugging Bay GGUF does not match a known runnable Koil model family.");
+            }
+            LocalModelCatalogEntry registered = registerDirectCandidate(candidate, builtIns);
+            persistCache();
+            return new DirectFileResult(true, registered,
+                    "Resolved exact Hugging Bay GGUF with verified size and SHA-256.");
         } catch (Exception exception) {
             return DirectFileResult.failed(safeMessage(exception));
         }
@@ -288,11 +313,12 @@ public final class HuggingFaceLocalModelDiscovery {
                 persistCache();
             }
             int newlyAdded = Math.max(0, DISCOVERED.get().size() - before);
+            ProviderSearch huggingBay = searchHuggingBay(query, builtIns);
             return new SearchResult(
-                    candidates.size(),
-                    promotedCount,
+                    candidates.size() + huggingBay.candidatesSeen(),
+                    promotedCount + huggingBay.mappedModels(),
                     newlyAdded,
-                    "Hugging Face GGUF search completed for " + query
+                    "Hugging Face GGUF search completed for " + query + "; " + huggingBay.detail()
             );
         } catch (Exception exception) {
             return new SearchResult(
@@ -302,6 +328,86 @@ public final class HuggingFaceLocalModelDiscovery {
                     "Hugging Face search failed: " + safeMessage(exception)
             );
         }
+    }
+
+    /**
+     * Hugging Bay publishes a bounded inventory of its own hosted local files.
+     * We keep Koil's canonical model metadata and accept only one exact, downloadable GGUF
+     * which maps to an existing llama.cpp family; arbitrary remote labels do not become
+     * runnable models merely because a catalog says they are downloadable.
+     */
+    private static ProviderSearch searchHuggingBay(String query, List<LocalModelCatalogEntry> builtIns) {
+        try {
+            JsonElement response = fetchJson(URI.create(HUGGING_BAY_HOSTED_API));
+            if (response == null || !response.isJsonObject()) {
+                return new ProviderSearch(0, 0, "Hugging Bay hosted-local search was unavailable.");
+            }
+            JsonArray rows = array(response.getAsJsonObject(), "rows");
+            int candidates = 0;
+            int mapped = 0;
+            for (JsonElement element : rows) {
+                if (mapped >= 12 || !element.isJsonObject()) {
+                    break;
+                }
+                JsonObject row = element.getAsJsonObject();
+                if (!"llm".equalsIgnoreCase(string(row, "type")) || !matchesSearch(row, query)) {
+                    continue;
+                }
+                candidates++;
+                String artifactId = string(row, "artifactId");
+                for (JsonElement fileElement : array(row, "topFiles")) {
+                    if (!fileElement.isJsonObject()) {
+                        continue;
+                    }
+                    JsonObject file = fileElement.getAsJsonObject();
+                    ModelArtifact artifact = hostedHuggingBayArtifact(artifactId, file).orElse(null);
+                    if (artifact == null) {
+                        continue;
+                    }
+                    LocalModelCatalogEntry candidate = knownDirectCandidate(artifact.fileName(), artifact, builtIns)
+                            .orElse(null);
+                    if (candidate == null) {
+                        continue;
+                    }
+                    registerHuggingBayCatalogCandidate(candidate, builtIns);
+                    mapped++;
+                    break;
+                }
+            }
+            if (mapped > 0) {
+                persistCache();
+            }
+            return new ProviderSearch(candidates, mapped,
+                    "Hugging Bay hosted GGUF search found " + candidates + " matches and mapped " + mapped + " into Koil.");
+        } catch (Exception exception) {
+            return new ProviderSearch(0, 0, "Hugging Bay hosted-local search failed: " + safeMessage(exception));
+        }
+    }
+
+    private static boolean matchesSearch(JsonObject row, String query) {
+        String haystack = modelKey(string(row, "repo") + " " + string(row, "name") + " " + string(row, "summary"));
+        for (String term : (query == null ? "" : query).split("\\s+")) {
+            String key = modelKey(term);
+            if (!key.isBlank() && !haystack.contains(key)) {
+                return false;
+            }
+        }
+        return !haystack.isBlank();
+    }
+
+    private static Optional<ModelArtifact> hostedHuggingBayArtifact(String artifactId, JsonObject file) {
+        String path = string(file, "path");
+        String download = string(file, "downloadUrl");
+        String sha = normalizeEtag(string(file, "sha256").replaceFirst("(?i)^sha256:", ""));
+        long size = longValue(file, "sizeBytes", -1L);
+        if (artifactId.isBlank() || !booleanValue(file, "directDownloadAuthorized") || size <= 0L
+                || !sha.matches("[0-9a-f]{64}") || !path.toLowerCase(Locale.ROOT).endsWith(".gguf")
+                || path.toLowerCase(Locale.ROOT).contains("mmproj") || path.toLowerCase(Locale.ROOT).contains("projector")
+                || !download.startsWith("/api/downloads/")) {
+            return Optional.empty();
+        }
+        URI uri = URI.create("https://huggingbay.xyz" + download);
+        return Optional.of(new ModelArtifact(path, uri, size, sha));
     }
 
     private static RefreshResult refreshBlocking(List<LocalModelCatalogEntry> builtIns) {
@@ -604,7 +710,7 @@ public final class HuggingFaceLocalModelDiscovery {
                             existing.toolCalling() || candidate.toolCalling(),
                             candidate.toolCalling() ? discoveredCapabilities(candidate.canonical().modelType(), true)
                                     : existing.capabilityTags(),
-                            "User-selected direct Hugging Face GGUF implementation; exact size and SHA-256 verified.",
+                            "User-selected direct GGUF implementation; exact size and SHA-256 verified.",
                             candidate.artifacts(), candidate.canonical()
                     );
                     registerOverride(replacement);
@@ -622,6 +728,30 @@ public final class HuggingFaceLocalModelDiscovery {
         next.add(candidate);
         DISCOVERED.set(List.copyOf(next));
         return candidate;
+    }
+
+    private static LocalModelCatalogEntry registerHuggingBayCatalogCandidate(
+            LocalModelCatalogEntry candidate,
+            List<LocalModelCatalogEntry> builtIns
+    ) {
+        if (builtIns != null) {
+            for (LocalModelCatalogEntry existing : builtIns) {
+                if (existing.canonical().variantKey().equals(candidate.canonical().variantKey())) {
+                    LocalModelCatalogEntry replacement = new LocalModelCatalogEntry(
+                            existing.id(), existing.displayName(), candidate.providerId(), candidate.runtimeId(),
+                            existing.modelId(), existing.parameterCount(), candidate.quantization(),
+                            candidate.license(), candidate.contextTokens(), candidate.estimatedMinimumMemoryBytes(),
+                            candidate.estimatedRecommendedMemoryBytes(), existing.complexReasoningEstimatePercent(),
+                            existing.toolCalling() || candidate.toolCalling(), existing.capabilityTags(),
+                            "Hugging Bay hosted GGUF implementation; exact size and SHA-256 verified by its catalog.",
+                            candidate.artifacts(), candidate.canonical()
+                    );
+                    registerOverride(replacement);
+                    return replacement;
+                }
+            }
+        }
+        return registerDirectCandidate(candidate, builtIns);
     }
 
     private static DirectHuggingFaceFile parseDirectFile(String rawUrl) {
@@ -649,6 +779,91 @@ public final class HuggingFaceLocalModelDiscovery {
             throw new IllegalArgumentException("The direct link must target one text-model GGUF file.");
         }
         return new DirectHuggingFaceFile(parts[1] + "/" + parts[2], remotePath);
+    }
+
+    private static DirectHuggingBayFile parseHuggingBayFile(URI uri) {
+        if (!"https".equalsIgnoreCase(uri.getScheme())
+                || !"huggingbay.xyz".equalsIgnoreCase(uri.getHost())
+                || uri.getPort() != -1 && uri.getPort() != 443) {
+            throw new IllegalArgumentException("Only direct HTTPS huggingbay.xyz model links are supported.");
+        }
+        String[] parts = uri.getPath().split("/", -1);
+        if (parts.length < 4 || !"api".equals(parts[1]) || !"downloads".equals(parts[2])) {
+            throw new IllegalArgumentException("Expected a Hugging Bay /api/downloads/... GGUF file URL.");
+        }
+        for (int index = 3; index < parts.length; index++) {
+            if (parts[index].isBlank() || ".".equals(parts[index]) || "..".equals(parts[index])) {
+                throw new IllegalArgumentException("The Hugging Bay model path contains an invalid segment.");
+            }
+        }
+        String fileName = parts[parts.length - 1];
+        String lower = fileName.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".gguf") || lower.contains("mmproj") || lower.contains("projector")) {
+            throw new IllegalArgumentException("The direct link must target one text-model GGUF file.");
+        }
+        return new DirectHuggingBayFile(uri, fileName);
+    }
+
+    private static Optional<ModelArtifact> artifactFromHuggingBay(DirectHuggingBayFile direct) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(direct.uri())
+                    .timeout(REQUEST_TIMEOUT)
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .header("User-Agent", USER_AGENT)
+                    .build();
+            HttpResponse<Void> response = HTTP.send(request, HttpResponse.BodyHandlers.discarding());
+            if (response.statusCode() == 503) {
+                long retryMillis = response.headers().firstValue("retry-after")
+                        .map(HuggingFaceLocalModelDiscovery::parseLong)
+                        .filter(value -> value > 0L)
+                        .map(value -> Math.min(5_000L, value * 1_000L))
+                        .orElse(1_000L);
+                Thread.sleep(retryMillis);
+                response = HTTP.send(request, HttpResponse.BodyHandlers.discarding());
+            }
+            if (response.statusCode() < 200 || response.statusCode() >= 400) {
+                return Optional.empty();
+            }
+            long size = response.headers().firstValue("content-length")
+                    .map(HuggingFaceLocalModelDiscovery::parseLong)
+                    .orElse(-1L);
+            String sha = response.headers().firstValue("x-hugging-bay-sha256")
+                    .map(HuggingFaceLocalModelDiscovery::normalizeEtag)
+                    .orElse("");
+            if (size <= 0L || !sha.matches("[0-9a-f]{64}")) {
+                return Optional.empty();
+            }
+            return Optional.of(new ModelArtifact(direct.fileName(), direct.uri(), size, sha));
+        } catch (Exception ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private static Optional<LocalModelCatalogEntry> knownDirectCandidate(
+            String fileName,
+            ModelArtifact artifact,
+            List<LocalModelCatalogEntry> builtIns
+    ) {
+        String fileKey = modelKey(fileName);
+        return (builtIns == null ? List.<LocalModelCatalogEntry>of() : builtIns).stream()
+                .filter(entry -> entry.runnable() && "llama_cpp".equals(entry.providerId()))
+                .filter(entry -> {
+                    String key = modelKey(entry.modelId());
+                    return key.length() >= 6 && fileKey.contains(key);
+                })
+                .max(Comparator.comparingInt(entry -> modelKey(entry.modelId()).length()))
+                .map(entry -> new LocalModelCatalogEntry(
+                        entry.id(), entry.displayName(), entry.providerId(), entry.runtimeId(), entry.modelId(),
+                        entry.parameterCount(), quantizationFromFile(fileName), entry.license(), entry.contextTokens(),
+                        entry.estimatedMinimumMemoryBytes(), entry.estimatedRecommendedMemoryBytes(),
+                        entry.complexReasoningEstimatePercent(), entry.toolCalling(), entry.capabilityTags(),
+                        "User-selected direct Hugging Bay GGUF implementation; exact size and SHA-256 verified.",
+                        List.of(artifact), entry.canonical(), entry.runtimeCompatibility()
+                ));
+    }
+
+    private static String modelKey(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "");
     }
 
     private static String quantizationFromFile(String remotePath) {
@@ -983,7 +1198,7 @@ public final class HuggingFaceLocalModelDiscovery {
                     List.copyOf(OVERRIDES.get().values()),
                     DISCOVERED.get()
             );
-            Path temp = Files.createTempFile(parent, "hugging-face-catalog-", ".tmp");
+            Path temp = Files.createTempFile(parent, "model-catalog-", ".tmp");
             Files.writeString(temp, GSON.toJson(state), StandardCharsets.UTF_8);
             try {
                 Files.move(temp, CACHE_PATH, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
@@ -1406,6 +1621,14 @@ public final class HuggingFaceLocalModelDiscovery {
         }
     }
 
+    private static boolean booleanValue(JsonObject object, String key) {
+        try {
+            return object != null && object.has(key) && object.get(key).getAsBoolean();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private static int firstPositiveInt(JsonObject object, String... keys) {
         if (object == null) return 0;
         for (String key : keys) {
@@ -1494,5 +1717,11 @@ public final class HuggingFaceLocalModelDiscovery {
     }
 
     private record DirectHuggingFaceFile(String repository, String remotePath) {
+    }
+
+    private record DirectHuggingBayFile(URI uri, String fileName) {
+    }
+
+    private record ProviderSearch(int candidatesSeen, int mappedModels, String detail) {
     }
 }

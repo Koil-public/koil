@@ -13,8 +13,12 @@ import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.automation.navigation.BoundedNavigationPlanner;
 import com.spirit.koil.api.automation.navigation.BoundedNavigationSnapshot;
 import com.spirit.koil.api.automation.navigation.RecedingHorizonNavigationController;
+import com.spirit.koil.api.telemetry.TelemetryCapabilityState;
+import com.spirit.koil.api.telemetry.TelemetrySpanKind;
+import com.spirit.koil.api.telemetry.TelemetryStore;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.entity.AbstractFurnaceBlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
@@ -40,11 +44,17 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.network.packet.c2s.play.PlayerActionC2SPacket;
 import net.minecraft.recipe.Recipe;
+import net.minecraft.recipe.AbstractCookingRecipe;
+import net.minecraft.recipe.Ingredient;
+import net.minecraft.recipe.ShapedRecipe;
 import net.minecraft.recipe.RecipeMatcher;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.registry.tag.FluidTags;
+import net.minecraft.screen.AbstractRecipeScreenHandler;
+import net.minecraft.screen.AbstractFurnaceScreenHandler;
 import net.minecraft.screen.CraftingScreenHandler;
+import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.ActionResult;
@@ -121,6 +131,7 @@ public final class AutomationExecutor {
     private final Map<String, CachedEntityRef> cachedEntities = new LinkedHashMap<>();
     private final Map<String, Long> hotStateReportTimes = new LinkedHashMap<>();
     private final RecedingHorizonNavigationController navigationPlanner = new RecedingHorizonNavigationController();
+    private final AutomationResourceLockManager resourceLocks = new AutomationResourceLockManager();
     private Object lastScreen;
     private boolean automationItemUseActive;
 
@@ -141,6 +152,17 @@ public final class AutomationExecutor {
         boolean hadActiveExecution = !this.executionStack.isEmpty();
         String detail = reason == null || reason.isBlank() ? "canceled" : reason;
         ActiveExecution root = this.executionStack.peekLast();
+        this.executionStack.forEach(execution -> {
+            this.resourceLocks.release(execution.lockOwner);
+            if (execution.interpretationResult.telemetryRequestId() != null) {
+                if (execution.activeKtlSpanId != null && !execution.activeKtlSpanId.isBlank()) {
+                    TelemetryStore.finishSpan(execution.interpretationResult.telemetryRequestId(), execution.activeKtlSpanId,
+                            TelemetryCapabilityState.CANCELLED, "cancelled", detail);
+                }
+                TelemetryStore.finishSpan(execution.interpretationResult.telemetryRequestId(), execution.telemetrySpanId,
+                        TelemetryCapabilityState.CANCELLED, "cancelled", detail);
+            }
+        });
         this.executionStack.clear();
         this.navigationPlanner.cancel();
         releaseAllInputs();
@@ -201,6 +223,8 @@ public final class AutomationExecutor {
         updateActiveAttack(current);
         updateActiveMining(current);
         updateActiveLook(current);
+        updateActiveExactCraft(current);
+        updateActiveProcessing(current);
         updateActiveBoatPreparation(current);
         updateActiveBoatDeployment(current);
         updateActiveElytraPreparation(current);
@@ -250,6 +274,26 @@ public final class AutomationExecutor {
             AutomationCliViewModel.blocked(current.frameId, "look", reason);
             current.state.remove("look.failed");
             current.state.remove("look.failure_reason");
+            handleExecutionFailure(current, current.activeNodeId, reason);
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("craft.failed"))) {
+            String reason = stringParam(current.state, "craft.failure_reason", "craft_failed");
+            AutomationReporter.block("[block]", "craft -> " + reason);
+            AutomationCliViewModel.blocked(current.frameId, "craft", reason);
+            current.state.remove("craft.failed");
+            current.state.remove("craft.failure_reason");
+            handleExecutionFailure(current, current.activeNodeId, reason);
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("process.failed"))) {
+            String reason = stringParam(current.state, "process.failure_reason", "processing_failed");
+            AutomationReporter.block("[block]", "processing -> " + reason);
+            AutomationCliViewModel.blocked(current.frameId, "processing", reason);
+            current.state.remove("process.failed");
+            current.state.remove("process.failure_reason");
             handleExecutionFailure(current, current.activeNodeId, reason);
             return;
         }
@@ -310,6 +354,12 @@ public final class AutomationExecutor {
 
         if (Boolean.TRUE.equals(current.state.get("mount.active"))) {
             AutomationCliViewModel.activeState("riding", current.frameId, "waiting for verified mount");
+            return;
+        }
+
+        if (Boolean.TRUE.equals(current.state.get("craft.active"))) {
+            AutomationCliViewModel.activeState("crafting", current.frameId,
+                    stringParam(current.state, "craft.phase", "crafting exact recipe"));
             return;
         }
 
@@ -374,6 +424,14 @@ public final class AutomationExecutor {
             return;
         }
 
+        if (current.activeKtlSpanId != null && !current.activeKtlSpanId.isBlank() && !holdsRuntimePhase(current.state)) {
+            finishActiveKtlSpan(current, TelemetryCapabilityState.AVAILABLE, "completed", current.activeNodeLabel);
+            current.activeNodeId = null;
+            current.activeNodeLabel = null;
+            current.activeAction = null;
+            current.activeNodeIndex = -1;
+        }
+
         if (current.index >= current.steps.size()) {
             finishCurrentExecution("success");
             return;
@@ -390,6 +448,17 @@ public final class AutomationExecutor {
         current.activeNodeLabel = label;
         current.activeAction = step.action();
         current.activeNodeIndex = current.index;
+        if (current.interpretationResult.telemetryRequestId() != null) {
+            current.activeKtlSpanId = TelemetryStore.beginSpan(
+                    current.interpretationResult.telemetryRequestId(), current.telemetrySpanId,
+                    TelemetrySpanKind.KTL_ACTION, label,
+                    Map.of("frame_id", current.frameId, "node_id", nodeId,
+                            "step_type", step.type(), "action", step.action() == null ? "" : step.action(),
+                            "source", step.sourcePath() == null ? "" : step.sourcePath()));
+            TelemetryStore.capability(current.interpretationResult.telemetryRequestId(), "ktl",
+                    step.action() == null || step.action().isBlank() ? step.type() : step.action(),
+                    TelemetryCapabilityState.ACTIVE, "executing", label);
+        }
 
         switch (step.type()) {
             case "run_primitive" -> {
@@ -407,6 +476,7 @@ public final class AutomationExecutor {
                 }
                 AutomationReporter.ok("[ok  ]", label);
                 if (!holdsRuntimePhase(current.state)) {
+                    finishActiveKtlSpan(current, TelemetryCapabilityState.AVAILABLE, "completed", label);
                     current.activeNodeId = null;
                     current.activeNodeLabel = null;
                     current.activeAction = null;
@@ -427,7 +497,7 @@ public final class AutomationExecutor {
 
                 if (delegatedInput != null && !delegatedInput.isBlank()) {
                     String resolved = resolveString(delegatedInput, current.state);
-                    InterpretationResult child = this.compilerService.interpret(new AutomationRequest(resolved, true, true));
+                    InterpretationResult child = this.compilerService.interpret(linkedChildRequest(current, resolved));
                     String childFrameId = startExecution(child.plan(), child, current.frameId, label, current.state);
                     AutomationCliViewModel.delegate(current.frameId, nodeId, childFrameId, resolved);
                     return;
@@ -443,6 +513,13 @@ public final class AutomationExecutor {
                     }
                     ActiveExecution child = this.executionStack.pop();
                     ActiveExecution parent = this.executionStack.peek();
+                    if (child.interpretationResult.telemetryRequestId() != null) {
+                        finishActiveKtlSpan(child, TelemetryCapabilityState.AVAILABLE, "goto_parent",
+                                "Child frame returned to parent via goto.");
+                        TelemetryStore.finishSpan(child.interpretationResult.telemetryRequestId(), child.telemetrySpanId,
+                                TelemetryCapabilityState.AVAILABLE, "goto_parent",
+                                "Child executor frame returned to parent via goto.");
+                    }
                     parent.state.putAll(child.state);
                     parent.index = gotoIndex(parent.steps, step.gotoLabel());
                     AutomationCliViewModel.returned(child.frameId, parent.frameId, "goto_parent", child.resumeLabel);
@@ -455,7 +532,7 @@ public final class AutomationExecutor {
                 String resolved = resolveString(step.delegate(), current.state);
                 AutomationReporter.run("[delegate]", label + " -> " + resolved);
                 current.index++;
-                InterpretationResult child = this.compilerService.interpret(new AutomationRequest(resolved, true, true));
+                InterpretationResult child = this.compilerService.interpret(linkedChildRequest(current, resolved));
                 String childFrameId = startExecution(child.plan(), child, current.frameId, label, current.state);
                 AutomationCliViewModel.delegate(current.frameId, nodeId, childFrameId, resolved);
                 return;
@@ -463,6 +540,38 @@ public final class AutomationExecutor {
             case "return" -> finishCurrentExecution("success");
             default -> throw new IllegalStateException("Unsupported step type: " + step.type());
         }
+    }
+
+    private AutomationRequest linkedChildRequest(ActiveExecution current, String rawInput) {
+        AutomationRequest request = new AutomationRequest(rawInput, true, true);
+        if (current == null || current.interpretationResult.telemetryRequestId() == null) return request;
+        String parent = current.activeKtlSpanId == null || current.activeKtlSpanId.isBlank()
+                ? current.telemetrySpanId : current.activeKtlSpanId;
+        return request.withTelemetry(current.interpretationResult.telemetryRequestId(), parent);
+    }
+
+    private void finishActiveKtlSpan(ActiveExecution execution, TelemetryCapabilityState state,
+                                     String reasonCode, String detail) {
+        if (execution == null || execution.activeKtlSpanId == null || execution.activeKtlSpanId.isBlank()
+                || execution.interpretationResult.telemetryRequestId() == null) return;
+        TelemetryStore.finishSpan(execution.interpretationResult.telemetryRequestId(), execution.activeKtlSpanId,
+                state, reasonCode, detail);
+        String capability = execution.activeAction == null || execution.activeAction.isBlank()
+                ? (execution.activeNodeLabel == null ? "step" : execution.activeNodeLabel)
+                : execution.activeAction;
+        TelemetryStore.capability(execution.interpretationResult.telemetryRequestId(), "ktl", capability,
+                state, reasonCode, detail);
+        execution.activeKtlSpanId = "";
+    }
+
+    private static TelemetryCapabilityState telemetryStateForExecution(String status) {
+        String value = status == null ? "" : status.toLowerCase(Locale.ROOT);
+        return switch (value) {
+            case "success", "completed", "already_satisfied" -> TelemetryCapabilityState.AVAILABLE;
+            case "cancelled", "canceled", "interrupted" -> TelemetryCapabilityState.CANCELLED;
+            case "blocked", "no_target", "timed_out", "partial" -> TelemetryCapabilityState.BLOCKED;
+            default -> TelemetryCapabilityState.FAILED;
+        };
     }
 
     private KtlCompilerService.CompiledTemplateMetadata templateMetadata(ActiveExecution execution) {
@@ -490,6 +599,9 @@ public final class AutomationExecutor {
         if (current == null || this.executionStack.isEmpty()) {
             return;
         }
+        finishActiveKtlSpan(current, TelemetryCapabilityState.BLOCKED,
+                reason == null || reason.isBlank() ? "blocked" : reason,
+                current.activeAction == null ? current.activeNodeLabel : current.activeAction);
         KtlCompilerService.CompiledTemplateMetadata metadata = templateMetadata(current);
         int failedIndex = current.activeNodeIndex >= 0 ? current.activeNodeIndex : current.index;
         String attemptKey = "ktl.failure_attempt." + failedIndex;
@@ -563,9 +675,7 @@ public final class AutomationExecutor {
             current.state.put("result.recovery.used", true);
             current.index = failedIndex;
             try {
-                InterpretationResult recovery = this.compilerService.interpret(
-                        new AutomationRequest(recoveryTask, true, true)
-                );
+                InterpretationResult recovery = this.compilerService.interpret(linkedChildRequest(current, recoveryTask));
                 String recoveryFrame = startExecution(
                         recovery.plan(),
                         recovery,
@@ -613,6 +723,56 @@ public final class AutomationExecutor {
 
     private String startExecution(ExecutionPlan plan, InterpretationResult interpretationResult, String parentFrameId, String resumeLabel, Map<String, Object> inheritedState) {
         String frameId = String.format("frame-%04d", FRAME_SEQUENCE.incrementAndGet());
+        ActiveExecution parent = this.executionStack.peek();
+        String lockOwner = parent == null ? frameId : parent.lockOwner;
+
+        String telemetrySpanId = "";
+        if (interpretationResult.telemetryRequestId() != null) {
+            String telemetryParent = parent != null && parent.telemetrySpanId != null && !parent.telemetrySpanId.isBlank()
+                    ? parent.telemetrySpanId : interpretationResult.telemetryParentSpanId();
+            telemetrySpanId = TelemetryStore.beginSpan(interpretationResult.telemetryRequestId(), telemetryParent,
+                    TelemetrySpanKind.EXECUTOR_TASK, "executor " + interpretationResult.selectedTemplateId(),
+                    Map.of("frame_id", frameId, "template", interpretationResult.selectedTemplateId(),
+                            "execution_id", interpretationResult.executionId().toString(),
+                            "parent_frame_id", parentFrameId == null ? "" : parentFrameId));
+            TelemetryStore.capability(interpretationResult.telemetryRequestId(), "executor",
+                    interpretationResult.selectedTemplateId(), TelemetryCapabilityState.ACTIVE, "starting", frameId);
+        }
+
+        KtlCompilerService.CompiledTemplateMetadata metadata = this.compilerService.assets().templateMetadata.get(
+                interpretationResult.selectedTemplateId()
+        );
+        Set<String> declaredLocks = metadata == null ? Set.of() : new LinkedHashSet<>(metadata.resourceLocks());
+        long lockStarted = System.nanoTime();
+        AutomationResourceLockManager.Acquisition acquisition = this.resourceLocks.acquire(
+                lockOwner,
+                declaredLocks,
+                parent == null ? 60 : 90
+        );
+        long lockMicros = Math.max(0L, (System.nanoTime() - lockStarted) / 1_000L);
+        if (interpretationResult.telemetryRequestId() != null && !telemetrySpanId.isBlank()) {
+            TelemetryStore.metric(interpretationResult.telemetryRequestId(), telemetrySpanId, "resource_lock_acquire_us", lockMicros);
+            TelemetryStore.metric(interpretationResult.telemetryRequestId(), telemetrySpanId, "resource_lock_count", declaredLocks.size());
+        }
+        if (!acquisition.granted()) {
+            String detail = "resource lock conflict with " + acquisition.blockingFrameId();
+            if (interpretationResult.telemetryRequestId() != null && !telemetrySpanId.isBlank()) {
+                TelemetryStore.finishSpan(interpretationResult.telemetryRequestId(), telemetrySpanId,
+                        TelemetryCapabilityState.BLOCKED, "resource_lock_conflict", detail);
+                TelemetryStore.capability(interpretationResult.telemetryRequestId(), "executor",
+                        interpretationResult.selectedTemplateId(), TelemetryCapabilityState.BLOCKED,
+                        "resource_lock_conflict", detail);
+            }
+            throw new IllegalStateException(detail);
+        }
+        if (interpretationResult.telemetryRequestId() != null && !telemetrySpanId.isBlank()) {
+            TelemetryStore.event(interpretationResult.telemetryRequestId(), telemetrySpanId,
+                    "resource locks acquired", TelemetryCapabilityState.ACTIVE,
+                    Map.of("lock_count", Integer.toString(acquisition.locks().size())));
+            TelemetryStore.capability(interpretationResult.telemetryRequestId(), "executor",
+                    interpretationResult.selectedTemplateId(), TelemetryCapabilityState.ACTIVE, "executing", frameId);
+        }
+
         Map<String, Object> state = new LinkedHashMap<>();
         if (inheritedState != null) {
             state.putAll(inheritedState);
@@ -627,8 +787,10 @@ public final class AutomationExecutor {
         AutomationReporter.mem("active.template", interpretationResult.selectedTemplateId());
         AutomationCliViewModel.beginFrame(frameId, parentFrameId, interpretationResult.selectedTemplateId(), interpretationResult.semanticOperationId());
         AutomationCliViewModel.frameContext(frameId, parentFrameId, resumeLabel, interpretationResult.semanticOperationId(), interpretationResult.boundParams(), interpretationResult.diagnostics());
+        state.put("result.resource_locks", acquisition.locks());
 
-        this.executionStack.push(new ActiveExecution(frameId, parentFrameId, resumeLabel, interpretationResult, plan.template().steps(), state));
+        this.executionStack.push(new ActiveExecution(frameId, lockOwner, parentFrameId, resumeLabel, interpretationResult,
+                plan.template().steps(), state, telemetrySpanId));
         return frameId;
     }
 
@@ -640,7 +802,17 @@ public final class AutomationExecutor {
         ActiveExecution finished = this.executionStack.pop();
         boolean rootExecution = this.executionStack.isEmpty();
         if (rootExecution) {
+            this.resourceLocks.release(finished.lockOwner);
             status = finalizeStructuredEvidence(finished, status);
+        }
+        if (finished.interpretationResult.telemetryRequestId() != null) {
+            TelemetryCapabilityState telemetryState = telemetryStateForExecution(status);
+            finishActiveKtlSpan(finished, telemetryState, status, executionFailureDetail(finished.state, status));
+            TelemetryStore.finishSpan(finished.interpretationResult.telemetryRequestId(), finished.telemetrySpanId,
+                    telemetryState, executionFailureCode(finished.state, status), executionFailureDetail(finished.state, status));
+            TelemetryStore.capability(finished.interpretationResult.telemetryRequestId(), "executor",
+                    finished.interpretationResult.selectedTemplateId(), telemetryState,
+                    executionFailureCode(finished.state, status), executionFailureDetail(finished.state, status));
         }
 
         if (finished.state.containsKey("state.counter") && finished.state.containsKey("count.value")) {
@@ -906,8 +1078,11 @@ public final class AutomationExecutor {
                 "mount.failure_reason",
                 "consume.failure_reason",
                 "container.transfer.failure_reason",
+                "craft.failure_reason",
                 "transport.failure_reason",
                 "scan.failure_reason",
+                "result.failure_code",
+                "result.failure_reason",
                 "result.reason"
         )) {
             Object value = state.get(key);
@@ -948,6 +1123,8 @@ public final class AutomationExecutor {
                 || Boolean.TRUE.equals(state.get("attack.active"))
                 || Boolean.TRUE.equals(state.get("mine.active"))
                 || Boolean.TRUE.equals(state.get("mount.active"))
+                || Boolean.TRUE.equals(state.get("craft.active"))
+                || Boolean.TRUE.equals(state.get("process.active"))
                 || Boolean.TRUE.equals(state.get("boat.prepare.active"))
                 || Boolean.TRUE.equals(state.get("boat.deploy.active"))
                 || Boolean.TRUE.equals(state.get("elytra.prepare.active"))
@@ -972,6 +1149,12 @@ public final class AutomationExecutor {
         ClientPlayerInteractionManager interactionManager = client == null ? null : client.interactionManager;
 
         boolean success = switch (action) {
+            case "cap.crafting.prepare_exact_recipe" -> beginExactRecipeCraft(
+                    client, player, interactionManager, world, resolvedParams, state);
+            case "cap.crafting.verify_exact_recipe" -> verifyExactRecipeCraft(player, resolvedParams, state);
+            case "cap.processing.prepare_exact_recipe" -> beginExactProcessing(
+                    client, player, interactionManager, world, resolvedParams, state);
+            case "cap.processing.verify_exact_recipe" -> verifyExactProcessing(player, resolvedParams, state);
             case "cap.command.execute_raw" -> {
                 String rawCommand = stringParam(resolvedParams, "raw.command", "");
                 if (rawCommand.isBlank()) {
@@ -5506,6 +5689,809 @@ public final class AutomationExecutor {
         state.put(prefix + ".distance", round(Math.sqrt(candidate.distanceSquared())));
     }
 
+    private boolean beginExactRecipeCraft(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            ClientWorld world,
+            Map<String, Object> params,
+            Map<String, Object> state
+    ) {
+        if (client == null || player == null || interactionManager == null || world == null) {
+            setCraftFailure(state, "no_client_context", "Crafting requires a loaded player, world, and interaction manager.");
+            return false;
+        }
+        String itemId = stringParam(params, "item.id", "");
+        Identifier itemIdentifier = Identifier.tryParse(itemId);
+        if (itemIdentifier == null || !Registries.ITEM.containsId(itemIdentifier)) {
+            setCraftFailure(state, "unknown_item", "The requested crafting output is not registered: " + itemId);
+            return false;
+        }
+        int requestedCount = Math.max(1, intParam(params, "count.value", 1));
+        if (!(player.currentScreenHandler instanceof PlayerScreenHandler)
+                && !(player.currentScreenHandler instanceof CraftingScreenHandler)) {
+            player.closeHandledScreen();
+            client.setScreen(null);
+        }
+        if (!(player.currentScreenHandler instanceof AbstractRecipeScreenHandler<?> crafting)
+                || !(player.currentScreenHandler instanceof PlayerScreenHandler
+                || player.currentScreenHandler instanceof CraftingScreenHandler)) {
+            setCraftFailure(state, "crafting_screen_required",
+                    "The active synchronized screen could not be normalized to a player or crafting-table grid.");
+            return false;
+        }
+        if (crafting.getCursorStack() != null && !crafting.getCursorStack().isEmpty()) {
+            setCraftFailure(state, "cursor_unsafe", "The crafting cursor must be empty before an exact recipe transaction begins.");
+            return false;
+        }
+        String requestedRecipeId = stringParam(params, "recipe.id", "");
+        Recipe<?> recipe = findCraftingRecipe(
+                world, player, itemId, requestedRecipeId, crafting.getCraftingWidth(), crafting.getCraftingHeight());
+        if (recipe == null) {
+            setCraftFailure(state, "verified_recipe_unavailable",
+                    requestedRecipeId.isBlank()
+                            ? "No active exact-output recipe with currently available ingredients fits the active crafting grid."
+                            : "The planned synchronized recipe is unavailable, does not fit this crafting grid, or its ingredients are no longer present.");
+            return false;
+        }
+        List<CraftGridPlacement> layout = buildCraftGridPlacements(recipe, crafting, player);
+        if (layout.isEmpty()) {
+            setCraftFailure(state, "unsupported_recipe_layout",
+                    "The synchronized recipe cannot be represented safely in the active crafting grid.");
+            return false;
+        }
+
+        int before = countInventory(player.getInventory(), itemId);
+        CraftingTransaction.Result transaction = CraftingTransaction.begin(
+                itemId,
+                requestedCount,
+                crafting.syncId,
+                crafting.getCursorStack() == null || crafting.getCursorStack().isEmpty(),
+                Map.of(itemId, before)
+        );
+        if (!transaction.started()) {
+            setCraftFailure(state, transaction.failureCode().toLowerCase(Locale.ROOT), transaction.detail());
+            return false;
+        }
+
+        state.remove("craft.failure_reason");
+        state.remove("craft.failed");
+        state.put("craft.active", true);
+        state.put("craft.completed", false);
+        state.put("craft.ticks", 0);
+        state.put("craft.phase_ticks", 0);
+        state.put("craft.sync_id", crafting.syncId);
+        state.put("craft.item_id", itemId);
+        state.put("craft.requested_count", requestedCount);
+        state.put("craft.inventory.before", before);
+        state.put("craft.inventory.after", before);
+        state.put("craft.inventory.last_observed", before);
+        state.put("craft.recipe.id", recipe.getId().toString());
+        state.put("craft.recipe.object", recipe);
+        state.put("craft.recipe.layout", layout);
+        state.put("craft.recipe.output_count", safeRecipeOutputCount(recipe, world));
+        state.put("craft.recipe.ingredient_slots", layout.size());
+        state.put("craft.batch", 0);
+        state.put("craft.transaction", transaction.transaction());
+        state.put("result.validation.status", "pending");
+        state.put("result.validation.fact",
+                "Exact synchronized recipe selected; deterministic inventory-to-grid placement is pending.");
+        setCraftPhase(state, "prepare_grid");
+        return true;
+    }
+
+    private void updateActiveExactCraft(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("craft.active"))) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientWorld world = client == null ? null : client.world;
+        ClientPlayerInteractionManager interactionManager = client == null ? null : client.interactionManager;
+        if (client == null || player == null || world == null || interactionManager == null) {
+            failCraftPhase(state, "no_client_context", "Crafting lost the active client context.");
+            return;
+        }
+        if (!(player.currentScreenHandler instanceof AbstractRecipeScreenHandler<?> crafting)
+                || !(player.currentScreenHandler instanceof PlayerScreenHandler
+                || player.currentScreenHandler instanceof CraftingScreenHandler)
+                || crafting.syncId != intState(state, "craft.sync_id", -1)) {
+            failCraftPhase(state, "screen_mismatch", "The synchronized crafting screen changed during the transaction.");
+            return;
+        }
+        if (crafting.getCursorStack() != null && !crafting.getCursorStack().isEmpty()) {
+            failCraftPhase(state, "cursor_unsafe", "The crafting cursor became occupied during the transaction.");
+            return;
+        }
+
+        int ticks = intState(state, "craft.ticks", 0) + 1;
+        int phaseTicks = intState(state, "craft.phase_ticks", 0) + 1;
+        state.put("craft.ticks", ticks);
+        state.put("craft.phase_ticks", phaseTicks);
+        String itemId = stringParam(state, "craft.item_id", "");
+        int requestedCount = Math.max(1, intState(state, "craft.requested_count", 1));
+        int before = intState(state, "craft.inventory.before", 0);
+        String phase = stringParam(state, "craft.phase", "prepare_grid");
+
+        if ("prepare_grid".equals(phase)) {
+            Integer occupiedGridSlot = firstOccupiedCraftingInputSlot(crafting, player);
+            if (occupiedGridSlot != null) {
+                Slot slot = crafting.slots.get(occupiedGridSlot);
+                if (slot == null || !slot.hasStack()) return;
+                ItemStack stack = slot.getStack();
+                Identifier stackId = Registries.ITEM.getId(stack.getItem());
+                String stackItemId = stackId == null ? "" : stackId.toString();
+                if (findTransferDestinationSlot(player, stackItemId, true, stack.getCount()) < 0) {
+                    failCraftPhase(state, "grid_clear_no_inventory_space",
+                            "The crafting grid contains items that cannot be returned safely to player inventory.");
+                    return;
+                }
+                interactionManager.clickSlot(crafting.syncId, occupiedGridSlot, 0, SlotActionType.QUICK_MOVE, player);
+                return;
+            }
+            state.put("craft.placement_index", 0);
+            setCraftPhase(state, "place_ingredients");
+            return;
+        }
+
+        if ("place_ingredients".equals(phase)) {
+            List<CraftGridPlacement> layout = craftLayout(state);
+            if (layout.isEmpty()) {
+                failCraftPhase(state, "craft_layout_lost", "The deterministic crafting-grid layout was lost.");
+                return;
+            }
+            int placementIndex = Math.max(0, intState(state, "craft.placement_index", 0));
+            if (placementIndex >= layout.size()) {
+                setCraftPhase(state, "await_recipe_result");
+                return;
+            }
+            CraftGridPlacement placement = layout.get(placementIndex);
+            if (placement.targetSlot() < 0 || placement.targetSlot() >= crafting.slots.size()) {
+                failCraftPhase(state, "craft_grid_slot_invalid", "A planned crafting-grid slot is no longer valid.");
+                return;
+            }
+            Slot target = crafting.slots.get(placement.targetSlot());
+            if (target != null && target.hasStack()) {
+                failCraftPhase(state, "craft_grid_contaminated",
+                        "A crafting-grid slot became occupied before its planned ingredient could be placed.");
+                return;
+            }
+            int sourceSlot = findIngredientSourceSlot(crafting, player, placement.ingredient());
+            if (sourceSlot < 0) {
+                failCraftPhase(state, "ingredients_exhausted",
+                        "A planned recipe ingredient is no longer present in player inventory.");
+                return;
+            }
+            interactionManager.clickSlot(crafting.syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
+            interactionManager.clickSlot(crafting.syncId, placement.targetSlot(), 1, SlotActionType.PICKUP, player);
+            if (crafting.getCursorStack() != null && !crafting.getCursorStack().isEmpty()) {
+                interactionManager.clickSlot(crafting.syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
+            }
+            state.put("craft.placement_index", placementIndex + 1);
+            return;
+        }
+
+        if ("await_recipe_result".equals(phase)) {
+            int resultSlotIndex = crafting.getCraftingResultSlotIndex();
+            if (resultSlotIndex < 0 || resultSlotIndex >= crafting.slots.size()) {
+                failCraftPhase(state, "result_slot_unavailable", "The active crafting handler exposed no valid result slot.");
+                return;
+            }
+            Slot resultSlot = crafting.slots.get(resultSlotIndex);
+            if (resultSlot != null && resultSlot.hasStack() && itemMatches(resultSlot.getStack(), itemId)) {
+                int outputCount = resultSlot.getStack().getCount();
+                int destination = findTransferDestinationSlot(player, itemId, true, outputCount);
+                if (destination < 0) {
+                    failCraftPhase(state, "no_inventory_space", "No verified player-inventory slot can receive the crafted output.");
+                    return;
+                }
+                interactionManager.clickSlot(crafting.syncId, resultSlotIndex, 0, SlotActionType.PICKUP, player);
+                interactionManager.clickSlot(crafting.syncId, destination, 0, SlotActionType.PICKUP, player);
+                state.put("craft.recipe.output_count", outputCount);
+                state.put("result.action", "CRAFT_CLICKED");
+                setCraftPhase(state, "await_inventory_delta");
+                return;
+            }
+            if (phaseTicks >= 30) {
+                failCraftPhase(state, "recipe_result_mismatch",
+                        "Minecraft did not produce the planned synchronized recipe output after deterministic grid placement.");
+            }
+            return;
+        }
+
+        if ("await_inventory_delta".equals(phase)) {
+            int after = countInventory(player.getInventory(), itemId);
+            int lastObserved = intState(state, "craft.inventory.last_observed", before);
+            state.put("craft.inventory.after", after);
+            int gained = Math.max(0, after - before);
+            state.put("craft.gained_count", gained);
+            if (gained >= requestedCount) {
+                CraftingTransaction transaction = state.get("craft.transaction") instanceof CraftingTransaction value ? value : null;
+                CraftingTransaction.Result verification = transaction == null
+                        ? CraftingTransaction.Result.blocked("VERIFICATION_FAILED", "Crafting transaction state was lost.")
+                        : transaction.verify(
+                                crafting.syncId,
+                                crafting.getCursorStack() == null || crafting.getCursorStack().isEmpty(),
+                                Map.of(itemId, after)
+                        );
+                if (!"completed".equals(verification.status())) {
+                    failCraftPhase(state, verification.failureCode().toLowerCase(Locale.ROOT), verification.detail());
+                    return;
+                }
+                state.put("craft.active", false);
+                state.put("craft.completed", true);
+                state.put("result.action", "SUCCESS");
+                state.put("result.validation.status", "passed");
+                state.put("result.validation.fact",
+                        "Minecraft confirmed deterministic recipe placement, output transfer, and the requested inventory increase.");
+                return;
+            }
+            if (after > lastObserved) {
+                state.put("craft.inventory.last_observed", after);
+                state.put("craft.batch", intState(state, "craft.batch", 0) + 1);
+                String recipeId = stringParam(state, "craft.recipe.id", "");
+                Recipe<?> nextRecipe = findCraftingRecipe(
+                        world, player, itemId, recipeId, crafting.getCraftingWidth(), crafting.getCraftingHeight());
+                if (nextRecipe == null) {
+                    failCraftPhase(state, "ingredients_exhausted",
+                            "The planned recipe can no longer be filled before the requested crafted quantity was reached.");
+                    return;
+                }
+                List<CraftGridPlacement> nextLayout = buildCraftGridPlacements(nextRecipe, crafting, player);
+                if (nextLayout.isEmpty()) {
+                    failCraftPhase(state, "unsupported_recipe_layout",
+                            "The planned recipe no longer fits the active crafting grid safely.");
+                    return;
+                }
+                state.put("craft.recipe.object", nextRecipe);
+                state.put("craft.recipe.layout", nextLayout);
+                setCraftPhase(state, "prepare_grid");
+                return;
+            }
+            if (phaseTicks >= 30) {
+                failCraftPhase(state, "craft_inventory_sync_timeout",
+                        "Minecraft did not confirm the crafted inventory delta within the bounded synchronization wait.");
+            }
+            return;
+        }
+
+        failCraftPhase(state, "craft_phase_invalid", "Crafting entered an unknown transaction phase: " + phase);
+    }
+
+    private void setCraftPhase(Map<String, Object> state, String phase) {
+        state.put("craft.phase", phase);
+        state.put("craft.phase_ticks", 0);
+    }
+
+    private int safeRecipeOutputCount(Recipe<?> recipe, ClientWorld world) {
+        if (recipe == null || world == null) return 1;
+        try {
+            ItemStack output = recipe.getOutput(world.getRegistryManager());
+            return output == null || output.isEmpty() ? 1 : Math.max(1, output.getCount());
+        } catch (RuntimeException ignored) {
+            return 1;
+        }
+    }
+
+    private List<CraftGridPlacement> buildCraftGridPlacements(
+            Recipe<?> recipe,
+            AbstractRecipeScreenHandler<?> crafting,
+            ClientPlayerEntity player
+    ) {
+        if (recipe == null || crafting == null || player == null) return List.of();
+        List<Integer> gridSlots = craftingInputSlots(crafting, player);
+        int gridWidth = Math.max(1, crafting.getCraftingWidth());
+        int gridHeight = Math.max(1, crafting.getCraftingHeight());
+        if (gridSlots.size() < gridWidth * gridHeight) return List.of();
+
+        List<Ingredient> ingredients = recipe.getIngredients();
+        if (ingredients == null || ingredients.isEmpty()) return List.of();
+        List<CraftGridPlacement> placements = new ArrayList<>();
+        if (recipe instanceof ShapedRecipe shaped) {
+            int recipeWidth = Math.max(1, shaped.getWidth());
+            int recipeHeight = Math.max(1, shaped.getHeight());
+            if (recipeWidth > gridWidth || recipeHeight > gridHeight) return List.of();
+            for (int y = 0; y < recipeHeight; y++) {
+                for (int x = 0; x < recipeWidth; x++) {
+                    int ingredientIndex = y * recipeWidth + x;
+                    if (ingredientIndex >= ingredients.size()) continue;
+                    Ingredient ingredient = ingredients.get(ingredientIndex);
+                    if (ingredient == null || ingredient.isEmpty()) continue;
+                    int targetIndex = y * gridWidth + x;
+                    if (targetIndex < 0 || targetIndex >= gridSlots.size()) return List.of();
+                    placements.add(new CraftGridPlacement(ingredient, gridSlots.get(targetIndex)));
+                }
+            }
+        } else {
+            int targetIndex = 0;
+            for (Ingredient ingredient : ingredients) {
+                if (ingredient == null || ingredient.isEmpty()) continue;
+                while (targetIndex < gridSlots.size()) {
+                    int slotIndex = gridSlots.get(targetIndex++);
+                    placements.add(new CraftGridPlacement(ingredient, slotIndex));
+                    break;
+                }
+                if (targetIndex > gridSlots.size()) return List.of();
+            }
+        }
+        return List.copyOf(placements);
+    }
+
+    private List<Integer> craftingInputSlots(AbstractRecipeScreenHandler<?> crafting, ClientPlayerEntity player) {
+        if (crafting == null || player == null) return List.of();
+        int resultSlot = crafting.getCraftingResultSlotIndex();
+        List<Integer> slots = new ArrayList<>();
+        for (int i = 0; i < crafting.slots.size(); i++) {
+            if (i == resultSlot) continue;
+            Slot slot = crafting.slots.get(i);
+            if (slot == null || slot.inventory == player.getInventory()) continue;
+            slots.add(i);
+        }
+        int expected = Math.max(1, crafting.getCraftingWidth()) * Math.max(1, crafting.getCraftingHeight());
+        return slots.size() < expected ? List.of() : List.copyOf(slots.subList(0, expected));
+    }
+
+    private Integer firstOccupiedCraftingInputSlot(AbstractRecipeScreenHandler<?> crafting, ClientPlayerEntity player) {
+        for (int slotIndex : craftingInputSlots(crafting, player)) {
+            Slot slot = crafting.slots.get(slotIndex);
+            if (slot != null && slot.hasStack()) return slotIndex;
+        }
+        return null;
+    }
+
+    private int findIngredientSourceSlot(
+            AbstractRecipeScreenHandler<?> crafting,
+            ClientPlayerEntity player,
+            Ingredient ingredient
+    ) {
+        if (crafting == null || player == null || ingredient == null || ingredient.isEmpty()) return -1;
+        int best = -1;
+        int bestCount = Integer.MAX_VALUE;
+        for (int i = 0; i < crafting.slots.size(); i++) {
+            Slot slot = crafting.slots.get(i);
+            if (slot == null || slot.inventory != player.getInventory() || !slot.hasStack()) continue;
+            ItemStack stack = slot.getStack();
+            if (!ingredient.test(stack)) continue;
+            int count = stack.getCount();
+            if (count < bestCount) {
+                best = i;
+                bestCount = count;
+            }
+        }
+        return best;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<CraftGridPlacement> craftLayout(Map<String, Object> state) {
+        Object value = state.get("craft.recipe.layout");
+        if (!(value instanceof List<?> raw)) return List.of();
+        List<CraftGridPlacement> placements = new ArrayList<>();
+        for (Object entry : raw) {
+            if (entry instanceof CraftGridPlacement placement) placements.add(placement);
+        }
+        return List.copyOf(placements);
+    }
+
+    private record CraftGridPlacement(Ingredient ingredient, int targetSlot) {
+    }
+
+    private boolean verifyExactRecipeCraft(ClientPlayerEntity player, Map<String, Object> params, Map<String, Object> state) {
+        if (player == null) return false;
+        String requestedItem = stringParam(params, "item.id", "");
+        String itemId = stringParam(state, "craft.item_id", requestedItem);
+        if (itemId.isBlank() || (!requestedItem.isBlank() && !requestedItem.equals(itemId))) {
+            state.put("result.failure_code", "craft_target_mismatch");
+            state.put("result.failure_reason", "The verification target does not match the completed crafting transaction.");
+            return false;
+        }
+        int requestedCount = Math.max(1, intParam(params, "count.value", intState(state, "craft.requested_count", 1)));
+        int before = intState(state, "craft.inventory.before", countInventory(player.getInventory(), itemId));
+        int after = countInventory(player.getInventory(), itemId);
+        int gained = Math.max(0, after - before);
+        boolean completed = Boolean.TRUE.equals(state.get("craft.completed"));
+        state.put("craft.inventory.after", after);
+        state.put("craft.gained_count", gained);
+        if (!completed || gained < requestedCount) {
+            state.put("result.failure_code", "verification_failed");
+            state.put("result.failure_reason", "The requested crafted inventory delta was not observed.");
+            state.put("result.validation.status", "failed");
+            return false;
+        }
+        state.put("result.action", "SUCCESS");
+        state.put("result.validation.status", "passed");
+        state.put("result.validation.fact", "Crafting transaction re-verified the requested output count from live inventory state.");
+        return true;
+    }
+
+    private boolean beginExactProcessing(
+            MinecraftClient client,
+            ClientPlayerEntity player,
+            ClientPlayerInteractionManager interactionManager,
+            ClientWorld world,
+            Map<String, Object> params,
+            Map<String, Object> state
+    ) {
+        if (client == null || player == null || interactionManager == null || world == null) {
+            setProcessFailure(state, "no_client_context", "Processing requires a loaded player, world, and interaction manager.");
+            return false;
+        }
+        if (!(player.currentScreenHandler instanceof AbstractFurnaceScreenHandler processor)) {
+            setProcessFailure(state, "processor_screen_required",
+                    "The planned processing route requires an already-open synchronized furnace, smoker, or blast-furnace screen.");
+            return false;
+        }
+        if (processor.getCursorStack() != null && !processor.getCursorStack().isEmpty()) {
+            setProcessFailure(state, "cursor_unsafe", "The processor transaction requires an empty cursor.");
+            return false;
+        }
+        if (processor.slots.size() < 3) {
+            setProcessFailure(state, "processor_slots_unavailable", "The synchronized processor does not expose the required input, fuel, and output slots.");
+            return false;
+        }
+        if (processor.slots.get(0).hasStack() || processor.slots.get(1).hasStack() || processor.slots.get(2).hasStack()) {
+            setProcessFailure(state, "processor_not_clean",
+                    "The processor contains pre-existing input, fuel, or output and will not be commandeered by goal execution.");
+            return false;
+        }
+
+        String itemId = stringParam(params, "item.id", "");
+        Identifier itemIdentifier = Identifier.tryParse(itemId);
+        if (itemIdentifier == null || !Registries.ITEM.containsId(itemIdentifier)) {
+            setProcessFailure(state, "unknown_item", "The requested processed output is not registered: " + itemId);
+            return false;
+        }
+        String recipeId = stringParam(params, "recipe.id", "");
+        String processKind = stringParam(params, "process.kind", "");
+        if (recipeId.isBlank() || processKind.isBlank() || !processorMatchesKind(processor, processKind)) {
+            setProcessFailure(state, "processor_recipe_mismatch",
+                    "The open synchronized processor does not match the planned processing recipe type.");
+            return false;
+        }
+
+        Recipe<?> rawRecipe = findExactProcessingRecipe(world, itemId, recipeId, processKind);
+        if (!(rawRecipe instanceof AbstractCookingRecipe cooking)) {
+            setProcessFailure(state, "verified_processing_recipe_unavailable",
+                    "The exact synchronized processing recipe is no longer available.");
+            return false;
+        }
+        List<Ingredient> ingredients = cooking.getIngredients().stream()
+                .filter(ingredient -> ingredient != null && !ingredient.isEmpty())
+                .toList();
+        if (ingredients.size() != 1) {
+            setProcessFailure(state, "unsupported_processing_recipe",
+                    "The processing runtime currently requires one exact cooking input ingredient.");
+            return false;
+        }
+        Ingredient inputIngredient = ingredients.get(0);
+
+        String fuelId = stringParam(params, "fuel.id", "");
+        Identifier fuelIdentifier = Identifier.tryParse(fuelId);
+        if (fuelIdentifier == null || !Registries.ITEM.containsId(fuelIdentifier)) {
+            setProcessFailure(state, "fuel_unavailable", "The planned processor fuel is not registered: " + fuelId);
+            return false;
+        }
+        ItemStack fuelProbe = new ItemStack(Registries.ITEM.get(fuelIdentifier));
+        Map<net.minecraft.item.Item, Integer> fuelTimes = AbstractFurnaceBlockEntity.createFuelTimeMap();
+        int actualFuelBurnTicks = Math.max(0, fuelTimes.getOrDefault(fuelProbe.getItem(), 0));
+        if (actualFuelBurnTicks <= 0) {
+            setProcessFailure(state, "fuel_invalid", "The planned fuel is no longer accepted by the synchronized furnace fuel map.");
+            return false;
+        }
+
+        int requestedCount = Math.max(1, intParam(params, "count.value", 1));
+        int outputCount = safeRecipeOutputCount(cooking, world);
+        int batches = Math.max(1, (requestedCount + outputCount - 1) / outputCount);
+        int cookTicks = Math.max(1, cooking.getCookTime());
+        int requiredFuel = Math.max(1, (int) Math.min(Integer.MAX_VALUE,
+                (((long) batches * cookTicks) + actualFuelBurnTicks - 1L) / actualFuelBurnTicks));
+        int availableFuel = countInventory(player.getInventory(), fuelId);
+        if (availableFuel < requiredFuel) {
+            setProcessFailure(state, "fuel_exhausted",
+                    "The planned processor transaction needs " + requiredFuel + " " + fuelId
+                            + " but only " + availableFuel + " remain in player inventory.");
+            return false;
+        }
+        if (countMatchingInventory(player, inputIngredient) < batches) {
+            setProcessFailure(state, "processing_input_exhausted",
+                    "The planned processing input is no longer present in the quantity required by the exact recipe.");
+            return false;
+        }
+
+        int before = countInventory(player.getInventory(), itemId);
+        state.remove("process.failed");
+        state.remove("process.failure_reason");
+        state.put("process.active", true);
+        state.put("process.completed", false);
+        state.put("process.phase", "place_input");
+        state.put("process.ticks", 0);
+        state.put("process.phase_ticks", 0);
+        state.put("process.sync_id", processor.syncId);
+        state.put("process.item_id", itemId);
+        state.put("process.recipe_id", recipeId);
+        state.put("process.kind", processKind);
+        state.put("process.fuel_id", fuelId);
+        state.put("process.requested_count", requestedCount);
+        state.put("process.output_count", outputCount);
+        state.put("process.batches", batches);
+        state.put("process.cook_ticks", cookTicks);
+        state.put("process.fuel_burn_ticks", actualFuelBurnTicks);
+        state.put("process.required_fuel", requiredFuel);
+        state.put("process.input_clicks", 0);
+        state.put("process.fuel_clicks", 0);
+        state.put("process.inventory.before", before);
+        state.put("process.inventory.after", before);
+        state.put("process.ingredient", inputIngredient);
+        state.put("process.max_ticks", Math.min(7000, Math.max(240, batches * cookTicks + 240)));
+        state.put("result.validation.status", "pending");
+        state.put("result.validation.fact",
+                "Exact synchronized processing recipe, clean processor slots, input quantity, and fuel budget were verified.");
+        return true;
+    }
+
+    private void updateActiveProcessing(ActiveExecution execution) {
+        Map<String, Object> state = execution.state;
+        if (!Boolean.TRUE.equals(state.get("process.active"))) return;
+        MinecraftClient client = MinecraftClient.getInstance();
+        ClientPlayerEntity player = client == null ? null : client.player;
+        ClientPlayerInteractionManager interactionManager = client == null ? null : client.interactionManager;
+        if (client == null || player == null || interactionManager == null) {
+            failProcessPhase(state, "no_client_context", "Processing lost the active client context.");
+            return;
+        }
+        if (!(player.currentScreenHandler instanceof AbstractFurnaceScreenHandler processor)
+                || processor.syncId != intState(state, "process.sync_id", -1)) {
+            failProcessPhase(state, "screen_mismatch", "The synchronized processor screen changed during the transaction.");
+            return;
+        }
+        if (processor.getCursorStack() != null && !processor.getCursorStack().isEmpty()) {
+            failProcessPhase(state, "cursor_unsafe", "The processor cursor became occupied during the transaction.");
+            return;
+        }
+        if (processor.slots.size() < 3) {
+            failProcessPhase(state, "processor_slots_unavailable", "The synchronized processor lost its required slots.");
+            return;
+        }
+
+        int ticks = intState(state, "process.ticks", 0) + 1;
+        int phaseTicks = intState(state, "process.phase_ticks", 0) + 1;
+        state.put("process.ticks", ticks);
+        state.put("process.phase_ticks", phaseTicks);
+        int maxTicks = Math.max(240, intState(state, "process.max_ticks", 2400));
+        if (ticks > maxTicks) {
+            failProcessPhase(state, "processing_timeout", "Minecraft did not complete the bounded processing transaction in time.");
+            return;
+        }
+
+        String phase = stringParam(state, "process.phase", "place_input");
+        String itemId = stringParam(state, "process.item_id", "");
+        String fuelId = stringParam(state, "process.fuel_id", "");
+        int batches = Math.max(1, intState(state, "process.batches", 1));
+        int requiredFuel = Math.max(1, intState(state, "process.required_fuel", 1));
+        Ingredient ingredient = state.get("process.ingredient") instanceof Ingredient value ? value : null;
+        if (ingredient == null || ingredient.isEmpty()) {
+            failProcessPhase(state, "processing_recipe_state_lost", "The exact processing ingredient state was lost.");
+            return;
+        }
+
+        if ("place_input".equals(phase)) {
+            int clicks = Math.max(0, intState(state, "process.input_clicks", 0));
+            if (clicks >= batches) {
+                setProcessPhase(state, "place_fuel");
+                return;
+            }
+            int source = findIngredientSourceSlot(processor, player, ingredient);
+            if (source < 0) {
+                failProcessPhase(state, "processing_input_exhausted", "The planned processing input ran out before placement completed.");
+                return;
+            }
+            if (!clickOneIntoSlot(interactionManager, player, processor.syncId, source, 0)) {
+                failProcessPhase(state, "processing_input_transfer_failed", "The processor input could not be transferred safely.");
+                return;
+            }
+            state.put("process.input_clicks", clicks + 1);
+            return;
+        }
+
+        if ("place_fuel".equals(phase)) {
+            int clicks = Math.max(0, intState(state, "process.fuel_clicks", 0));
+            if (clicks >= requiredFuel) {
+                setProcessPhase(state, "await_output");
+                return;
+            }
+            int source = findCurrentHandlerItemSlot(processor, player, fuelId);
+            if (source < 0) {
+                failProcessPhase(state, "fuel_exhausted", "The planned fuel ran out before processor placement completed.");
+                return;
+            }
+            if (!clickOneIntoSlot(interactionManager, player, processor.syncId, source, 1)) {
+                failProcessPhase(state, "fuel_transfer_failed", "The processor fuel could not be transferred safely.");
+                return;
+            }
+            state.put("process.fuel_clicks", clicks + 1);
+            return;
+        }
+
+        if ("await_output".equals(phase)) {
+            Slot output = processor.slots.get(2);
+            if (output != null && output.hasStack()) {
+                if (!itemMatches(output.getStack(), itemId)) {
+                    failProcessPhase(state, "processing_output_mismatch",
+                            "The synchronized processor produced an item different from the planned goal output.");
+                    return;
+                }
+                if (findTransferDestinationSlot(player, itemId, true, output.getStack().getCount()) < 0) {
+                    failProcessPhase(state, "no_inventory_space", "No verified player-inventory slot can receive the processed output.");
+                    return;
+                }
+                interactionManager.clickSlot(processor.syncId, 2, 0, SlotActionType.QUICK_MOVE, player);
+                setProcessPhase(state, "await_inventory_delta");
+                return;
+            }
+            return;
+        }
+
+        if ("await_inventory_delta".equals(phase)) {
+            int before = intState(state, "process.inventory.before", 0);
+            int after = countInventory(player.getInventory(), itemId);
+            int gained = Math.max(0, after - before);
+            state.put("process.inventory.after", after);
+            state.put("process.gained_count", gained);
+            int requestedCount = Math.max(1, intState(state, "process.requested_count", 1));
+            if (gained >= requestedCount) {
+                state.put("process.active", false);
+                state.put("process.completed", true);
+                state.put("result.action", "SUCCESS");
+                state.put("result.validation.status", "passed");
+                state.put("result.validation.fact",
+                        "Minecraft confirmed the exact processor output and requested player-inventory increase.");
+                return;
+            }
+            if (phaseTicks >= 40) {
+                setProcessPhase(state, "await_output");
+            }
+            return;
+        }
+
+        failProcessPhase(state, "processing_phase_invalid", "Processing entered an unknown transaction phase: " + phase);
+    }
+
+    private boolean clickOneIntoSlot(
+            ClientPlayerInteractionManager interactionManager,
+            ClientPlayerEntity player,
+            int syncId,
+            int sourceSlot,
+            int targetSlot
+    ) {
+        if (interactionManager == null || player == null || player.currentScreenHandler == null
+                || sourceSlot < 0 || targetSlot < 0
+                || sourceSlot >= player.currentScreenHandler.slots.size()
+                || targetSlot >= player.currentScreenHandler.slots.size()
+                || (player.currentScreenHandler.getCursorStack() != null
+                && !player.currentScreenHandler.getCursorStack().isEmpty())) return false;
+        interactionManager.clickSlot(syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
+        interactionManager.clickSlot(syncId, targetSlot, 1, SlotActionType.PICKUP, player);
+        interactionManager.clickSlot(syncId, sourceSlot, 0, SlotActionType.PICKUP, player);
+        return true;
+    }
+
+    private int findCurrentHandlerItemSlot(
+            AbstractFurnaceScreenHandler processor,
+            ClientPlayerEntity player,
+            String itemId
+    ) {
+        if (processor == null || player == null || itemId == null || itemId.isBlank()) return -1;
+        int best = -1;
+        int bestCount = Integer.MAX_VALUE;
+        for (int i = 0; i < processor.slots.size(); i++) {
+            Slot slot = processor.slots.get(i);
+            if (slot == null || slot.inventory != player.getInventory() || !slot.hasStack()) continue;
+            if (!itemMatches(slot.getStack(), itemId)) continue;
+            int count = slot.getStack().getCount();
+            if (count < bestCount) {
+                best = i;
+                bestCount = count;
+            }
+        }
+        return best;
+    }
+
+    private int countMatchingInventory(ClientPlayerEntity player, Ingredient ingredient) {
+        if (player == null || ingredient == null || ingredient.isEmpty()) return 0;
+        int count = 0;
+        for (int slot = 0; slot < player.getInventory().size(); slot++) {
+            ItemStack stack = player.getInventory().getStack(slot);
+            if (stack != null && !stack.isEmpty() && ingredient.test(stack)) count += stack.getCount();
+        }
+        return count;
+    }
+
+    private Recipe<?> findExactProcessingRecipe(
+            ClientWorld world,
+            String outputId,
+            String recipeId,
+            String processKind
+    ) {
+        if (world == null || outputId == null || recipeId == null || processKind == null) return null;
+        Identifier wantedRecipe = Identifier.tryParse(recipeId);
+        if (wantedRecipe == null) return null;
+        for (Recipe<?> recipe : world.getRecipeManager().values()) {
+            if (recipe == null || !wantedRecipe.equals(recipe.getId()) || !(recipe instanceof AbstractCookingRecipe)) continue;
+            Identifier typeId = Registries.RECIPE_TYPE.getId(recipe.getType());
+            if (typeId == null || !processKind.equals(typeId.toString())) continue;
+            ItemStack output = recipe.getOutput(world.getRegistryManager());
+            if (output != null && !output.isEmpty() && itemMatches(output, outputId)) return recipe;
+        }
+        return null;
+    }
+
+    private boolean processorMatchesKind(AbstractFurnaceScreenHandler processor, String processKind) {
+        if (processor == null || processKind == null || processKind.isBlank()) return false;
+        String handler = processor.getClass().getSimpleName().toLowerCase(Locale.ROOT);
+        if (handler.contains("blast")) return "minecraft:blasting".equals(processKind);
+        if (handler.contains("smoker")) return "minecraft:smoking".equals(processKind);
+        return "minecraft:smelting".equals(processKind);
+    }
+
+    private boolean verifyExactProcessing(ClientPlayerEntity player, Map<String, Object> params, Map<String, Object> state) {
+        if (player == null) return false;
+        String requestedItem = stringParam(params, "item.id", "");
+        String itemId = stringParam(state, "process.item_id", requestedItem);
+        int requestedCount = Math.max(1, intParam(params, "count.value", intState(state, "process.requested_count", 1)));
+        int before = intState(state, "process.inventory.before", countInventory(player.getInventory(), itemId));
+        int after = countInventory(player.getInventory(), itemId);
+        int gained = Math.max(0, after - before);
+        boolean completed = Boolean.TRUE.equals(state.get("process.completed"));
+        state.put("process.inventory.after", after);
+        state.put("process.gained_count", gained);
+        if (itemId.isBlank() || (!requestedItem.isBlank() && !requestedItem.equals(itemId)) || !completed || gained < requestedCount) {
+            state.put("result.failure_code", "processing_verification_failed");
+            state.put("result.failure_reason", "The requested processed inventory delta was not observed.");
+            state.put("result.validation.status", "failed");
+            return false;
+        }
+        state.put("result.action", "SUCCESS");
+        state.put("result.validation.status", "passed");
+        state.put("result.validation.fact", "Processing transaction re-verified the requested output count from live inventory state.");
+        return true;
+    }
+
+    private void setProcessPhase(Map<String, Object> state, String phase) {
+        state.put("process.phase", phase);
+        state.put("process.phase_ticks", 0);
+    }
+
+    private void setProcessFailure(Map<String, Object> state, String code, String detail) {
+        String safeCode = code == null || code.isBlank() ? "processing_failed" : code;
+        String safeDetail = detail == null || detail.isBlank() ? "Processing failed." : detail;
+        state.put("process.failure_reason", safeCode);
+        state.put("result.failure_code", safeCode);
+        state.put("result.failure_reason", safeDetail);
+        state.put("result.validation.status", "failed");
+        state.put("result.validation.fact", safeDetail);
+        state.put("result.action", "FAIL");
+    }
+
+    private void failProcessPhase(Map<String, Object> state, String code, String detail) {
+        state.put("process.active", false);
+        state.put("process.completed", false);
+        state.put("process.failed", true);
+        setProcessFailure(state, code, detail);
+    }
+
+    private void setCraftFailure(Map<String, Object> state, String code, String detail) {
+        state.put("craft.failure_reason", code == null || code.isBlank() ? "craft_failed" : code);
+        state.put("result.failure_code", code == null || code.isBlank() ? "craft_failed" : code);
+        state.put("result.failure_reason", detail == null ? "Crafting failed." : detail);
+        state.put("result.validation.status", "failed");
+        state.put("result.validation.fact", detail == null ? "Crafting failed." : detail);
+        state.put("result.action", "FAIL");
+    }
+
+    private void failCraftPhase(Map<String, Object> state, String code, String detail) {
+        state.put("craft.active", false);
+        setCraftFailure(state, code, detail);
+        state.put("craft.failed", true);
+    }
+
     private boolean beginBoatPreparation(
             MinecraftClient client,
             ClientPlayerEntity player,
@@ -5552,6 +6538,12 @@ public final class AutomationExecutor {
             return false;
         }
         int before = countInventory(player.getInventory(), boatId);
+        CraftingTransaction.Result transaction = CraftingTransaction.begin(
+                boatId, 1, crafting.syncId, crafting.getCursorStack() == null || crafting.getCursorStack().isEmpty(), Map.of(boatId, before));
+        if (!transaction.started()) {
+            setTransportFailure(state, transaction.failureCode().toLowerCase(Locale.ROOT), transaction.detail());
+            return false;
+        }
         state.put("boat.prepare.active", true);
         state.put("boat.prepare.phase", "await_recipe_fill");
         state.put("boat.prepare.ticks", 0);
@@ -5559,6 +6551,7 @@ public final class AutomationExecutor {
         state.put("boat.recipe.id", recipe.getId().toString());
         state.put("boat.recipe.ingredient_slots", recipe.getIngredients().stream().filter(ingredient -> !ingredient.isEmpty()).count());
         state.put("boat.inventory.before", before);
+        state.put("boat.crafting.transaction", transaction.transaction());
         state.put("result.validation.status", "pending");
         state.put("result.validation.fact", "The active recipe and its ingredients were verified; waiting for server crafting-screen synchronization.");
         interactionManager.clickRecipe(crafting.syncId, recipe, false);
@@ -5566,6 +6559,12 @@ public final class AutomationExecutor {
     }
 
     private Recipe<?> findCraftingRecipe(ClientWorld world, ClientPlayerEntity player, String outputId, String requestedRecipeId) {
+        return findCraftingRecipe(world, player, outputId, requestedRecipeId, 3, 3);
+    }
+
+    private Recipe<?> findCraftingRecipe(
+            ClientWorld world, ClientPlayerEntity player, String outputId, String requestedRecipeId, int craftingWidth, int craftingHeight
+    ) {
         if (world == null || player == null || outputId == null || outputId.isBlank()) return null;
         List<Recipe<?>> candidates = new ArrayList<>();
         if (requestedRecipeId != null && !requestedRecipeId.isBlank()) {
@@ -5576,6 +6575,7 @@ public final class AutomationExecutor {
             candidates.addAll(world.getRecipeManager().values());
             candidates.sort(Comparator.comparing(recipe -> recipe.getId().toString()));
         }
+        boolean exactRequested = requestedRecipeId != null && !requestedRecipeId.isBlank();
         RecipeMatcher matcher = new RecipeMatcher();
         player.getInventory().populateRecipeFinder(matcher);
         for (Recipe<?> recipe : candidates) {
@@ -5585,8 +6585,12 @@ public final class AutomationExecutor {
             } catch (RuntimeException invalidRecipe) {
                 continue;
             }
-            if (output == null || output.isEmpty() || !itemMatches(output, outputId) || !recipe.fits(3, 3)) continue;
-            if (matcher.match(recipe, new IntArrayList())) return recipe;
+            if (output == null || output.isEmpty() || !itemMatches(output, outputId)
+                    || !recipe.fits(Math.max(1, craftingWidth), Math.max(1, craftingHeight))) continue;
+            // An exact planner-selected recipe is allowed through even when its
+            // ingredients are currently split between inventory and the crafting grid.
+            // The deterministic grid transaction verifies every ingredient before use.
+            if (exactRequested || matcher.match(recipe, new IntArrayList())) return recipe;
         }
         return null;
     }
@@ -5635,6 +6639,15 @@ public final class AutomationExecutor {
             int after = countInventory(player.getInventory(), boatId);
             state.put("boat.inventory.after", after);
             if (after > before) {
+                CraftingTransaction transaction = state.get("boat.crafting.transaction") instanceof CraftingTransaction value ? value : null;
+                CraftingTransaction.Result verification = transaction == null
+                        ? CraftingTransaction.Result.blocked("VERIFICATION_FAILED", "Crafting transaction state was lost.")
+                        : transaction.verify(player.currentScreenHandler.syncId,
+                        player.currentScreenHandler.getCursorStack() == null || player.currentScreenHandler.getCursorStack().isEmpty(), Map.of(boatId, after));
+                if (!"completed".equals(verification.status())) {
+                    failTransportPhase(state, "boat.prepare.active", verification.failureCode().toLowerCase(Locale.ROOT), verification.detail());
+                    return;
+                }
                 state.put("boat.crafted", true);
                 player.closeHandledScreen();
                 client.setScreen(null);
@@ -7778,6 +8791,7 @@ public final class AutomationExecutor {
 
     private static final class ActiveExecution {
         private final String frameId;
+        private final String lockOwner;
         private final String parentFrameId;
         private final String resumeLabel;
         private final InterpretationResult interpretationResult;
@@ -7791,14 +8805,18 @@ public final class AutomationExecutor {
         private String activeAction;
         private int activeNodeIndex;
         private long tickCounter;
+        private final String telemetrySpanId;
+        private String activeKtlSpanId = "";
 
-        private ActiveExecution(String frameId, String parentFrameId, String resumeLabel, InterpretationResult interpretationResult, List<KtlCompilerService.CompiledStep> steps, Map<String, Object> state) {
+        private ActiveExecution(String frameId, String lockOwner, String parentFrameId, String resumeLabel, InterpretationResult interpretationResult, List<KtlCompilerService.CompiledStep> steps, Map<String, Object> state, String telemetrySpanId) {
             this.frameId = frameId;
+            this.lockOwner = lockOwner;
             this.parentFrameId = parentFrameId;
             this.resumeLabel = resumeLabel;
             this.interpretationResult = interpretationResult;
             this.steps = steps;
             this.state = state;
+            this.telemetrySpanId = telemetrySpanId == null ? "" : telemetrySpanId;
             this.startedAt = Instant.now();
             MinecraftClient client = MinecraftClient.getInstance();
             ClientPlayerEntity player = client == null ? null : client.player;

@@ -6,11 +6,15 @@ import com.spirit.koil.api.model.ModelRequestState;
 import com.spirit.koil.api.model.ModelExecutionEvent;
 import com.spirit.koil.api.model.ModelFinalizationHandle;
 import com.spirit.koil.api.model.ModelDeepThoughtControl;
+import com.spirit.koil.api.model.ModelDebugMode;
 import com.spirit.koil.api.model.ModelUsage;
 import com.spirit.koil.api.model.ModelActivityState;
 import com.spirit.koil.api.model.KoilLifetimeCounters;
 import com.spirit.koil.api.model.presence.ModelPresenceState;
 import com.spirit.koil.api.model.voice.ModelVoiceService;
+import com.spirit.koil.api.telemetry.TelemetryCapabilityState;
+import com.spirit.koil.api.telemetry.TelemetrySpanKind;
+import com.spirit.koil.api.telemetry.TelemetryStore;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -27,6 +31,9 @@ public final class ModelGenerationHudState {
     private static final AtomicLong SESSION_SEQUENCE = new AtomicLong();
     private static UUID selectedRequestId;
     private static Snapshot retainedMetricsSnapshot;
+    private static Snapshot renderVisibleSnapshotCache;
+    private static long renderVisibleSnapshotCachedAtNanos;
+    private static final long RENDER_SNAPSHOT_CACHE_NANOS = 16_000_000L;
 
     private ModelGenerationHudState() {
     }
@@ -38,6 +45,9 @@ public final class ModelGenerationHudState {
     public static synchronized void begin(UUID requestId, String prompt, boolean automationRequest) {
         retainedMetricsSnapshot = null;
         KoilLifetimeCounters.Snapshot counters = KoilLifetimeCounters.modelRequestStarted();
+        TelemetryStore.beginRequest(requestId, prompt == null ? "" : prompt, automationRequest ? "automation" : "model");
+        TelemetryStore.provenance(requestId, TelemetryStore.rootSpan(requestId), "user.prompt", "ModelGenerationHudState", "prompt_ingestion",
+                prompt == null ? "" : prompt, "User prompt accepted by Koil");
         REQUESTS.put(requestId, new MutableRequest(
                 requestId,
                 prompt == null ? "" : prompt,
@@ -102,7 +112,7 @@ public final class ModelGenerationHudState {
         request.answerNowRequested = request.finalization.requestAnswerNow();
         if (request.answerNowRequested) {
             request.appendEvent(
-                    ActivityEventType.THOUGHT_STOPPED,
+                    ActivityEventType.STATUS,
                     "Preparing the best complete answer available."
             );
             request.state = ModelRequestState.FINALIZING;
@@ -111,10 +121,53 @@ public final class ModelGenerationHudState {
         return request.answerNowRequested;
     }
 
+    /**
+     * One presentation gate for model-only diagnostic rows. DATA and STATUS
+     * remain recorded internally but are user-visible only while Koil's
+     * config.json debug switch is enabled.
+     */
+    public static boolean isPresentationEventVisible(ActivityEventType type) {
+        if (type == null) return false;
+        return ModelDebugMode.enabled()
+                || (type != ActivityEventType.MODEL_DATA && type != ActivityEventType.STATUS);
+    }
+
+    /** Returns the exact semantic tag for a model-exposed cognitive channel. */
+    public static String exposedTag(ActivityEvent event) {
+        if (event == null || event.type() != ActivityEventType.THOUGHT_SUMMARY) return "";
+        String fallback = "THINKING";
+        JsonObject data = event.data();
+        if (data == null || !data.has("exposedTag")) return fallback;
+        try {
+            String raw = data.get("exposedTag").getAsString();
+            if (raw == null || raw.isBlank()) return fallback;
+            String clean = raw.strip().toUpperCase(java.util.Locale.ROOT)
+                    .replaceAll("[^A-Z0-9 _.-]+", " ")
+                    .replaceAll("\\s+", " ")
+                    .strip();
+            if ("THOUGHT".equals(clean)) clean = "THINKING";
+            return clean.isBlank() ? fallback : clean;
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    public static String exposedLabel(ActivityEvent event) {
+        String tag = exposedTag(event);
+        if (tag.isBlank()) return "Thinking";
+        StringBuilder label = new StringBuilder();
+        for (String part : tag.toLowerCase(java.util.Locale.ROOT).split(" ")) {
+            if (part.isBlank()) continue;
+            if (label.length() > 0) label.append(' ');
+            label.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        }
+        return label.length() == 0 ? "Thinking" : label.toString();
+    }
+
     public static synchronized void appendEvent(UUID requestId, ModelExecutionEvent event) {
         MutableRequest request = REQUESTS.get(requestId);
         if (request != null && event != null) {
-            request.appendEvent(map(event.type()), event.activity(), event.eventId(), event.summary(), event.data(), event.timestampMillis());
+            request.appendEvent(map(event), event.activity(), event.eventId(), event.summary(), event.data(), event.timestampMillis());
         }
     }
 
@@ -137,9 +190,19 @@ public final class ModelGenerationHudState {
                 request.activityState.id(),
                 !request.state.terminal()
         );
+        TelemetryCapabilityState telemetryState = telemetryState(request.state);
+        TelemetryStore.state(requestId, TelemetryStore.rootSpan(requestId), telemetryState,
+                request.state.name().toLowerCase(java.util.Locale.ROOT), request.detail);
+        TelemetryStore.capability(requestId, "model", "request", telemetryState,
+                request.state.name().toLowerCase(java.util.Locale.ROOT), request.detail);
+        TelemetryStore.event(requestId, TelemetryStore.rootSpan(requestId), "model_state", telemetryState,
+                request.state.name().toLowerCase(java.util.Locale.ROOT) + (request.detail.isBlank() ? "" : ": " + request.detail),
+                Map.of("model_state", request.state.name().toLowerCase(java.util.Locale.ROOT)), List.of());
         if (request.state.terminal()) {
             request.completedAtMillis = System.currentTimeMillis();
             request.resolveApproval(false);
+            TelemetryStore.finishRequest(requestId, telemetryState,
+                    request.state.name().toLowerCase(java.util.Locale.ROOT), request.detail);
         }
     }
 
@@ -156,6 +219,11 @@ public final class ModelGenerationHudState {
         }
         request.resolveApproval(false);
         CompletableFuture<Boolean> decision = new CompletableFuture<>();
+        String approvalSpanId = TelemetryStore.beginSpan(requestId, TelemetryStore.rootSpan(requestId),
+                TelemetrySpanKind.APPROVAL, title == null || title.isBlank() ? "Model approval" : title);
+        TelemetryStore.annotate(requestId, approvalSpanId, "message", message);
+        TelemetryStore.capability(requestId, "model", "approval", TelemetryCapabilityState.BLOCKED,
+                "awaiting_user_approval", message);
         request.approval = new MutableApproval(
                 new Approval(
                         title == null || title.isBlank() ? "Model approval" : title,
@@ -163,7 +231,8 @@ public final class ModelGenerationHudState {
                         approveLabel == null || approveLabel.isBlank() ? "Confirm" : approveLabel,
                         denyLabel == null || denyLabel.isBlank() ? "Deny" : denyLabel
                 ),
-                decision
+                decision,
+                approvalSpanId
         );
         return decision;
     }
@@ -218,6 +287,27 @@ public final class ModelGenerationHudState {
         }
     }
 
+    /** Upserts a structured activity event by stable id, useful for live model telemetry. */
+    public static synchronized void upsertEvent(
+            UUID requestId,
+            ActivityEventType type,
+            String eventId,
+            String summary,
+            JsonObject data
+    ) {
+        MutableRequest request = REQUESTS.get(requestId);
+        if (request != null) {
+            request.appendEvent(
+                    type,
+                    activityFor(type, summary),
+                    eventId == null ? "" : eventId,
+                    summary,
+                    data == null ? new JsonObject() : data,
+                    System.currentTimeMillis()
+            );
+        }
+    }
+
     public static synchronized void setPlan(
             UUID requestId,
             String planId,
@@ -257,6 +347,17 @@ public final class ModelGenerationHudState {
         MutableRequest request = REQUESTS.get(requestId);
         if (request != null && usage != null) {
             request.usage = usage;
+            String rootSpan = TelemetryStore.rootSpan(requestId);
+            TelemetryStore.metric(requestId, rootSpan, "prompt_tokens", usage.promptTokens());
+            TelemetryStore.metric(requestId, rootSpan, "completion_tokens", usage.completionTokens());
+            TelemetryStore.metric(requestId, rootSpan, "cached_prefix_tokens", usage.reusedPrefixTokens());
+            TelemetryStore.metric(requestId, rootSpan, "newly_evaluated_tokens",
+                    Math.max(0, usage.promptTokens() - usage.reusedPrefixTokens()));
+            TelemetryStore.metric(requestId, rootSpan, "queue_ms", usage.queueMillis());
+            TelemetryStore.metric(requestId, rootSpan, "time_to_first_token_ms", usage.timeToFirstTokenMillis());
+            TelemetryStore.metric(requestId, rootSpan, "tokens_per_second_x100", Math.round(usage.tokensPerSecond() * 100.0D));
+            TelemetryStore.metric(requestId, rootSpan, "kv_cache_hits", usage.reusedPrefixTokens() > 0 ? 1 : 0);
+            TelemetryStore.metric(requestId, rootSpan, "kv_cache_misses", usage.promptTokens() > usage.reusedPrefixTokens() ? 1 : 0);
         }
     }
 
@@ -303,6 +404,23 @@ public final class ModelGenerationHudState {
         for (MutableRequest request : REQUESTS.values()) {
             if (!request.state.terminal()) request.counters = current;
         }
+    }
+
+    /**
+     * Short-lived render cache used by HUD panels that query the same immutable
+     * projection multiple times in one frame. Runtime/control paths should keep
+     * using visibleSnapshot() for immediate state.
+     */
+    public static synchronized Snapshot visibleSnapshotForRender() {
+        long now = System.nanoTime();
+        if (renderVisibleSnapshotCachedAtNanos != 0L
+                && now - renderVisibleSnapshotCachedAtNanos <= RENDER_SNAPSHOT_CACHE_NANOS) {
+            return renderVisibleSnapshotCache;
+        }
+        Snapshot snapshot = visibleSnapshot();
+        renderVisibleSnapshotCache = snapshot;
+        renderVisibleSnapshotCachedAtNanos = now;
+        return snapshot;
     }
 
     public static synchronized Snapshot visibleSnapshot() {
@@ -554,7 +672,7 @@ public final class ModelGenerationHudState {
                 JsonObject data,
                 long timestampMillis
         ) {
-            String safe = cleanVisibleSummary(summary);
+            String safe = cleanEventSummary(type, summary);
             if (safe.isBlank()) {
                 return;
             }
@@ -575,6 +693,10 @@ public final class ModelGenerationHudState {
                 }
             }
             this.events.add(event);
+            TelemetryStore.event(this.requestId, TelemetryStore.rootSpan(this.requestId),
+                    "model_activity." + event.type().name().toLowerCase(java.util.Locale.ROOT),
+                    telemetryState(this.state), event.summary(),
+                    Map.of("event_id", event.eventId(), "activity", event.activityState().id()), List.of());
             while (this.events.size() > 128) {
                 this.events.remove(0);
             }
@@ -582,7 +704,8 @@ public final class ModelGenerationHudState {
 
         private String renderActivity() {
             String base = this.activity.toString().strip();
-            String timeline = ModelActivityPresentation.timeline(this.prompt, this.events, this.createdAtMillis);
+            List<ActivityEvent> visibleEvents = presentationEvents();
+            String timeline = ModelActivityPresentation.timeline(this.prompt, visibleEvents, this.createdAtMillis);
             String metrics = ModelActivityPresentation.requestMetrics(
                     this.usage,
                     this.createdAtMillis,
@@ -604,7 +727,14 @@ public final class ModelGenerationHudState {
             return base + "\n\n" + planText;
         }
 
+        private List<ActivityEvent> presentationEvents() {
+            return this.events.stream()
+                    .filter(event -> isPresentationEventVisible(event.type()))
+                    .toList();
+        }
+
         private Snapshot snapshot() {
+            List<ActivityEvent> visibleEvents = presentationEvents();
             return new Snapshot(
                     this.requestId,
                     this.prompt,
@@ -625,7 +755,7 @@ public final class ModelGenerationHudState {
                     this.activeToolId,
                     this.activeToolDetail,
                     renderActivity(),
-                    List.copyOf(this.events),
+                    visibleEvents,
                     this.plan == null ? null : this.plan.snapshot(),
                     this.automationRequest,
                     this.sessionNumber,
@@ -640,9 +770,27 @@ public final class ModelGenerationHudState {
             MutableApproval pending = this.approval;
             this.approval = null;
             if (pending != null) {
+                TelemetryStore.finishSpan(this.requestId, pending.telemetrySpanId,
+                        approved ? TelemetryCapabilityState.AVAILABLE : TelemetryCapabilityState.CANCELLED,
+                        approved ? "approved" : "denied", approved ? "User approved the request." : "User denied the request.");
+                TelemetryStore.capability(this.requestId, "model", "approval",
+                        approved ? TelemetryCapabilityState.AVAILABLE : TelemetryCapabilityState.CANCELLED,
+                        approved ? "approved" : "denied", "");
                 pending.decision.complete(approved);
             }
         }
+    }
+
+    private static TelemetryCapabilityState telemetryState(ModelRequestState state) {
+        if (state == null) return TelemetryCapabilityState.FAILED;
+        return switch (state) {
+            case FAILED -> TelemetryCapabilityState.FAILED;
+            case BLOCKED -> TelemetryCapabilityState.BLOCKED;
+            case CANCELLED, CANCELLING -> TelemetryCapabilityState.CANCELLED;
+            case COMPLETED -> TelemetryCapabilityState.AVAILABLE;
+            case QUEUED -> TelemetryCapabilityState.IDLE;
+            default -> TelemetryCapabilityState.ACTIVE;
+        };
     }
 
     private static String cleanVisibleSummary(String value) {
@@ -656,13 +804,33 @@ public final class ModelGenerationHudState {
         return clean.length() <= 420 ? clean : clean.substring(0, 419) + "…";
     }
 
+    /**
+     * Thought text is model-authored presentation content. Preserve it verbatim apart from newline
+     * normalization and outer whitespace so the UI can show the complete thought. Other activity
+     * events remain compact summaries because they are status/telemetry rows rather than prose.
+     */
+    private static String cleanEventSummary(ActivityEventType type, String value) {
+        if (type != ActivityEventType.THOUGHT_SUMMARY) {
+            return cleanVisibleSummary(value);
+        }
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\r\n", "\n").replace('\r', '\n').strip();
+    }
+
     public enum ActivityEventType {
         THOUGHT_SUMMARY,
         THOUGHT_STOPPED,
+        MODEL_DATA,
+        STATUS,
         PLAN_STEP,
         APPROVAL,
         TOOL_START,
         TOOL_PROGRESS,
+        SKILL_START,
+        SKILL_PROGRESS,
+        SKILL_RESULT,
         FILE,
         DIFF,
         COMMAND,
@@ -685,7 +853,7 @@ public final class ModelGenerationHudState {
         public ActivityEvent {
             type = type == null ? ActivityEventType.RESULT : type;
             activityState = activityState == null ? activityFor(type, summary) : activityState;
-            summary = cleanVisibleSummary(summary);
+            summary = cleanEventSummary(type, summary);
             eventId = eventId == null ? "" : eventId.strip();
             data = data == null ? new JsonObject() : data.deepCopy();
         }
@@ -698,10 +866,14 @@ public final class ModelGenerationHudState {
     private static ModelActivityState activityFor(ActivityEventType type, String summary) {
         return switch (type == null ? ActivityEventType.RESULT : type) {
             case THOUGHT_SUMMARY -> ModelActivityState.THINKING;
+            case MODEL_DATA, STATUS -> ModelActivityState.OBSERVING;
             case THOUGHT_STOPPED, CANCELLATION -> ModelActivityState.CANCELLED;
             case PLAN_STEP -> ModelActivityState.PLANNING;
             case APPROVAL -> ModelActivityState.AWAITING_APPROVAL;
             case TOOL_START, TOOL_PROGRESS -> ModelActivityState.fromLegacy(summary);
+            case SKILL_START -> ModelActivityState.DISCOVERING;
+            case SKILL_PROGRESS -> ModelActivityState.READING;
+            case SKILL_RESULT -> ModelActivityState.OBSERVING;
             case FILE -> ModelActivityState.READING;
             case DIFF -> ModelActivityState.COMPARING;
             case COMMAND -> ModelActivityState.INSPECTING;
@@ -724,14 +896,17 @@ public final class ModelGenerationHudState {
         REVISED
     }
 
-    private static ActivityEventType map(ModelExecutionEvent.Type type) {
+    private static ActivityEventType map(ModelExecutionEvent event) {
+        ModelExecutionEvent.Type type = event == null ? ModelExecutionEvent.Type.STATUS : event.type();
+        boolean skill = event != null && isSkillEvent(event.data());
         return switch (type) {
+            case STATUS -> ActivityEventType.STATUS;
             case THOUGHT_SUMMARY -> ActivityEventType.THOUGHT_SUMMARY;
             case PLAN_CREATED, PLAN_VALIDATED -> ActivityEventType.PLAN_STEP;
             case APPROVAL_REQUESTED, APPROVAL_ACCEPTED, APPROVAL_REJECTED -> ActivityEventType.APPROVAL;
-            case TOOL_SELECTED, TOOL_STARTED -> ActivityEventType.TOOL_START;
-            case TOOL_PROGRESS -> ActivityEventType.TOOL_PROGRESS;
-            case TOOL_RESULT -> ActivityEventType.RESULT;
+            case TOOL_SELECTED, TOOL_STARTED -> skill ? ActivityEventType.SKILL_START : ActivityEventType.TOOL_START;
+            case TOOL_PROGRESS -> skill ? ActivityEventType.SKILL_PROGRESS : ActivityEventType.TOOL_PROGRESS;
+            case TOOL_RESULT -> skill ? ActivityEventType.SKILL_RESULT : ActivityEventType.RESULT;
             case FILE_READ, FILE_SEARCHED, FILE_CREATED, FILE_MODIFIED, FILE_DELETED -> ActivityEventType.FILE;
             case DIFF_PRODUCED -> ActivityEventType.DIFF;
             case COMMAND_STARTED, COMMAND_OUTPUT, COMMAND_COMPLETED -> ActivityEventType.COMMAND;
@@ -742,6 +917,20 @@ public final class ModelGenerationHudState {
             case FINAL_RESULT -> ActivityEventType.RESULT;
             case CHECKPOINT -> ActivityEventType.CHECKPOINT;
         };
+    }
+
+    private static boolean isSkillEvent(JsonObject data) {
+        if (data == null) return false;
+        for (String key : new String[]{"skillId", "toolId"}) {
+            try {
+                if (!data.has(key) || data.get(key).isJsonNull()) continue;
+                String value = data.get(key).getAsString().strip().toLowerCase(java.util.Locale.ROOT);
+                if (key.equals("skillId") && !value.isBlank()) return true;
+                if (value.startsWith("skill.")) return true;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return false;
     }
 
     public record PlanStep(
@@ -839,10 +1028,12 @@ public final class ModelGenerationHudState {
     private static final class MutableApproval {
         private final Approval snapshot;
         private final CompletableFuture<Boolean> decision;
+        private final String telemetrySpanId;
 
-        private MutableApproval(Approval snapshot, CompletableFuture<Boolean> decision) {
+        private MutableApproval(Approval snapshot, CompletableFuture<Boolean> decision, String telemetrySpanId) {
             this.snapshot = snapshot;
             this.decision = decision;
+            this.telemetrySpanId = telemetrySpanId == null ? "" : telemetrySpanId;
         }
     }
 }

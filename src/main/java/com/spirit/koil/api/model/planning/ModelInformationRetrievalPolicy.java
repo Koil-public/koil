@@ -25,7 +25,7 @@ public final class ModelInformationRetrievalPolicy {
         if (!workspace && !minecraft && !internet && !koil) return "";
 
         StringBuilder policy = new StringBuilder("""
-                Information-efficiency contract: supplied tool definitions are the exact current capability and argument contract. Request only the smallest missing fact needed for the next decision, inspect its structured result, then stop gathering or make one narrower follow-up. Do not inventory capabilities, repeat unchanged observations, or fetch broad context speculatively.
+                Information-efficiency contract: supplied tool definitions are the exact current capability and argument contract. Request only the smallest missing fact needed for the next decision, inspect its structured result, then stop gathering or make one narrower follow-up. If a material factual uncertainty can be settled by one supplied evidence tool, call it promptly instead of repeatedly debating confidence. Do not inventory capabilities, repeat unchanged observations, or fetch broad context speculatively.
                 """.strip());
         if (workspace) {
             policy.append(" For workspace search, narrow path/fileGlob; use outputMode=count for totals, files for paths, matches for exact words/columns, and lines only when surrounding code is needed. Add contextBefore/contextAfter only when required. Read from an exact returned line with a small maxLines and follow nextStartLine only while missing evidence remains.");

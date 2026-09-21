@@ -27,7 +27,10 @@ public final class ModelConversation {
         }
         this.messages.add(message);
         this.characterCount += message.content().length();
-        trimToBounds();
+        // Conversation history is durable for the lifetime of this chat. Request-time
+        // context is bounded by snapshotWithin(...); adding a new /ask turn must never
+        // silently turn into a new chat by deleting earlier turns. Only an explicit
+        // /model reset clears the transcript.
     }
 
     public synchronized List<ModelMessage> snapshot() {
@@ -42,18 +45,42 @@ public final class ModelConversation {
     public synchronized List<ModelMessage> snapshotWithin(int maximumMessages, int maximumCharacters) {
         int messageLimit = Math.max(2, maximumMessages);
         int characterLimit = Math.max(256, maximumCharacters);
-        List<ModelMessage> selected = new ArrayList<>();
+        if (this.messages.isEmpty()) return List.of();
+
+        int start = this.messages.size();
         int selectedCharacters = 0;
-        for (int index = this.messages.size() - 1; index >= 0 && selected.size() < messageLimit; index--) {
+        int selectedMessages = 0;
+        for (int index = this.messages.size() - 1; index >= 0 && selectedMessages < messageLimit; index--) {
             ModelMessage message = this.messages.get(index);
             int length = message.content().length();
-            if (!selected.isEmpty() && selectedCharacters + length > characterLimit) {
-                break;
-            }
-            selected.add(0, message);
+            if (selectedMessages > 0 && selectedCharacters + length > characterLimit) break;
+            start = index;
             selectedCharacters += length;
+            selectedMessages++;
         }
-        while (!selected.isEmpty() && selected.get(0).role() == ModelRole.TOOL) {
+
+        // A provider history must start at a real user-turn boundary. If the bounded
+        // window begins inside an assistant/tool exchange, include the nearest user
+        // anchor even when doing so slightly exceeds the soft character/message budget.
+        // This prevents strict chat templates from receiving orphan assistant/tool rows.
+        int anchoredStart = start;
+        while (anchoredStart > 0 && this.messages.get(anchoredStart).role() != ModelRole.USER) {
+            anchoredStart--;
+        }
+        if (this.messages.get(anchoredStart).role() != ModelRole.USER) {
+            for (int index = start; index < this.messages.size(); index++) {
+                if (this.messages.get(index).role() == ModelRole.USER) {
+                    anchoredStart = index;
+                    break;
+                }
+            }
+        }
+
+        List<ModelMessage> selected = new ArrayList<>();
+        for (int index = anchoredStart; index < this.messages.size(); index++) {
+            selected.add(this.messages.get(index));
+        }
+        while (!selected.isEmpty() && selected.get(0).role() != ModelRole.USER) {
             selected.remove(0);
         }
         return List.copyOf(selected);
@@ -68,10 +95,4 @@ public final class ModelConversation {
         this.characterCount = 0;
     }
 
-    private void trimToBounds() {
-        while (this.messages.size() > this.maximumMessages || this.characterCount > this.maximumCharacters) {
-            ModelMessage removed = this.messages.remove(0);
-            this.characterCount -= removed.content().length();
-        }
-    }
 }

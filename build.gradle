@@ -24,6 +24,16 @@ if (devLaunchPropertiesFile.isFile()) {
 def devUsername = devLaunchProperties.getProperty("username", "Dev").trim()
 def devUuid = devLaunchProperties.getProperty("uuid", "").trim()
 def devJavaExecutable = devLaunchProperties.getProperty("javaExecutable", "").trim()
+def turboVecOs = System.getProperty("os.name", "").toLowerCase(Locale.ROOT)
+def turboVecLibraryFileName = turboVecOs.contains("win") ? "koil_turbovec.dll"
+        : turboVecOs.contains("mac") ? "libkoil_turbovec.dylib" : "libkoil_turbovec.so"
+def turboVecCargoFileName = turboVecOs.contains("win") ? "cargo.exe" : "cargo"
+def turboVecCargoHome = System.getenv("CARGO_HOME") ?: "${System.getProperty('user.home')}/.cargo"
+def turboVecCargoExecutable = file("${turboVecCargoHome}/bin/${turboVecCargoFileName}")
+def localTurboVecBridge = file("src/main/resources/native/turbovec-bridge/target/release/${turboVecLibraryFileName}")
+def turboVecDevelopmentLibrary = project.hasProperty('koilTurboVecLibrary')
+        ? project.property('koilTurboVecLibrary').toString()
+        : localTurboVecBridge.absolutePath
 
 repositories {
     maven { url 'https://maven.fabricmc.net/' }
@@ -82,6 +92,8 @@ dependencies {
     include 'org.yaml:snakeyaml:2.3'
     implementation 'org.scilab.forge:jlatexmath:1.0.7'
     include 'org.scilab.forge:jlatexmath:1.0.7'
+    implementation 'org.xerial:sqlite-jdbc:3.53.0.0'
+    include 'org.xerial:sqlite-jdbc:3.53.0.0'
 
     implementation 'com.fasterxml.jackson.core:jackson-core:2.15.2'
     implementation 'com.fasterxml.jackson.core:jackson-databind:2.15.2'
@@ -94,9 +106,30 @@ dependencies {
 }
 
 sourceSets {
+    main {
+        // Sync clients retain conflicting source snapshots for recovery; they are never compilable production sources.
+        java.exclude '**/*.sync-conflict-*.java'
+    }
     docIndex {
         java.srcDir 'tools/docindex/src/main/java'
     }
+}
+
+tasks.register('buildTurboVecBridge', Exec) {
+    group = 'build'
+    description = 'Builds the host TurboVec JNI bridge used by development launches.'
+    workingDir file('src/main/resources/native/turbovec-bridge')
+    onlyIf {
+        if (turboVecCargoExecutable.isFile()) return true
+        logger.lifecycle('TurboVec development bridge skipped: Cargo is unavailable; using Flat Java fallback.')
+        false
+    }
+    commandLine turboVecCargoExecutable.absolutePath, 'build', '--release', '--locked'
+    environment 'CARGO_TARGET_DIR', file('src/main/resources/native/turbovec-bridge/target').absolutePath
+    inputs.files(fileTree(workingDir) {
+        include 'Cargo.toml', 'Cargo.lock', 'src/**'
+    }).withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.file(localTurboVecBridge)
 }
 
 configurations.named('docIndexImplementation') {
@@ -126,12 +159,16 @@ tasks.register('docIndex', JavaExec) {
     mainClass = 'com.spirit.docindex.DocIndexMain'
     args layout.projectDirectory.asFile.absolutePath
 
-    inputs.files(fileTree('src/main/java') { include '**/*.java' })
+    inputs.files(fileTree('src/main/java') {
+        include '**/*.java'
+        exclude '**/*.sync-conflict-*.java'
+    })
             .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.files(fileTree('src/main/kotlin') { include '**/*.kt' })
             .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.files(fileTree('src/main/resources') {
         include '**/*.json', '**/*.mixins.json', '**/*.accesswidener', '**/*.ktl'
+        exclude 'native/turbovec-bridge/target/**'
     }).withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.files('build.gradle', 'settings.gradle', 'gradle.properties', 'docIndex.json')
             .withPathSensitivity(PathSensitivity.RELATIVE)
@@ -150,6 +187,25 @@ tasks.register('docIndexValidate', JavaExec) {
 
 tasks.named('build') {
     dependsOn tasks.named('docIndex')
+}
+
+tasks.register('runCodeIntelligenceProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.codeintelligence.CodeIntelligenceProof'
+}
+
+tasks.register('runCodebaseMemoryIntegrationProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.codeintelligence.CodebaseMemoryIntegrationProof'
+    jvmArgs '-Dkoil.codebaseMemory.runtimeRoot=' + file('run/koil/sys/model/runtime').absolutePath
+    if (project.hasProperty('codebaseMemoryExecutable')) {
+        jvmArgs '-Dkoil.codebaseMemory.executable=' + project.property('codebaseMemoryExecutable')
+    }
+    if (project.hasProperty('skipCodebaseMemoryBenchmark')) {
+        jvmArgs '-Dkoil.codebaseMemory.skipBenchmark=true'
+    }
 }
 
 def bundledModelDocumentation = fileTree('docs') {
@@ -180,6 +236,7 @@ def bundledModelKnowledgeIndex = layout.buildDirectory.file(
 )
 
 tasks.register('generateBundledModelKnowledgeIndex') {
+    dependsOn tasks.named('docIndex')
     inputs.files(bundledModelDocumentation)
     outputs.file(bundledModelKnowledgeIndex)
     doLast {
@@ -198,6 +255,8 @@ processResources {
     dependsOn tasks.named('generateBundledModelKnowledgeIndex')
     inputs.property "version", project.version
     inputs.files bundledModelDocumentation
+    // Local Cargo output is a developer artifact, never a mod resource or native distribution.
+    exclude 'native/turbovec-bridge/target/**'
 
     from(sourceSets.main.resources)
 
@@ -227,6 +286,10 @@ processResources {
     }
 
     from(layout.buildDirectory.dir('generated/koilModelKnowledge'))
+
+    from('THIRD-PARTY-NOTICES.md') {
+        into ''
+    }
 
     filesMatching("fabric.mod.json") {
         expand "version": project.version
@@ -347,6 +410,12 @@ tasks.register('runLocalModelCatalogProof', JavaExec) {
     mainClass = 'com.spirit.koil.api.model.catalog.LocalModelCatalogProof'
 }
 
+tasks.register('runLlamaCppRuntimeCatalogProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.install.LlamaCppRuntimeCatalogProof'
+}
+
 tasks.register('runLocalModelFamilySelectionProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
@@ -359,10 +428,22 @@ tasks.register('runLocalModelCatalogChatRowProof', JavaExec) {
     mainClass = 'com.spirit.koil.api.model.chat.LocalModelCatalogChatRowProof'
 }
 
+tasks.register('runLocalModelCatalogChatPanelProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.chat.LocalModelCatalogChatStateProof'
+}
+
 tasks.register('runLocalModelCommandBridgeProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'com.spirit.koil.api.model.LocalModelCommandBridgeProof'
+}
+
+tasks.register('runKoilRemoteScreenRegistryProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.screen.KoilRemoteScreenRegistryProof'
 }
 
 tasks.register('runLocalModelCatalogRemoteProof', JavaExec) {
@@ -445,6 +526,158 @@ tasks.register('runModelAgentPlatformProof', JavaExec) {
     mainClass = 'com.spirit.koil.api.model.testing.ModelAgentPlatformProof'
 }
 
+tasks.register('runInternetResearchProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.tool.InternetResearchProof'
+}
+
+tasks.register('runScraplingMcpIntegrationProbe', JavaExec) {
+    group = 'verification'
+    description = 'Runs the explicitly configured Scrapling MCP provider against one public fixture page.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.tool.ScraplingMcpIntegrationProbe'
+}
+
+tasks.register('runMcpCatalogueIntegrationProbe', JavaExec) {
+    group = 'verification'
+    description = 'Runs the model-facing MCP catalogue against its bounded public discovery source.'
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.tool.McpCatalogueIntegrationProbe'
+}
+
+tasks.register('runToolRecoveryAdvisorProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.ToolRecoveryAdvisorProof'
+}
+
+tasks.register('runAutomationExecutionKnowledgeAdapterProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.AutomationExecutionKnowledgeAdapterProof'
+}
+
+tasks.register('runContextIntelligenceProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.context.ContextIntelligenceProof'
+}
+
+tasks.register('runContextArtifactRetrievalAdapterProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.ContextArtifactRetrievalAdapterProof'
+}
+
+tasks.register('runRetrievalEngineProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.RetrievalEngineProof'
+}
+
+tasks.register('runKnowledgeStorageProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.KnowledgeStorageProof'
+}
+
+tasks.register('runExactKnowledgeIndexProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.ExactKnowledgeIndexProof'
+}
+
+tasks.register('runHybridRetrievalProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.HybridRetrievalProof'
+}
+
+tasks.register('runTurboVecBridgeProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.TurboVecBridgeProof'
+    if (!turboVecDevelopmentLibrary.isEmpty()) {
+        jvmArgs '-Dkoil.turbovec.library=' + turboVecDevelopmentLibrary
+    }
+}
+
+tasks.register('runDevelopmentTurboVecBridgeProof', JavaExec) {
+    dependsOn classes
+    if (!project.hasProperty('koilTurboVecLibrary')) {
+        dependsOn tasks.named('buildTurboVecBridge')
+    }
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.TurboVecBridgeProof'
+    systemProperty 'koil.turbovec.required', 'true'
+    if (!turboVecDevelopmentLibrary.isEmpty()) {
+        jvmArgs '-Dkoil.turbovec.library=' + turboVecDevelopmentLibrary
+    }
+}
+
+tasks.register('runVectorIndexPersistenceProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.VectorIndexPersistenceProof'
+}
+
+tasks.register('runLlamaCppEmbeddingProviderProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.provider.llamacpp.LlamaCppEmbeddingProviderProof'
+}
+
+tasks.register('runKnowledgeSourceProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.KnowledgeSourceProof'
+}
+
+tasks.register('runSemanticToolCapabilityRetrievalProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.SemanticToolCapabilityRetrievalProof'
+}
+
+tasks.register('runMcpCatalogueRetrievalProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.tool.McpCatalogueRetrievalProof'
+}
+
+tasks.register('runKoilSkillRegistryProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.skill.KoilSkillRegistryProof'
+}
+
+tasks.register('runInternetResearchKnowledgeAdapterProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.InternetResearchKnowledgeAdapterProof'
+}
+
+tasks.register('runRetrievalMigrationProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.RetrievalMigrationProof'
+}
+
+tasks.register('runRetrievalBenchmarkProof', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.RetrievalBenchmarkProof'
+}
+
+tasks.register('runRetrievalBenchmark', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'com.spirit.koil.api.model.retrieval.RetrievalBenchmark'
+}
+
 tasks.register('runRichChatSectionFormattingProof', JavaExec) {
     dependsOn classes
     classpath = sourceSets.main.runtimeClasspath
@@ -488,12 +721,20 @@ loom {
             if (!devUuid.isEmpty()) {
                 programArgs "--uuid", devUuid
             }
+            // Development-only override for a locally compiled JNI bridge. Release
+            // builds still require a hash-qualified managed native artifact.
+            if (!turboVecDevelopmentLibrary.isEmpty()) {
+                vmArg '-Dkoil.turbovec.library=' + turboVecDevelopmentLibrary
+            }
         }
     }
 }
 
 tasks.named("runClient").configure {
     dependsOn tasks.named("verifyRunClientClasses")
+    if (!project.hasProperty('koilTurboVecLibrary')) {
+        dependsOn tasks.named('buildTurboVecBridge')
+    }
 }
 
 java {

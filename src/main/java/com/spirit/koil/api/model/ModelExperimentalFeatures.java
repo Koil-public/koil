@@ -43,7 +43,7 @@ public final class ModelExperimentalFeatures {
             JsonObject root = JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
             return new Snapshot(
                     bool(root, "persistentConversationHistory"),
-                    bool(root, "persistentAssociativeMemory"),
+                    bool(root, "persistentKnowledge") || bool(root, "persistentAssociativeMemory"),
                     bool(root, "expertPrefetchExperimentEnabled"),
                     bool(root, "completionModeEnabled"),
                     bool(root, "noFailEnabled")
@@ -56,14 +56,12 @@ public final class ModelExperimentalFeatures {
     private static void save(Snapshot settings) {
         Path path = ColibriConfigurationStore.DEFAULT_PATH;
         try {
-            JsonObject root = Files.isRegularFile(path)
+        JsonObject root = Files.isRegularFile(path)
                     ? JsonParser.parseString(Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject()
                     : new JsonObject();
-            root.addProperty("persistentConversationHistory", settings.persistentConversationHistory());
-            root.addProperty("persistentAssociativeMemory", settings.persistentAssociativeMemory());
-            // Remove the legacy switch: Gigatoken is now an automatic runtime
-            // accelerator selected only after exact tokenizer qualification.
-            root.remove("gigatokenEnabled");
+        root.addProperty("persistentConversationHistory", settings.persistentConversationHistory());
+        root.addProperty("persistentKnowledge", settings.persistentKnowledge());
+        root.addProperty("persistentAssociativeMemory", settings.persistentAssociativeMemory());
             root.addProperty("expertPrefetchExperimentEnabled", settings.expertPrefetchEnabled());
             root.addProperty("completionModeEnabled", settings.completionModeEnabled());
             root.addProperty("noFailEnabled", settings.noFailEnabled());
@@ -84,6 +82,9 @@ public final class ModelExperimentalFeatures {
 
     public enum Feature {
         PERSISTENT_CONVERSATION_HISTORY,
+        PERSISTENT_KNOWLEDGE,
+        /** @deprecated Kept as a configuration/UI migration alias for {@link #PERSISTENT_KNOWLEDGE}. */
+        @Deprecated
         PERSISTENT_ASSOCIATIVE_MEMORY,
         EXPERT_PREFETCH,
         COMPLETION_MODE,
@@ -101,7 +102,7 @@ public final class ModelExperimentalFeatures {
         public boolean enabled(Feature feature) {
             return switch (feature) {
                 case PERSISTENT_CONVERSATION_HISTORY -> persistentConversationHistory;
-                case PERSISTENT_ASSOCIATIVE_MEMORY -> persistentAssociativeMemory;
+                case PERSISTENT_KNOWLEDGE, PERSISTENT_ASSOCIATIVE_MEMORY -> persistentKnowledge();
                 case EXPERT_PREFETCH -> expertPrefetchEnabled;
                 case COMPLETION_MODE -> completionModeEnabled;
                 case NO_FAIL -> noFailEnabled;
@@ -110,11 +111,13 @@ public final class ModelExperimentalFeatures {
         private Snapshot with(Feature feature, boolean value) {
             return new Snapshot(
                     feature == Feature.PERSISTENT_CONVERSATION_HISTORY ? value : persistentConversationHistory,
-                    feature == Feature.PERSISTENT_ASSOCIATIVE_MEMORY ? value : persistentAssociativeMemory,
+                    feature == Feature.PERSISTENT_KNOWLEDGE || feature == Feature.PERSISTENT_ASSOCIATIVE_MEMORY ? value : persistentAssociativeMemory,
                     feature == Feature.EXPERT_PREFETCH ? value : expertPrefetchEnabled,
                     feature == Feature.COMPLETION_MODE ? value : completionModeEnabled,
                     feature == Feature.NO_FAIL ? value : noFailEnabled
             );
         }
+
+        public boolean persistentKnowledge() { return persistentAssociativeMemory; }
     }
 }

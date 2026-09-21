@@ -27,6 +27,15 @@ public final class LocalModelAutomationEligibility {
     }
 
     public static Evaluation evaluate(LocalModelCatalogEntry entry) {
+        return evaluate(entry, entry != null && entry.toolCalling());
+    }
+
+    /**
+     * Evaluates the selected model using Koil's already-resolved tool gate.
+     * Catalog capability is not re-checked here, preventing stale discovery
+     * metadata from vetoing stronger artifact/runtime evidence.
+     */
+    public static Evaluation evaluate(LocalModelCatalogEntry entry, boolean toolsEnabled) {
         if (entry == null) {
             return new Evaluation(
                     false,
@@ -36,20 +45,18 @@ public final class LocalModelAutomationEligibility {
                     "No selected model is available for Automation Mode. /ask remains available."
             );
         }
-        boolean eligible = supportsAutomationTools(entry);
+        boolean quarantined = LocalModelReliabilityStore.quarantined(entry);
+        boolean eligible = toolsEnabled && !quarantined;
         String detail;
         if (eligible) {
-            detail = entry.displayName() + " is eligible for Automation Mode because its model/runtime metadata declares compatible tool calling.";
-        } else if (LocalModelReliabilityStore.quarantined(entry)) {
+            detail = entry.displayName() + " is eligible for Automation Mode because the selected model/runtime tool gate is enabled.";
+        } else if (quarantined) {
             LocalModelReliabilityStore.Snapshot reliability = LocalModelReliabilityStore.snapshot(entry.modelId());
             detail = entry.displayName() + " is temporarily blocked from Automation because Koil recorded a major runtime/tool-protocol failure"
                     + (reliability.lastCode().isBlank() ? "." : ": " + reliability.lastCode() + ".")
                     + " Chat remains available; inspect or reset this evidence with /model reliability.";
-        } else if (!entry.toolCalling()) {
-            detail = entry.displayName() + " is not capable of Automation Mode because its provider "
-                    + "or model metadata does not declare compatible tool calls. /ask remains available.";
         } else {
-            detail = entry.displayName() + " is not currently available for Automation Mode. /ask remains available.";
+            detail = entry.displayName() + " does not currently have enough positive model/runtime evidence to enable the tool gate. /ask remains available.";
         }
         return new Evaluation(
                 eligible,

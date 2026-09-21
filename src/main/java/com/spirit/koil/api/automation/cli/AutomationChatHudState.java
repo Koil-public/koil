@@ -9,6 +9,7 @@ import com.spirit.koil.api.model.KoilLifetimeCounters;
 import com.spirit.koil.api.model.chat.ModelActivityTreeGlyphs;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
 import com.spirit.koil.api.model.chat.ModelToolActivityPresentation;
+import com.spirit.koil.api.model.chat.ModelRequestStatusPresentation;
 import com.spirit.koil.api.model.chat.ModelToolCallPresentation;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
@@ -23,6 +24,7 @@ public final class AutomationChatHudState {
     private static Text tool = Text.empty();
     private static String activeToolCallId = "";
     private static String activeToolState = "idle";
+    private static String activeToolLabel = "";
     private static String activeToolDetail = "";
     private static boolean toolRunning;
     private static boolean toolOnlySession;
@@ -35,7 +37,7 @@ public final class AutomationChatHudState {
     }
 
     public static synchronized void show(Text text, String newState) {
-        header = Text.empty();
+        ensureExecutorHeader();
         prompt = Text.empty();
         active = text == null ? Text.empty() : text;
         actions = List.of();
@@ -55,6 +57,7 @@ public final class AutomationChatHudState {
 
     public static synchronized void showHeader(Text headerText, Text promptText, Text activeText, String newState, List<Action> newActions) {
         header = headerText == null ? Text.empty() : headerText;
+        ensureExecutorHeader();
         prompt = promptText == null ? Text.empty() : promptText;
         active = activeText == null ? Text.empty() : activeText;
         actions = newActions == null ? List.of() : List.copyOf(newActions);
@@ -73,6 +76,7 @@ public final class AutomationChatHudState {
         tool = Text.empty();
         activeToolCallId = "";
         activeToolState = "idle";
+        activeToolLabel = "";
         activeToolDetail = "";
         toolRunning = false;
         toolOnlySession = false;
@@ -87,6 +91,7 @@ public final class AutomationChatHudState {
     }
 
     public static synchronized Text header() {
+        ensureExecutorHeader();
         return header;
     }
 
@@ -110,23 +115,31 @@ public final class AutomationChatHudState {
         AutomationRuntimeStatus.Snapshot executor = AutomationRuntimeStatus.snapshot();
         String rawState;
         String rawDetail;
+        String explicitLabel = "";
         if (executor.active()) {
             rawState = executor.state();
             rawDetail = executor.detail();
         } else if (toolRunning) {
             rawState = activeToolState;
             rawDetail = activeToolDetail;
+            explicitLabel = activeToolLabel;
         } else {
             return Text.empty();
         }
         String semanticState = AutomationStateColors.normalizeState(rawState);
-        String label = titleCase(semanticState);
+        String label = explicitLabel.isBlank() ? titleCase(semanticState) : explicitLabel;
         String detail = conciseExecutorDetail(rawDetail, label);
+        if (detail.isBlank()) detail = "executor task";
+        long activeSince = executor.active() ? executor.updatedAtMillis() : updatedAt;
+        long elapsed = Math.max(0L, System.currentTimeMillis() - activeSince);
+        if (elapsed >= ModelRequestStatusPresentation.ELAPSED_HINT_MILLIS) {
+            detail = detail.isBlank() ? compactDuration(elapsed) : detail + " · " + compactDuration(elapsed);
+        }
         int color = AutomationStateColors.color(semanticState) & 0x00FFFFFF;
         Text line = Text.literal("@_: ").formatted(Formatting.DARK_GRAY)
                 .append(SlidingStatusText.styled(label, semanticState, color));
         if (!detail.isBlank()) {
-            line = line.copy().append(Text.literal(": " + detail).formatted(Formatting.GRAY));
+            line = line.copy().append(Text.literal(" | " + detail).formatted(Formatting.GRAY));
         }
         return line;
     }
@@ -148,9 +161,11 @@ public final class AutomationChatHudState {
         String summary = ModelToolCallPresentation.callSummary(call);
         activeToolCallId = call == null ? "" : call.id();
         activeToolState = activity.state().id();
+        activeToolLabel = activity.activeLabel();
         activeToolDetail = activity.detail();
         toolRunning = true;
         visible = true;
+        ensureExecutorHeader();
         state = "tool_active";
         tool = Text.literal(ModelActivityTreeGlyphs.BRANCH + " ").formatted(Formatting.DARK_GRAY)
                 .append(Text.literal(summary).formatted(Formatting.GRAY))
@@ -164,6 +179,7 @@ public final class AutomationChatHudState {
         if (!activeToolCallId.isBlank() && !activeToolCallId.equals(callId)) return;
         toolRunning = false;
         activeToolState = result == null ? "failed" : result.status();
+        activeToolLabel = "";
         activeToolDetail = "";
         String name = ModelToolCallPresentation.toolName(call == null ? "" : call.toolId());
         String status = result == null ? "FAILED" : result.status().replace('_', ' ').toUpperCase(java.util.Locale.ROOT);
@@ -181,6 +197,26 @@ public final class AutomationChatHudState {
         if (toolRunning) return true;
         return toolOnlySession && !tool.getString().isBlank()
                 && System.currentTimeMillis() - updatedAt <= TOOL_RESULT_VISIBILITY_MILLIS;
+    }
+
+
+    /**
+     * The Executor popup always owns an Executor/session header while visible.
+     * Some live-status paths historically updated only the active body and left
+     * the header empty, which made the popup appear detached from its session.
+     */
+    private static void ensureExecutorHeader() {
+        if (!visible && !toolRunning && !toolOnlySession && header != null && !header.getString().isBlank()) {
+            return;
+        }
+        if (header != null && !header.getString().isBlank()) return;
+        try {
+            header = AutomationCliViewModel.automationChatHeader();
+        } catch (Throwable ignored) {
+            header = Text.literal("Executor").formatted(Formatting.GRAY)
+                    .append(Text.literal(" | ").formatted(Formatting.DARK_GRAY))
+                    .append(Text.literal("session kes-00000").formatted(Formatting.WHITE));
+        }
     }
 
     private static void beginToolOnlySession() {
@@ -202,6 +238,7 @@ public final class AutomationChatHudState {
         tool = Text.empty();
         activeToolCallId = "";
         activeToolState = "idle";
+        activeToolLabel = "";
         activeToolDetail = "";
         toolRunning = false;
     }
@@ -238,6 +275,14 @@ public final class AutomationChatHudState {
     private static String compact(String value, int maximum) {
         String clean = value == null ? "" : value.replaceAll("\\s+", " ").strip();
         return clean.length() <= maximum ? clean : clean.substring(0, maximum - 1) + "…";
+    }
+
+    private static String compactDuration(long millis) {
+        long seconds = Math.max(0L, millis) / 1_000L;
+        if (seconds < 60L) return seconds + "s";
+        long minutes = seconds / 60L;
+        long remainder = seconds % 60L;
+        return remainder == 0L ? minutes + "m" : minutes + "m " + remainder + "s";
     }
 
     private static String conciseExecutorDetail(String value, String statusLabel) {

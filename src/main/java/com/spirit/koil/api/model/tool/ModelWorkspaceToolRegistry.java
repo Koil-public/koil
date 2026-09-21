@@ -7,7 +7,11 @@ import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolDefinition;
 import com.spirit.koil.api.model.ModelToolResult;
+import com.spirit.koil.api.model.ToolExecutionPolicy;
+import com.spirit.koil.api.model.StagedToolPayload;
+import com.spirit.koil.api.model.ToolPostcondition;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
+import com.spirit.koil.api.model.codeintelligence.CodeIntelligenceService;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -25,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -57,7 +62,7 @@ public final class ModelWorkspaceToolRegistry {
             "automation.ktl_apply"
     );
     private static final Map<String, ModelToolDefinition> DEFINITIONS = definitionsInternal();
-    private static final String VERSION = "model-workspace-tools-v5:"
+    private static final String VERSION = "model-workspace-tools-v6:"
             + Integer.toHexString(DEFINITIONS.keySet().hashCode());
 
     private ModelWorkspaceToolRegistry() {
@@ -73,6 +78,33 @@ public final class ModelWorkspaceToolRegistry {
 
     public static boolean supports(String toolId) {
         return toolId != null && DEFINITIONS.containsKey(toolId);
+    }
+
+    /**
+     * Builds a side-effect-free mutation preview for tools whose execution
+     * policy explicitly opts into STAGE_PAYLOAD. The returned fingerprints are
+     * later revalidated immediately before commit.
+     */
+    public static Optional<StagedToolPayload> stageMutation(ModelToolCall call) throws IOException {
+        if (call == null || call.toolId().isBlank()) return Optional.empty();
+        ModelToolDefinition definition = DEFINITIONS.get(call.toolId());
+        if (definition == null
+                || definition.executionPolicy().preparation() != ToolExecutionPolicy.PreparationMode.STAGE_PAYLOAD) {
+            return Optional.empty();
+        }
+        return Optional.of(stageWorkspaceMutation(call));
+    }
+
+    /** Rechecks every staged filesystem fingerprint without performing writes. */
+    public static boolean stagedMutationStillFresh(StagedToolPayload payload, ModelToolCall call) {
+        if (payload == null || call == null || !payload.toolId().equals(call.toolId())) return false;
+        try {
+            StagedToolPayload current = stageWorkspaceMutation(call);
+            return payload.resourceFingerprints().equals(current.resourceFingerprints())
+                    && payload.postconditions().equals(current.postconditions());
+        } catch (IOException | RuntimeException failure) {
+            return false;
+        }
     }
 
     public static CompletableFuture<ModelToolResult> execute(
@@ -100,6 +132,20 @@ public final class ModelWorkspaceToolRegistry {
             UUID displayRequestId,
             ModelToolCall call,
             boolean preapproved
+    ) {
+        return execute(displayRequestId, call, preapproved, null);
+    }
+
+    /**
+     * Executes a workspace call while preserving the normal approval flow. When
+     * a staged payload is supplied, its source/destination fingerprints are
+     * revalidated after approval and immediately before the first side effect.
+     */
+    public static CompletableFuture<ModelToolResult> execute(
+            UUID displayRequestId,
+            ModelToolCall call,
+            boolean preapproved,
+            StagedToolPayload stagedPayload
     ) {
         if (call == null || !supports(call.toolId())) {
             return CompletableFuture.completedFuture(failure(call, "unknown_tool", "Unknown workspace tool."));
@@ -138,6 +184,15 @@ public final class ModelWorkspaceToolRegistry {
             }
             return CompletableFuture.supplyAsync(() -> {
                 try {
+                    if (stagedPayload != null && !stagedMutationStillFresh(stagedPayload, call)) {
+                        return new ModelToolResult(
+                                call.id(), call.toolId(), "stale", new JsonObject(),
+                                "prepared_state_changed",
+                                "The staged filesystem state changed after preparation or approval; restage from current state.",
+                                System.currentTimeMillis(), System.currentTimeMillis(), "failed",
+                                List.of(), true, false, "approved"
+                        );
+                    }
                     return executeBlocking(call);
                 } catch (StaleFileException stale) {
                     JsonObject output = new JsonObject();
@@ -153,6 +208,9 @@ public final class ModelWorkspaceToolRegistry {
                     return failure(call, "workspace_operation_failed", message(failure));
                 }
             });
+        }).thenApply(result -> {
+            notifyCodeIntelligenceAfterMutation(call, result);
+            return result;
         });
     }
 
@@ -177,6 +235,18 @@ public final class ModelWorkspaceToolRegistry {
         };
     }
 
+    /** File authority stays here; graph freshness is a best-effort post-commit observation. */
+    private static void notifyCodeIntelligenceAfterMutation(ModelToolCall call, ModelToolResult result) {
+        if (call == null || result == null || !MUTATING_TOOLS.contains(call.toolId()) || !"completed".equals(result.status())) return;
+        try {
+            String workspace = result.output().has("workspace") ? result.output().get("workspace").getAsString() : "";
+            ModelWorkspaceRegistry.Workspace root = ModelWorkspaceRegistry.workspaces().get(workspace);
+            if (root != null) CodeIntelligenceService.instance().workspaceChanged(root.root());
+        } catch (RuntimeException ignored) {
+            // A freshness hint must never invalidate a completed, approved filesystem mutation.
+        }
+    }
+
     private static ModelToolResult listRoots(ModelToolCall call) {
         JsonArray roots = new JsonArray();
         ModelWorkspaceRegistry.workspaces().values().stream()
@@ -195,7 +265,7 @@ public final class ModelWorkspaceToolRegistry {
 
     private static ModelToolResult list(ModelToolCall call) throws IOException {
         JsonObject arguments = call.arguments();
-        String workspaceId = workspaceString(arguments, "workspace");
+        String workspaceId = readWorkspaceString(arguments, "workspace");
         String relative = optionalString(arguments, "path", "");
         int depth = boundedInt(arguments, "depth", 1, 1, 4);
         ModelWorkspaceRegistry.ResolvedPath resolved =
@@ -233,7 +303,7 @@ public final class ModelWorkspaceToolRegistry {
     private static ModelToolResult read(ModelToolCall call) throws IOException {
         JsonObject arguments = call.arguments();
         ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
-                workspaceString(arguments, "workspace"),
+                readWorkspaceString(arguments, "workspace"),
                 requiredString(arguments, "path"),
                 false
         );
@@ -276,7 +346,7 @@ public final class ModelWorkspaceToolRegistry {
     private static ModelToolResult stat(ModelToolCall call) throws IOException {
         JsonObject arguments = call.arguments();
         ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
-                workspaceString(arguments, "workspace"),
+                readWorkspaceString(arguments, "workspace"),
                 optionalString(arguments, "path", ""),
                 false
         );
@@ -323,7 +393,7 @@ public final class ModelWorkspaceToolRegistry {
                 MAXIMUM_SEARCH_RESULTS / Math.max(1, 1 + contextBefore + contextAfter)))
                 : requestedResults;
         ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
-                workspaceString(arguments, "workspace"),
+                readWorkspaceString(arguments, "workspace"),
                 optionalString(arguments, "path", ""),
                 false
         );
@@ -767,6 +837,180 @@ public final class ModelWorkspaceToolRegistry {
         return completed(call, output, "KTL file validated, applied, and reloaded.");
     }
 
+    private static StagedToolPayload stageWorkspaceMutation(ModelToolCall call) throws IOException {
+        JsonObject arguments = call.arguments();
+        LinkedHashMap<String, String> fingerprints = new LinkedHashMap<>();
+        JsonObject preview = new JsonObject();
+        ArrayList<ToolPostcondition> postconditions = new ArrayList<>();
+        preview.addProperty("tool", call.toolId());
+        switch (call.toolId()) {
+            case "workspace.mkdir" -> {
+                ModelWorkspaceRegistry.ResolvedPath target = inspectPath(arguments, "workspace", "path", true);
+                if (target.relativePath().isBlank()) throw new IOException("A directory path is required.");
+                if (Files.exists(target.path())) throw new IOException("Directory or file already exists.");
+                requireExistingParent(target.path());
+                fingerprintAbsent(fingerprints, target);
+                previewTarget(preview, target, "directory_created");
+                postconditions.add(ToolPostcondition.directoryExists(target.workspace().id(), target.relativePath()));
+            }
+            case "workspace.create" -> {
+                ModelWorkspaceRegistry.ResolvedPath target = inspectPath(arguments, "workspace", "path", true);
+                if (target.relativePath().isBlank()) throw new IOException("A file path is required.");
+                if (Files.exists(target.path())) throw new IOException("File already exists; use workspace.write or workspace.replace.");
+                requireExistingParent(target.path());
+                byte[] resulting = boundedContent(arguments).getBytes(StandardCharsets.UTF_8);
+                fingerprintAbsent(fingerprints, target);
+                previewMutation(preview, target, "created", new byte[0], resulting);
+                postconditions.add(ToolPostcondition.fileHash(target.workspace().id(), target.relativePath(), sha256(resulting)));
+            }
+            case "workspace.write" -> {
+                ModelWorkspaceRegistry.ResolvedPath target = inspectExistingText(arguments, "workspace", "path");
+                byte[] previous = Files.readAllBytes(target.path());
+                requireExpectedHash(arguments, previous);
+                byte[] resulting = boundedContent(arguments).getBytes(StandardCharsets.UTF_8);
+                fingerprintFile(fingerprints, target, previous);
+                previewMutation(preview, target, "modified", previous, resulting);
+                postconditions.add(ToolPostcondition.fileHash(target.workspace().id(), target.relativePath(), sha256(resulting)));
+            }
+            case "workspace.append" -> {
+                ModelWorkspaceRegistry.ResolvedPath target = inspectExistingText(arguments, "workspace", "path");
+                byte[] previous = Files.readAllBytes(target.path());
+                requireExpectedHash(arguments, previous);
+                String addition = boundedContent(arguments);
+                byte[] resulting = (new String(previous, StandardCharsets.UTF_8) + addition).getBytes(StandardCharsets.UTF_8);
+                if (resulting.length > MAXIMUM_FILE_BYTES) throw new IOException("Appended file exceeds the 262144 b model-tool limit.");
+                fingerprintFile(fingerprints, target, previous);
+                previewMutation(preview, target, "modified", previous, resulting);
+                preview.addProperty("charactersAppended", addition.length());
+                postconditions.add(ToolPostcondition.fileHash(target.workspace().id(), target.relativePath(), sha256(resulting)));
+            }
+            case "workspace.replace" -> {
+                ModelWorkspaceRegistry.ResolvedPath target = inspectExistingText(arguments, "workspace", "path");
+                byte[] previous = Files.readAllBytes(target.path());
+                requireExpectedHash(arguments, previous);
+                String find = requiredString(arguments, "find");
+                String replacement = optionalString(arguments, "replacement", "");
+                String content = new String(previous, StandardCharsets.UTF_8);
+                int occurrences = countOccurrences(content, find);
+                int expected = boundedInt(arguments, "expectedOccurrences", 1, 1, 1000);
+                if (occurrences != expected) {
+                    throw new IOException("Expected " + expected + " occurrence(s), found " + occurrences + "; no file was changed.");
+                }
+                byte[] resulting = content.replace(find, replacement).getBytes(StandardCharsets.UTF_8);
+                if (resulting.length > MAXIMUM_FILE_BYTES) throw new IOException("Updated file exceeds the 262144 b limit.");
+                fingerprintFile(fingerprints, target, previous);
+                previewMutation(preview, target, "modified", previous, resulting);
+                preview.addProperty("expectedOccurrences", expected);
+                postconditions.add(ToolPostcondition.fileHash(target.workspace().id(), target.relativePath(), sha256(resulting)));
+            }
+            case "workspace.copy", "workspace.move" -> {
+                ModelWorkspaceRegistry.ResolvedPath source = inspectExistingText(arguments, "workspace", "path");
+                ModelWorkspaceRegistry.ResolvedPath destination = inspectPath(arguments, "destinationWorkspace", "destinationPath", true);
+                if (destination.relativePath().isBlank()) throw new IOException("A destination file path is required.");
+                rejectSameTarget(source, destination);
+                if (Files.exists(destination.path())) throw new IOException("Destination already exists; no file was changed.");
+                requireExistingParent(destination.path());
+                byte[] content = Files.readAllBytes(source.path());
+                requireExpectedHash(arguments, content);
+                fingerprintFile(fingerprints, source, content);
+                fingerprintAbsent(fingerprints, destination);
+                previewTarget(preview, destination, call.toolId().endsWith("move") ? "moved" : "copied");
+                preview.addProperty("sourceWorkspace", source.workspace().id());
+                preview.addProperty("sourcePath", source.relativePath());
+                preview.addProperty("sourceContentHash", sha256(content));
+                postconditions.add(ToolPostcondition.fileHash(destination.workspace().id(), destination.relativePath(), sha256(content)));
+                if (call.toolId().endsWith("move")) {
+                    postconditions.add(ToolPostcondition.pathAbsent(source.workspace().id(), source.relativePath()));
+                } else {
+                    postconditions.add(ToolPostcondition.fileUnchanged(source.workspace().id(), source.relativePath(), sha256(content)));
+                }
+            }
+            case "workspace.delete" -> {
+                ModelWorkspaceRegistry.ResolvedPath target = inspectExistingText(arguments, "workspace", "path");
+                byte[] previous = Files.readAllBytes(target.path());
+                requireExpectedHash(arguments, previous);
+                fingerprintFile(fingerprints, target, previous);
+                previewTarget(preview, target, "deleted");
+                preview.addProperty("previousContentHash", sha256(previous));
+                preview.addProperty("recoverable", true);
+                postconditions.add(ToolPostcondition.pathAbsent(target.workspace().id(), target.relativePath()));
+            }
+            default -> throw new IOException("Tool does not support staged workspace mutation: " + call.toolId());
+        }
+        return new StagedToolPayload(call.toolId(), fingerprints, preview, postconditions);
+    }
+
+    private static ModelWorkspaceRegistry.ResolvedPath inspectPath(
+            JsonObject arguments,
+            String workspaceKey,
+            String pathKey,
+            boolean forWrite
+    ) throws IOException {
+        String workspace = workspaceString(arguments, workspaceKey);
+        String path = requiredString(arguments, pathKey);
+        return ModelWorkspaceRegistry.inspect(workspace, path, forWrite);
+    }
+
+    private static ModelWorkspaceRegistry.ResolvedPath inspectExistingText(
+            JsonObject arguments,
+            String workspaceKey,
+            String pathKey
+    ) throws IOException {
+        ModelWorkspaceRegistry.ResolvedPath resolved = inspectPath(arguments, workspaceKey, pathKey, true);
+        if (resolved.relativePath().isBlank()) throw new IOException("A file path is required.");
+        requireTextFile(resolved.path());
+        return resolved;
+    }
+
+    private static void requireExistingParent(Path path) throws IOException {
+        Path parent = path.toAbsolutePath().normalize().getParent();
+        if (parent == null || !Files.isDirectory(parent)) {
+            throw new IOException("Parent directory does not exist.");
+        }
+    }
+
+    private static void fingerprintFile(
+            Map<String, String> fingerprints,
+            ModelWorkspaceRegistry.ResolvedPath resolved,
+            byte[] bytes
+    ) throws IOException {
+        fingerprints.put(resolved.workspace().id() + ":" + resolved.relativePath(), "sha256:" + sha256(bytes));
+    }
+
+    private static void fingerprintAbsent(
+            Map<String, String> fingerprints,
+            ModelWorkspaceRegistry.ResolvedPath resolved
+    ) {
+        fingerprints.put(resolved.workspace().id() + ":" + resolved.relativePath(), "absent");
+    }
+
+    private static void previewTarget(JsonObject preview, ModelWorkspaceRegistry.ResolvedPath target, String operation) {
+        preview.addProperty("workspace", target.workspace().id());
+        preview.addProperty("path", target.relativePath());
+        preview.addProperty("operation", operation);
+    }
+
+    private static void previewMutation(
+            JsonObject preview,
+            ModelWorkspaceRegistry.ResolvedPath target,
+            String operation,
+            byte[] previous,
+            byte[] resulting
+    ) throws IOException {
+        previewTarget(preview, target, operation);
+        preview.addProperty("previousContentHash", sha256(previous));
+        preview.addProperty("resultingContentHash", sha256(resulting));
+        DiffSummary diff = diff(
+                new String(previous, StandardCharsets.UTF_8),
+                new String(resulting, StandardCharsets.UTF_8),
+                target.relativePath()
+        );
+        preview.addProperty("linesAdded", diff.linesAdded());
+        preview.addProperty("linesRemoved", diff.linesRemoved());
+        preview.add("diffHunks", diff.hunks());
+        preview.addProperty("diffTruncated", diff.truncated());
+    }
+
     private static ModelWorkspaceRegistry.ResolvedPath writableFile(JsonObject arguments) throws IOException {
         ModelWorkspaceRegistry.ResolvedPath resolved = ModelWorkspaceRegistry.resolve(
                 workspaceString(arguments, "workspace"),
@@ -1037,7 +1281,7 @@ public final class ModelWorkspaceToolRegistry {
         ));
         definitions.put("workspace.list", definition(
                 "workspace.list",
-                "List files and directories under a bounded named workspace path. Omit workspace to use instance; valid roots are instance, automation, and project when available.",
+                "List files and directories under a bounded named workspace path. For read-only inspection, omitting workspace prefers the Koil project source when available and otherwise uses the instance root.",
                 objectSchema(Map.of(
                         "workspace", stringSchema(),
                         "path", stringSchema(),
@@ -1048,7 +1292,7 @@ public final class ModelWorkspaceToolRegistry {
         ));
         definitions.put("workspace.stat", definition(
                 "workspace.stat",
-                "Inspect one permitted file or directory: type, size, revision hash when bounded, modification time, and access state.",
+                "Inspect one permitted file or directory: type, size, revision hash when bounded, modification time, and access state. Omitting workspace prefers the Koil project source when available.",
                 objectSchema(Map.of(
                         "workspace", stringSchema(),
                         "path", stringSchema()
@@ -1058,7 +1302,7 @@ public final class ModelWorkspaceToolRegistry {
         ));
         definitions.put("workspace.read", definition(
                 "workspace.read",
-                "Read a bounded line-numbered section of any permitted UTF-8 text file, including JSON, JSON5, YAML, TOML, mcfunction, mcmeta, language, properties, Markdown, Java/source, config, and KTL files.",
+                "Read a bounded line-numbered section of any permitted UTF-8 text file, including JSON, JSON5, YAML, TOML, mcfunction, mcmeta, language, properties, Markdown, Java/source, config, and KTL files. Omitting workspace prefers the Koil project source when available.",
                 objectSchema(Map.of(
                         "workspace", stringSchema(),
                         "path", stringSchema(),
@@ -1070,7 +1314,7 @@ public final class ModelWorkspaceToolRegistry {
         ));
         definitions.put("workspace.search", definition(
                 "workspace.search",
-                "Selectively search bounded UTF-8 workspace files. Narrow by path/fileGlob and request only exact matches, matching lines, file names, or counts; add context only when it is needed.",
+                "Selectively search bounded UTF-8 workspace files. Omitting workspace prefers the Koil project source when available. Narrow by path/fileGlob and request only exact matches, matching lines, file names, or counts; add context only when it is needed.",
                 searchSchema(),
                 false,
                 Set.of("reads_files")
@@ -1182,6 +1426,26 @@ public final class ModelWorkspaceToolRegistry {
                 : mutating
                 ? List.of("automation_mode_enabled", "path_inside_named_workspace")
                 : List.of("path_inside_named_workspace");
+        ToolExecutionPolicy executionPolicy;
+        if (mutating) {
+            boolean stagePayload = Set.of(
+                    "workspace.mkdir", "workspace.create", "workspace.write", "workspace.append",
+                    "workspace.replace", "workspace.copy", "workspace.move", "workspace.delete"
+            ).contains(id);
+            executionPolicy = stagePayload
+                    ? ToolExecutionPolicy.stagedMutation(ToolExecutionPolicy.CostClass.MODERATE)
+                    : ToolExecutionPolicy.validateOnlyMutation(ToolExecutionPolicy.CostClass.MODERATE);
+        } else if ("workspace.search".equals(id)) {
+            executionPolicy = ToolExecutionPolicy.readOnly(
+                    ToolExecutionPolicy.FreshnessMode.WORKSPACE,
+                    ToolExecutionPolicy.CostClass.MODERATE
+            );
+        } else {
+            executionPolicy = ToolExecutionPolicy.readOnly(
+                    ToolExecutionPolicy.FreshnessMode.WORKSPACE,
+                    ToolExecutionPolicy.CostClass.CHEAP
+            );
+        }
         return new ModelToolDefinition(
                 id,
                 description,
@@ -1194,7 +1458,8 @@ public final class ModelWorkspaceToolRegistry {
                 confirmation,
                 mutating
                         ? Set.of("completed", "rejected", "stale", "failed")
-                        : Set.of("completed", "failed")
+                        : Set.of("completed", "failed"),
+                executionPolicy
         );
     }
 
@@ -1301,6 +1566,13 @@ public final class ModelWorkspaceToolRegistry {
             throw new IOException("Missing required argument '" + key + "'.");
         }
         return value;
+    }
+
+    private static String readWorkspaceString(JsonObject root, String key) {
+        String explicit = optionalString(root, key, "").strip();
+        if (!explicit.isBlank()) return explicit;
+        Map<String, ModelWorkspaceRegistry.Workspace> available = ModelWorkspaceRegistry.workspaces();
+        return available.containsKey("project") ? "project" : "instance";
     }
 
     private static String workspaceString(JsonObject root, String key) {

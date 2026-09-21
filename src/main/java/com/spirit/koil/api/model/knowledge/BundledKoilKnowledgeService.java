@@ -2,6 +2,7 @@ package com.spirit.koil.api.model.knowledge;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.spirit.koil.api.util.text.FuzzyTextMatcher;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,6 +57,25 @@ public final class BundledKoilKnowledgeService {
         return new KnowledgeResult(output, "Bundled Koil knowledge categories and compact core documents were summarized.");
     }
 
+    /** Allowlisted heading sections for offline knowledge indexing; never exposes arbitrary jar resources. */
+    public static List<IndexSection> sectionsForIndexing() throws IOException {
+        List<IndexSection> indexed = new ArrayList<>();
+        for (Document document : documents().values()) {
+            List<Section> sections = document.sections().isEmpty()
+                    ? List.of(new Section("Document", 1, document.lines().size()))
+                    : document.sections();
+            for (Section section : sections) {
+                int start = Math.max(1, section.startLine());
+                int end = Math.min(document.lines().size(), section.endLine());
+                if (start > end) continue;
+                String text = String.join("\n", document.lines().subList(start - 1, end)).strip();
+                if (!text.isBlank()) indexed.add(new IndexSection(document.spec().id(), document.spec().title(),
+                        section.title(), start, end, text));
+            }
+        }
+        return List.copyOf(indexed);
+    }
+
     public static KnowledgeResult search(String rawQuery, int requestedMaximum) throws IOException {
         String query = rawQuery == null ? "" : rawQuery.strip();
         if (query.isBlank()) throw new IOException("query is required for a documentation search.");
@@ -63,7 +83,7 @@ public final class BundledKoilKnowledgeService {
         Set<String> terms = searchTerms(query);
         List<SearchHit> hits = new ArrayList<>();
         for (Document document : documents().values()) {
-            String identity = (document.spec().id() + " " + document.spec().title())
+            String identity = (document.spec().id() + " " + document.spec().title() + " " + document.spec().resource())
                     .replace('/', ' ').replace('-', ' ').replace('_', ' ');
             int identityScore = score(identity, query, terms);
             if (identityScore > 0) {
@@ -117,10 +137,11 @@ public final class BundledKoilKnowledgeService {
         int requestedMaximumLines
     ) throws IOException {
         String documentId = rawDocumentId == null ? "" : rawDocumentId.strip().toLowerCase(Locale.ROOT);
-        Document document = documents().get(documentId);
+        Document document = resolveDocument(documentId);
         if (document == null) {
             throw new IOException("Unknown bundled document '" + documentId + "'. Use operation=catalog or search first.");
         }
+        documentId = document.spec().id();
         int start = Math.max(1, requestedStartLine);
         int limit = Math.max(1, Math.min(MAXIMUM_READ_LINES, requestedMaximumLines));
         String sectionName = rawSection == null ? "" : rawSection.strip();
@@ -255,15 +276,52 @@ public final class BundledKoilKnowledgeService {
         )).toList();
     }
 
+    private static Document resolveDocument(String requested) throws IOException {
+        Map<String, Document> available = documents();
+        Document exact = available.get(requested);
+        if (exact != null) return exact;
+        if (requested == null || requested.isBlank()) return null;
+
+        Document best = null;
+        int bestScore = 0;
+        int secondScore = 0;
+        for (Document candidate : available.values()) {
+            String identity = candidate.spec().id() + " " + candidate.spec().title() + " " + candidate.spec().resource();
+            int score = FuzzyTextMatcher.score(requested, identity);
+            score = Math.max(score, FuzzyTextMatcher.score(requested, candidate.spec().id()));
+            score = Math.max(score, FuzzyTextMatcher.score(requested, candidate.spec().resource()));
+            if (score > bestScore) {
+                secondScore = bestScore;
+                bestScore = score;
+                best = candidate;
+            } else if (score > secondScore) {
+                secondScore = score;
+            }
+        }
+        return bestScore >= 650 && (bestScore >= 930 || bestScore - secondScore >= 70) ? best : null;
+    }
+
     private static Section findSection(Document document, String requested) {
         String normalized = requested.toLowerCase(Locale.ROOT);
         Section partial = null;
+        Section fuzzy = null;
+        int fuzzyScore = 0;
+        int secondScore = 0;
         for (Section section : document.sections()) {
             String title = section.title().toLowerCase(Locale.ROOT);
             if (title.equals(normalized)) return section;
-            if (partial == null && title.contains(normalized)) partial = section;
+            if (partial == null && (title.contains(normalized) || normalized.contains(title))) partial = section;
+            int score = FuzzyTextMatcher.score(requested, section.title());
+            if (score > fuzzyScore) {
+                secondScore = fuzzyScore;
+                fuzzyScore = score;
+                fuzzy = section;
+            } else if (score > secondScore) {
+                secondScore = score;
+            }
         }
-        return partial;
+        if (partial != null) return partial;
+        return fuzzyScore >= 650 && fuzzyScore - secondScore >= 70 ? fuzzy : null;
     }
 
     private static int headingLevel(String line) {
@@ -288,9 +346,11 @@ public final class BundledKoilKnowledgeService {
 
     private static int score(String line, String query, Set<String> terms) {
         String normalized = line == null ? "" : line.toLowerCase(Locale.ROOT);
-        int score = normalized.contains(query.toLowerCase(Locale.ROOT)) ? 8 : 0;
-        for (String term : terms) if (normalized.contains(term)) score += 2;
-        if (line != null && line.startsWith("#") && score > 0) score += 3;
+        int score = normalized.contains(query.toLowerCase(Locale.ROOT)) ? 80 : 0;
+        for (String term : terms) if (normalized.contains(term)) score += 18;
+        int fuzzy = FuzzyTextMatcher.score(query, line);
+        if (fuzzy >= 520) score = Math.max(score, fuzzy / 8);
+        if (line != null && line.startsWith("#") && score > 0) score += 24;
         return score;
     }
 
@@ -300,6 +360,15 @@ public final class BundledKoilKnowledgeService {
     }
 
     public record KnowledgeResult(JsonObject output, String detail) {
+    }
+
+    public record IndexSection(String documentId, String title, String section, int startLine, int endLine, String text) {
+        public IndexSection {
+            documentId = documentId == null ? "" : documentId.strip();
+            title = title == null ? "" : title.strip();
+            section = section == null ? "" : section.strip();
+            text = text == null ? "" : text.strip();
+        }
     }
 
     private record DocumentSpec(String id, String title, String resource) {

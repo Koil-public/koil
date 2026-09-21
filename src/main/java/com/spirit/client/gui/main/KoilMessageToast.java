@@ -108,7 +108,7 @@ public class KoilMessageToast implements Toast {
             case CONSOLE_FATAL -> 128;
             case CONSOLE_DEBUG -> 160;
             case ANNOUNCEMENT -> 192;
-            case KORO_MESSAGE -> 224;
+            case BLANK_TOAST -> 224;
         };
     }
 
@@ -144,7 +144,7 @@ public class KoilMessageToast implements Toast {
             case CONSOLE_FATAL -> new Color(196, 17, 30, 255).getRGB();
             case CONSOLE_DEBUG -> new Color(45, 196, 17, 255).getRGB();
             case ANNOUNCEMENT -> new Color(104, 36, 36, 255).getRGB();
-            case KORO_MESSAGE -> new Color(153, 153, 153, 255).getRGB();
+            case BLANK_TOAST -> new Color(153, 153, 153, 255).getRGB();
         };
     }
 
@@ -157,7 +157,7 @@ public class KoilMessageToast implements Toast {
             case CONSOLE_FATAL -> new Color(143, 14, 24, 255).getRGB();
             case CONSOLE_DEBUG -> new Color(32, 136, 12, 255).getRGB();
             case ANNOUNCEMENT -> new Color(208, 115, 115, 255).getRGB();
-            case KORO_MESSAGE -> new Color(131, 131, 131, 255).getRGB();
+            case BLANK_TOAST -> new Color(131, 131, 131, 255).getRGB();
         };
     }
 
@@ -178,7 +178,7 @@ public class KoilMessageToast implements Toast {
         CONSOLE_FATAL, // 7
         CONSOLE_DEBUG,  // 8
         ANNOUNCEMENT, // 1
-        KORO_MESSAGE; // 2
+        BLANK_TOAST; // 2
 
         final long displayDuration;
 

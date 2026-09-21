@@ -15,7 +15,9 @@ import java.util.List;
 
 public final class MarketHudRenderer {
     private static MarketHudBlock cachedBlock;
-    private static String cachedBlockKey = "";
+    private static KoilMarketHudSnapshot cachedSnapshot;
+    private static int cachedWidth = -1;
+    private static String cachedSeriesWindow = "";
 
     private MarketHudRenderer() {
     }
@@ -95,7 +97,9 @@ public final class MarketHudRenderer {
 
         if (snapshot == null || snapshot.entries().isEmpty() && snapshot.notes().isEmpty()) {
             cachedBlock = null;
-            cachedBlockKey = "";
+            cachedSnapshot = null;
+            cachedWidth = -1;
+            cachedSeriesWindow = "";
             return null;
         }
 
@@ -104,9 +108,11 @@ public final class MarketHudRenderer {
         int width = requestedWidth > 0
                 ? Math.min(client.getWindow().getScaledWidth(), Math.max(1, requestedWidth))
                 : defaultWidth;
-        String key = blockCacheKey(client, snapshot, width);
-
-        if (cachedBlock != null && key.equals(cachedBlockKey)) {
+        String seriesWindow = KoilMarketSeriesWindow.activeKey();
+        if (cachedBlock != null
+                && cachedSnapshot == snapshot
+                && cachedWidth == width
+                && java.util.Objects.equals(cachedSeriesWindow, seriesWindow)) {
             return cachedBlock;
         }
         int innerWidth = width - 14;
@@ -140,33 +146,10 @@ public final class MarketHudRenderer {
 
         int height = Math.max(lineHeight, lines.size() * lineHeight) + 7 + (hasChart ? chartHeight + 12 : 0);
         cachedBlock = new MarketHudBlock(lines, snapshot.entries(), width, height, 7, 4, lineHeight, chartHeight, accentColor(snapshot), snapshot.watch(), showDeltas);
-        cachedBlockKey = key;
+        cachedSnapshot = snapshot;
+        cachedWidth = width;
+        cachedSeriesWindow = seriesWindow;
         return cachedBlock;
-    }
-
-    private static String blockCacheKey(MinecraftClient client, KoilMarketHudSnapshot snapshot, int chatWidth) {
-        StringBuilder builder = new StringBuilder();
-        builder.append(client.getWindow().getScaledWidth()).append('|');
-        builder.append(chatWidth).append('|');
-        builder.append(KoilMarketSeriesWindow.activeKey()).append('|');
-        builder.append(snapshot.createdAt()).append('|');
-        builder.append(snapshot.mode()).append('|').append(snapshot.title()).append('|').append(snapshot.subtitle()).append('|').append(snapshot.reserveLine()).append('|').append(snapshot.sourceLine()).append('|');
-
-        for (String note : snapshot.notes()) {
-            builder.append(note).append('|');
-        }
-
-        for (KoilMarketHudSnapshot.Entry entry : snapshot.entries()) {
-            builder.append(entry.id()).append('|').append(entry.value()).append('|').append(entry.exchange()).append('|').append(entry.confidence()).append('|').append(entry.demand()).append('|').append(entry.supply()).append('|').append(entry.scarcity()).append('|').append(entry.trend()).append('|');
-            int[] series = entry.series();
-            builder.append(series.length).append(':');
-
-            if (series.length > 0) {
-                builder.append(series[0]).append(',').append(series[series.length - 1]);
-            }
-        }
-
-        return builder.toString();
     }
 
     private static Text header(KoilMarketHudSnapshot snapshot) {

@@ -11,8 +11,13 @@ public final class LlamaCppRuntimeCatalog {
     }
 
     public static Optional<RuntimeArtifact> currentPlatform() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String arch = normalizeArchitecture(System.getProperty("os.arch", ""));
+        return forPlatform(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
+    }
+
+    /** Package-local platform seam keeps runtime selection proofable without pretending foreign JNI can run here. */
+    static Optional<RuntimeArtifact> forPlatform(String osName, String architecture) {
+        String os = osName == null ? "" : osName.toLowerCase(Locale.ROOT);
+        String arch = normalizeArchitecture(architecture);
         if (os.contains("mac")) {
             return switch (arch) {
                 case "x64" -> artifact("macos-x64", "tar.gz", 11_203_396L, "610c9b2eb6dc03b280b69198268764c192f859db97f653187eed838dd36584f3");
@@ -22,6 +27,9 @@ public final class LlamaCppRuntimeCatalog {
         }
         if (os.contains("win")) {
             return switch (arch) {
+                // CPU is the safe default: a Vulkan-only server can fail before
+                // Koil's strict --device none arguments are applied on systems
+                // without a usable Vulkan loader/driver.
                 case "x64" -> artifact("win-cpu-x64", "zip", 18_337_911L, "5446b53737195422fca305e5f45027f46f51670a3a2062f885d78e5ec1968366");
                 case "arm64" -> artifact("win-cpu-arm64", "zip", 12_182_581L, "174664ff6da77f89f3113230ab5b941f86689f451a4d346583d1aa8f87a70427");
                 default -> Optional.empty();
@@ -29,8 +37,8 @@ public final class LlamaCppRuntimeCatalog {
         }
         if (os.contains("linux")) {
             return switch (arch) {
-                case "x64" -> artifact("ubuntu-x64", "tar.gz", 16_429_212L, "0dd14e9ffd6564263ef46b259818eee5addea453281f3572ffaa93c01949b32f");
-                case "arm64" -> artifact("ubuntu-arm64", "tar.gz", 13_328_957L, "603b4c534f13dd9792d894e761e9caec8b447795bda0fd9de2b36944f6244537");
+                case "x64" -> artifact("ubuntu-vulkan-x64", "tar.gz", 32_407_728L, "9955136899cd69433ab97f06d8980e639ad020a12b8446019600f500a62f834a");
+                case "arm64" -> artifact("ubuntu-vulkan-arm64", "tar.gz", 26_483_915L, "8507984f8ad28c03b620c77b05143a17358fd673a8397b7d306c809fa1cdf42d");
                 default -> Optional.empty();
             };
         }

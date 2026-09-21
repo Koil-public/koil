@@ -6,6 +6,8 @@ import com.google.gson.JsonObject;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import com.spirit.koil.api.model.cache.ModelPromptCacheIdentity;
 
 /**
  * Produces a llama.cpp grammar-safe schema without weakening Koil's
@@ -17,13 +19,22 @@ final class LlamaCppToolSchemaAdapter {
             "maxItems",
             "maxProperties"
     );
+    private static final int MAXIMUM_CACHED_SCHEMAS = 512;
+    private static final ConcurrentHashMap<String, JsonObject> CACHE = new ConcurrentHashMap<>();
 
     private LlamaCppToolSchemaAdapter() {
     }
 
     static JsonObject toWire(JsonObject schema) {
-        JsonElement adapted = adapt(schema == null ? new JsonObject() : schema);
-        return adapted.isJsonObject() ? adapted.getAsJsonObject() : new JsonObject();
+        JsonObject canonical = ModelPromptCacheIdentity.canonicalObject(schema);
+        String key = ModelPromptCacheIdentity.sha256(ModelPromptCacheIdentity.canonicalJson(canonical));
+        JsonObject cached = CACHE.get(key);
+        if (cached != null) return cached.deepCopy();
+        JsonElement adapted = adapt(canonical);
+        JsonObject result = adapted.isJsonObject() ? adapted.getAsJsonObject() : new JsonObject();
+        if (CACHE.size() >= MAXIMUM_CACHED_SCHEMAS) CACHE.clear();
+        CACHE.putIfAbsent(key, result.deepCopy());
+        return result;
     }
 
     private static JsonElement adapt(JsonElement element) {

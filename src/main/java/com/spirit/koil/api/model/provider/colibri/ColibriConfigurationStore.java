@@ -115,6 +115,7 @@ public final class ColibriConfigurationStore {
         root.addProperty("engineId", configuration.engineId());
         var experiments = com.spirit.koil.api.model.ModelExperimentalFeatures.snapshot();
         root.addProperty("persistentConversationHistory", experiments.persistentConversationHistory());
+        root.addProperty("persistentKnowledge", experiments.persistentKnowledge());
         root.addProperty("persistentAssociativeMemory", experiments.persistentAssociativeMemory());
         root.remove("gigatokenEnabled");
         root.addProperty("expertPrefetchExperimentEnabled", experiments.expertPrefetchEnabled());

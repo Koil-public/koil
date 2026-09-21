@@ -3,6 +3,7 @@ package com.spirit.koil.api.automation;
 import com.spirit.koil.api.automation.ktl.KtlCompilerService;
 import com.spirit.koil.api.automation.ktl.KtlBuiltinLibraryInstaller;
 import com.spirit.koil.api.automation.ktl.KtlDevelopmentLibrarySynchronizer;
+import com.spirit.koil.api.automation.goal.AutomationGoalProof;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
 import com.spirit.koil.api.automation.feedback.AutomationFailureRegistry;
 import com.spirit.koil.api.automation.feedback.AutomationFailureType;
@@ -82,6 +83,7 @@ public final class AutomationProofSuite {
         passed &= proveAdditiveBuiltinMigration();
         passed &= proveDevelopmentLibrarySync();
         passed &= proveComposedSkillFamilies();
+        passed &= AutomationGoalProof.run();
         passed &= proveCacheRoundTrip();
         passed &= proveFeedbackRegistryFlow();
         AutomationReporter.done("[done]", "proof.suite = " + (passed ? "success" : "failed"));
@@ -461,6 +463,22 @@ public final class AutomationProofSuite {
                       side_effects: []
                       timeout_ticks: 100
                       failure_policy: fail
+                      requires:
+                        facts: [inventory.item_count]
+                        states: [player.available]
+                      preconditions: [inventory.count >= ${count.value}]
+                      success_when: [inventory.count >= ${count.value}]
+                      failure_when: [screen.mismatch]
+                      produces: [inventory.item_count]
+                      invalidated_by: [inventory.changed]
+                      cost:
+                        base_ticks: 20
+                        risk: 1
+                        resource_cost: 2
+                      recovery:
+                        retry: 1
+                        alternate: movement/recovery/recover_stuck.ktl
+                        replan: true
                     steps:
                       - type: return
                         label: proof_one
@@ -493,6 +511,8 @@ public final class AutomationProofSuite {
             Files.writeString(CACHE_PROOF_FILE, sourceOne, StandardCharsets.UTF_8);
             KtlCompilerService.getInstance().reload();
             KtlCompilerService.CompileSummary first = KtlCompilerService.getInstance().lastSummary();
+            KtlCompilerService.CompiledTemplateMetadata metadata = KtlCompilerService.getInstance().assets()
+                    .templateMetadata.get("validation/proof_cache_probe");
 
             KtlCompilerService.getInstance().reload();
             KtlCompilerService.CompileSummary second = KtlCompilerService.getInstance().lastSummary();
@@ -501,7 +521,12 @@ public final class AutomationProofSuite {
             KtlCompilerService.getInstance().reload();
             KtlCompilerService.CompileSummary third = KtlCompilerService.getInstance().lastSummary();
 
-            boolean passed = first.cacheMisses() > 0 && second.cacheHits() > 0 && third.cacheMisses() > 0;
+            boolean contractParsed = metadata != null
+                    && metadata.requiredFacts().equals(List.of("inventory.item_count"))
+                    && metadata.preconditions().equals(List.of("inventory.count >= ${count.value}"))
+                    && metadata.successWhen().equals(List.of("inventory.count >= ${count.value}"))
+                    && metadata.executionContract().replanOnFailure();
+            boolean passed = first.cacheMisses() > 0 && second.cacheHits() > 0 && third.cacheMisses() > 0 && contractParsed;
             if (passed) {
                 AutomationReporter.done("[done]", "cache.round_trip = hit " + second.cacheHits() + " / rebuild " + third.cacheMisses());
             } else {

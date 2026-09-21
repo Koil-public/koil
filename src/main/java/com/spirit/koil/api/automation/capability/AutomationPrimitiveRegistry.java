@@ -66,6 +66,8 @@ public final class AutomationPrimitiveRegistry {
                 "cap.transport.mount_target", "cap.transport.verify_mounted", "cap.transport.verify_dismounted",
                 "cap.transport.resolve_boat_target", "cap.transport.prepare_boat", "cap.transport.deploy_boat", "cap.transport.verify_boat_mounted",
                 "cap.transport.prepare_elytra", "cap.transport.fly_elytra", "cap.transport.verify_elytra_arrival",
+                "cap.crafting.prepare_exact_recipe", "cap.crafting.verify_exact_recipe",
+                "cap.processing.prepare_exact_recipe", "cap.processing.verify_exact_recipe",
                 "cap.state.capture_player_position", "cap.state.copy_value", "cap.state.decrement_counter", "cap.state.increment_counter", "cap.state.record_completed_target",
                 "cap.state.read_stat", "cap.state.remove_memory", "cap.state.set_counter", "cap.state.write_memory",
                 "cap.wait.ticks", "cap.world.inspect_surroundings", "cap.world.scan_blocks", "cap.world.scan_entities", "cap.world.scan_players", "cap.world.verify_block_target",

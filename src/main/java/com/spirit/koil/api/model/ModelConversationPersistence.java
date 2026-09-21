@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -69,5 +70,28 @@ final class ModelConversationPersistence {
             try { Files.move(temporary, PATH, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
             catch (Exception unsupported) { Files.move(temporary, PATH, StandardCopyOption.REPLACE_EXISTING); }
         } catch (Exception ignored) {}
+    }
+
+    /** Exposes only visible user/final-assistant pairs; tool transcripts never become durable knowledge. */
+    static List<FinalExchange> finalExchanges(ModelConversationRegistry registry) {
+        if (registry == null) return List.of();
+        List<FinalExchange> exchanges = new ArrayList<>();
+        for (String conversationId : IDS) {
+            ModelMessage pendingUser = null;
+            for (ModelMessage message : registry.conversation(conversationId).snapshot()) {
+                if (message.role() == ModelRole.USER) {
+                    pendingUser = message;
+                } else if (pendingUser != null && message.role() == ModelRole.ASSISTANT && message.toolCallId().isBlank()
+                        && !message.content().isBlank()) {
+                    exchanges.add(new FinalExchange(conversationId, pendingUser.content(), message.content(),
+                            pendingUser.id() + ":" + message.id()));
+                    pendingUser = null;
+                }
+            }
+        }
+        return List.copyOf(exchanges);
+    }
+
+    record FinalExchange(String conversationId, String prompt, String response, String stableKey) {
     }
 }

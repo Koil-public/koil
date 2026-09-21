@@ -4,6 +4,7 @@ import com.spirit.koil.api.automation.cli.AutomationChatHudRenderer;
 import com.spirit.koil.api.automation.AutomationModeStatusChatPanel;
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.api.stats.global.client.MarketHudRenderer;
+import com.spirit.koil.api.model.chat.LocalModelCatalogChatPanel;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 
@@ -66,6 +67,7 @@ public final class ChatHudPanelStack {
         if (builtInsRegistered) {
             return;
         }
+        ChatHudPanelRegistry.registerIfAbsent(new LocalModelCatalogChatPanel());
         ChatHudPanelRegistry.registerIfAbsent(new ChatHudPanel() {
             @Override
             public String id() {

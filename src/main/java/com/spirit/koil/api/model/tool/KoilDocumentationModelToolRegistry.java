@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolDefinition;
 import com.spirit.koil.api.model.ModelToolResult;
+import com.spirit.koil.api.model.ToolExecutionPolicy;
 import com.spirit.koil.api.model.knowledge.BundledKoilKnowledgeService;
 
 import java.time.Duration;
@@ -26,7 +27,11 @@ public final class KoilDocumentationModelToolRegistry {
         Duration.ofSeconds(3),
         false,
         false,
-        Set.of("completed", "failed", "not_found")
+        Set.of("completed", "failed", "not_found"),
+        ToolExecutionPolicy.readOnly(
+                ToolExecutionPolicy.FreshnessMode.IMMUTABLE,
+                ToolExecutionPolicy.CostClass.CHEAP
+        )
     );
 
     private KoilDocumentationModelToolRegistry() {

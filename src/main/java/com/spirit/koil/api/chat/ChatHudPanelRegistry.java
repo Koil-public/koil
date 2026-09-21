@@ -26,6 +26,10 @@ public final class ChatHudPanelRegistry {
     private static volatile int currentChatReservedHeight;
     private static volatile int currentTopSafetyReserve;
     private static volatile int nextTopSafetyReserve;
+    private static volatile long registryRevision;
+    private static volatile PreparedLayout preparedBottom;
+    private static volatile PreparedLayout preparedTop;
+    private static final long LAYOUT_REUSE_NANOS = 50_000_000L;
 
     private ChatHudPanelRegistry() {
     }
@@ -37,6 +41,8 @@ public final class ChatHudPanelRegistry {
             throw new IllegalArgumentException("Chat HUD panel id cannot be blank.");
         }
         PANELS.put(id, panel);
+        registryRevision++;
+        invalidatePreparedLayouts();
     }
 
     public static void registerIfAbsent(ChatHudPanel panel) {
@@ -45,11 +51,19 @@ public final class ChatHudPanelRegistry {
         if (id.isEmpty()) {
             throw new IllegalArgumentException("Chat HUD panel id cannot be blank.");
         }
-        PANELS.putIfAbsent(id, panel);
+        if (PANELS.putIfAbsent(id, panel) == null) {
+            registryRevision++;
+            invalidatePreparedLayouts();
+        }
     }
 
     public static boolean unregister(String id) {
-        return id != null && PANELS.remove(id) != null;
+        boolean removed = id != null && PANELS.remove(id) != null;
+        if (removed) {
+            registryRevision++;
+            invalidatePreparedLayouts();
+        }
+        return removed;
     }
 
     public static List<ChatHudPanel> panels() {
@@ -96,7 +110,7 @@ public final class ChatHudPanelRegistry {
 
     public static int reservedBottomHeight(MinecraftClient client) {
         ChatHudPanelContext context = context(client);
-        int panelHeight = totalHeight(context, ChatHudPanelPlacement.BOTTOM);
+        int panelHeight = preparedLayout(context, ChatHudPanelPlacement.BOTTOM).totalHeight();
         return panelHeight <= 0 ? 0 : Math.max(0, controlClearance(context) + panelHeight - VANILLA_CHAT_BOTTOM);
     }
 
@@ -104,6 +118,7 @@ public final class ChatHudPanelRegistry {
         observedTopmostMessageY = Integer.MAX_VALUE;
         currentChatReservedHeight = Math.max(0, reservedHeight);
         currentTopSafetyReserve = Math.max(0, nextTopSafetyReserve);
+        preparedTop = null;
     }
 
     /**
@@ -207,13 +222,13 @@ public final class ChatHudPanelRegistry {
     }
 
     private static void renderBottom(DrawContext drawContext, ChatHudPanelContext context) {
-        for (PlacedPanel entry : layout(context, ChatHudPanelPlacement.BOTTOM)) {
+        for (PlacedPanel entry : preparedLayout(context, ChatHudPanelPlacement.BOTTOM).placed()) {
             renderPanel(drawContext, context, entry);
         }
     }
 
     private static void renderTop(DrawContext drawContext, ChatHudPanelContext context) {
-        for (PlacedPanel entry : layout(context, ChatHudPanelPlacement.TOP)) {
+        for (PlacedPanel entry : preparedLayout(context, ChatHudPanelPlacement.TOP).placed()) {
             renderPanel(drawContext, context, entry);
         }
     }
@@ -231,31 +246,72 @@ public final class ChatHudPanelRegistry {
 
     private static List<PlacedPanel> layout(ChatHudPanelContext context) {
         List<PlacedPanel> placed = new ArrayList<>();
-        placed.addAll(layout(context, ChatHudPanelPlacement.BOTTOM));
-        placed.addAll(layout(context, ChatHudPanelPlacement.TOP));
+        placed.addAll(preparedLayout(context, ChatHudPanelPlacement.BOTTOM).placed());
+        placed.addAll(preparedLayout(context, ChatHudPanelPlacement.TOP).placed());
         return placed;
     }
 
     private static List<PlacedPanel> layout(ChatHudPanelContext context, ChatHudPanelPlacement placement) {
-        List<PlacedPanel> placed = new ArrayList<>();
-        List<ChatHudPanel> panels = activePanels(context, placement);
-        int edge = placement == ChatHudPanelPlacement.BOTTOM
-                ? context.screenHeight() - controlClearance(context) - MultilineChatInputLayout.reservedHeight(context.client())
-                : topAnchor(context);
-        for (ChatHudPanel panel : panels) {
-            int height = safeHeight(panel, context);
-            int width = safeWidth(panel, context);
-            if (height <= 0 || width <= 0) {
-                continue;
-            }
-            edge -= height;
-            ChatHudPanelBounds bounds = new ChatHudPanelBounds(0, edge, width, height);
-            placed.add(new PlacedPanel(panel, bounds));
-        }
-        return placed;
+        return preparedLayout(context, placement).placed();
     }
 
-    private static int topAnchor(ChatHudPanelContext context) {
+    private static PreparedLayout preparedLayout(ChatHudPanelContext context, ChatHudPanelPlacement placement) {
+        long now = System.nanoTime();
+        LayoutKey key = layoutKey(context, placement);
+        PreparedLayout cached = placement == ChatHudPanelPlacement.BOTTOM ? preparedBottom : preparedTop;
+        if (cached != null && cached.key().equals(key) && now - cached.preparedAtNanos() <= LAYOUT_REUSE_NANOS) {
+            return cached;
+        }
+
+        List<MeasuredPanel> measured = new ArrayList<>();
+        int totalHeight = 0;
+        for (ChatHudPanel panel : activePanels(context, placement)) {
+            int height = safeHeight(panel, context);
+            int width = safeWidth(panel, context);
+            if (height <= 0 || width <= 0) continue;
+            measured.add(new MeasuredPanel(panel, width, height));
+            totalHeight += height;
+        }
+
+        int edge = placement == ChatHudPanelPlacement.BOTTOM
+                ? context.screenHeight() - controlClearance(context) - MultilineChatInputLayout.reservedHeight(context.client())
+                : topAnchor(context, totalHeight);
+        List<PlacedPanel> placed = new ArrayList<>(measured.size());
+        for (MeasuredPanel panel : measured) {
+            edge -= panel.height();
+            placed.add(new PlacedPanel(
+                    panel.panel(),
+                    new ChatHudPanelBounds(0, edge, panel.width(), panel.height())
+            ));
+        }
+        PreparedLayout prepared = new PreparedLayout(key, List.copyOf(placed), totalHeight, now);
+        if (placement == ChatHudPanelPlacement.BOTTOM) preparedBottom = prepared;
+        else preparedTop = prepared;
+        return prepared;
+    }
+
+    private static LayoutKey layoutKey(ChatHudPanelContext context, ChatHudPanelPlacement placement) {
+        int inputReserve = MultilineChatInputLayout.reservedHeight(context.client());
+        int observed = placement == ChatHudPanelPlacement.TOP ? observedTopmostMessageY : 0;
+        int viewportTop = placement == ChatHudPanelPlacement.TOP
+                ? RichChatLatexTextureCache.currentChatViewportTop() : 0;
+        int lineHeight = placement == ChatHudPanelPlacement.TOP
+                ? RichChatLatexTextureCache.currentChatLineHeight() : 0;
+        int reservedHeight = placement == ChatHudPanelPlacement.TOP ? currentChatReservedHeight : 0;
+        int topSafetyReserve = placement == ChatHudPanelPlacement.TOP ? currentTopSafetyReserve : 0;
+        return new LayoutKey(
+                placement, context.screenWidth(), context.screenHeight(), context.chatWidth(), context.panelWidth(),
+                context.chatOpen(), inputReserve, observed, reservedHeight, topSafetyReserve,
+                viewportTop, lineHeight, registryRevision
+        );
+    }
+
+    private static void invalidatePreparedLayouts() {
+        preparedBottom = null;
+        preparedTop = null;
+    }
+
+    private static int topAnchor(ChatHudPanelContext context, int topHeight) {
         MinecraftClient client = context.client();
         double scale = client == null || client.inGameHud == null || client.inGameHud.getChatHud() == null
                 ? 1.0D
@@ -264,7 +320,7 @@ public final class ChatHudPanelRegistry {
         int shiftedViewportTop = viewportTop - currentChatReservedHeight + currentTopSafetyReserve;
         int anchor;
         if (observedTopmostMessageY == Integer.MAX_VALUE) {
-            int bottomHeight = totalHeight(context, ChatHudPanelPlacement.BOTTOM);
+            int bottomHeight = preparedLayout(context, ChatHudPanelPlacement.BOTTOM).totalHeight();
             if (bottomHeight > 0) {
                 // With an empty feed, anchor directly to the real top edge of
                 // the bottom stack. The multiline input reservation is part
@@ -298,7 +354,7 @@ public final class ChatHudPanelRegistry {
             anchor = Math.max(shiftedViewportTop, observedTopmostMessageY - 1);
         }
         int unreservedAnchor = anchor - currentTopSafetyReserve;
-        int deficit = Math.max(0, totalHeight(context, ChatHudPanelPlacement.TOP) - unreservedAnchor);
+        int deficit = Math.max(0, topHeight - unreservedAnchor);
         int lineHeight = Math.max(1, Math.round((float) (RichChatLatexTextureCache.currentChatLineHeight() * scale)));
         int requiredReserve = deficit <= 0 ? 0 : ((deficit + lineHeight - 1) / lineHeight) * lineHeight;
         nextTopSafetyReserve = requiredReserve;
@@ -306,11 +362,7 @@ public final class ChatHudPanelRegistry {
     }
 
     private static int totalHeight(ChatHudPanelContext context, ChatHudPanelPlacement placement) {
-        int height = 0;
-        for (ChatHudPanel panel : activePanels(context, placement)) {
-            height += safeHeight(panel, context);
-        }
-        return height;
+        return preparedLayout(context, placement).totalHeight();
     }
 
     private static int safeHeight(ChatHudPanel panel, ChatHudPanelContext context) {
@@ -346,6 +398,34 @@ public final class ChatHudPanelRegistry {
 
     private static int controlClearance(ChatHudPanelContext context) {
         return context.chatOpen() ? OPEN_CHAT_CONTROL_CLEARANCE : CLOSED_CHAT_CLEARANCE;
+    }
+
+    private record LayoutKey(
+            ChatHudPanelPlacement placement,
+            int screenWidth,
+            int screenHeight,
+            int chatWidth,
+            int panelWidth,
+            boolean chatOpen,
+            int inputReserve,
+            int observedTopmostMessageY,
+            int reservedHeight,
+            int topSafetyReserve,
+            int viewportTop,
+            int chatLineHeight,
+            long registryRevision
+    ) {
+    }
+
+    private record MeasuredPanel(ChatHudPanel panel, int width, int height) {
+    }
+
+    private record PreparedLayout(
+            LayoutKey key,
+            List<PlacedPanel> placed,
+            int totalHeight,
+            long preparedAtNanos
+    ) {
     }
 
     private record PlacedPanel(ChatHudPanel panel, ChatHudPanelBounds bounds) {

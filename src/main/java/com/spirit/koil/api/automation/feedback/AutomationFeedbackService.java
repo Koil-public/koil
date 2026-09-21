@@ -5,6 +5,9 @@ import com.google.gson.GsonBuilder;
 import com.spirit.koil.api.automation.cli.AutomationCliRow;
 import com.spirit.koil.api.automation.cli.AutomationCliSnapshot;
 import com.spirit.koil.api.automation.cli.AutomationCliViewModel;
+import com.spirit.koil.api.model.LocalModelRuntimeLog;
+import com.spirit.koil.api.model.retrieval.AutomationFailureKnowledgeAdapter;
+import com.spirit.koil.api.model.retrieval.KoilKnowledgeRuntime;
 import com.spirit.koil.api.util.file.KoilInstancePaths;
 
 import java.io.IOException;
@@ -310,6 +313,10 @@ public final class AutomationFeedbackService {
                     node.source(),
                     failureType.id()
             );
+            KoilKnowledgeRuntime.shared().ifPresent(engine -> new AutomationFailureKnowledgeAdapter(engine)
+                    .recordHumanConfirmedFailure(node, failureType).whenComplete((ignored, failure) -> {
+                        if (failure != null) LocalModelRuntimeLog.write("knowledge_failure_record_failed", failure.getMessage());
+                    }));
             AutomationCliViewModel.feedbackRecorded(node.nodeId(), failureType.label());
         } catch (IOException exception) {
             AutomationCliViewModel.feedbackRecorded(node.nodeId(), "failed to store feedback: " + exception.getMessage());

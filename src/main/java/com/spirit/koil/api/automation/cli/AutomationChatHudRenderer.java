@@ -19,6 +19,7 @@ import java.util.Locale;
 public final class AutomationChatHudRenderer {
     private static final int ACTION_HORIZONTAL_PADDING = 8;
     private static final int ACTION_GAP = 3;
+    private static volatile CachedAutomationBlock cachedAutomationBlock;
     private AutomationChatHudRenderer() {
     }
 
@@ -139,9 +140,25 @@ public final class AutomationChatHudRenderer {
         int maxWidth = requestedWidth > 0
                 ? Math.min(client.getWindow().getScaledWidth(), Math.max(1, requestedWidth))
                 : defaultWidth;
+        AutomationRuntimeStatus.Snapshot runtimeSnapshot = AutomationRuntimeStatus.snapshot();
+        AutomationBlockKey cacheKey = new AutomationBlockKey(
+                maxWidth,
+                AutomationChatHudState.updatedAt(),
+                runtimeSnapshot.updatedAtMillis(),
+                AutomationChatHudState.state(),
+                AutomationRuntimeStatus.isTaskRunning()
+        );
+        CachedAutomationBlock cached = cachedAutomationBlock;
+        if (cached != null && cached.key().equals(cacheKey)) {
+            return cached.block();
+        }
         int innerWidth = maxWidth - 12;
         List<OrderedText> lines = new ArrayList<>();
-        lines.addAll(wrappedLines(client, AutomationChatHudState.header(), innerWidth, 1));
+        Text executorHeader = AutomationChatHudState.header();
+        if (executorHeader == null || executorHeader.getString().isBlank()) {
+            executorHeader = AutomationCliViewModel.automationChatHeader();
+        }
+        lines.addAll(wrappedLines(client, executorHeader, innerWidth, 1));
         lines.addAll(wrappedLines(client, AutomationChatHudState.executorStatusLine(), innerWidth, 1));
         lines.addAll(wrappedLines(client, AutomationChatHudState.prompt(), innerWidth, 2));
         lines.addAll(wrappedLines(client, AutomationChatHudState.active(), innerWidth, 2));
@@ -152,7 +169,10 @@ public final class AutomationChatHudRenderer {
         int actionRows = countActionRows(client, maxWidth - paddingX * 2);
         int actionHeight = actionRows == 0 ? 0 : actionRows * (client.textRenderer.fontHeight + 7) + 3;
         int height = Math.max(lineHeight, lines.size() * lineHeight) + paddingY * 2 + actionHeight;
-        return new AutomationHudBlock(lines, maxWidth, height, paddingX, paddingY, lineHeight);
+        AutomationHudBlock block = new AutomationHudBlock(
+                List.copyOf(lines), maxWidth, height, paddingX, paddingY, lineHeight);
+        cachedAutomationBlock = new CachedAutomationBlock(cacheKey, block);
+        return block;
     }
 
     private static List<ActionRect> actionRects(MinecraftClient client, AutomationHudBlock block, int x, int y) {
@@ -310,6 +330,18 @@ public final class AutomationChatHudRenderer {
 
     private static int alpha(int color) {
         return color >>> 24;
+    }
+
+    private record AutomationBlockKey(
+            int width,
+            long hudUpdatedAt,
+            long runtimeUpdatedAt,
+            String state,
+            boolean taskRunning
+    ) {
+    }
+
+    private record CachedAutomationBlock(AutomationBlockKey key, AutomationHudBlock block) {
     }
 
     private record ActionRect(AutomationChatHudState.Action action, int x1, int y1, int x2, int y2) {

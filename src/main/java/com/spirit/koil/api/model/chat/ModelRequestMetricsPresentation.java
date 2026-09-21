@@ -296,7 +296,7 @@ public final class ModelRequestMetricsPresentation {
 
     public static String compactRateAndElapsed(ModelGenerationHudState.Snapshot snapshot, long nowMillis) {
         ModelUsage usage = snapshot == null ? ModelUsage.empty() : snapshot.usage();
-        return tokensPerSecondLabel(usage) + "  " + elapsedLabel(snapshot, nowMillis);
+        return tokensPerSecondLabel(usage) + " tok/s  |  " + elapsedLabel(snapshot, nowMillis);
     }
 
     public static String formatElapsedMillis(long startedAtMillis, long endedAtMillis) {

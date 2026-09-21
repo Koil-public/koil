@@ -88,6 +88,9 @@ public record LocalModelCatalogEntry(
             int contextTokens
     ) {
         if ("llama_cpp".equals(providerId)) {
+            if (canonical.architecture() == LocalModelCanonicalMetadata.Architecture.EMBEDDING) {
+                return List.of(ModelRuntimeCompatibility.llamaCppEmbedding(runtimeId, canonical, contextTokens));
+            }
             return List.of(ModelRuntimeCompatibility.llamaCpp(runtimeId, canonical, toolCalling, contextTokens));
         }
         return List.of();

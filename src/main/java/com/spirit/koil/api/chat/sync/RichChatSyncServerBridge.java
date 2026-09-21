@@ -25,6 +25,26 @@ public final class RichChatSyncServerBridge {
             RichChatSyncNetwork.SyncedMessage synced = RichChatSyncNetwork.read(buffer);
             server.execute(() -> accept(server, player, synced));
         });
+        ServerPlayNetworking.registerGlobalReceiver(RichChatSyncNetwork.CLIENT_LONG_COMMAND_PACKET, (server, player, handler, buffer, responseSender) -> {
+            String command = buffer.readString(RichChatSyncNetwork.MAX_LONG_COMMAND);
+            server.execute(() -> executeLongCommand(server, player, command));
+        });
+    }
+
+    private static void executeLongCommand(MinecraftServer server, ServerPlayerEntity player, String rawCommand) {
+        if (server == null || player == null || rawCommand == null) {
+            return;
+        }
+        String command = rawCommand.trim();
+        while (command.startsWith("/")) {
+            command = command.substring(1).trim();
+        }
+        if (command.isBlank() || command.length() > RichChatSyncNetwork.MAX_LONG_COMMAND) {
+            return;
+        }
+        // Execute exactly as the sending player. This preserves vanilla permission
+        // levels, command feedback, selectors, dimension/world context, and errors.
+        server.getCommandManager().executeWithPrefix(player.getCommandSource(), command);
     }
 
     private static void accept(MinecraftServer server, ServerPlayerEntity player, RichChatSyncNetwork.SyncedMessage synced) {

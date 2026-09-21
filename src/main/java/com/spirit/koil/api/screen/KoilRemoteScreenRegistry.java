@@ -9,6 +9,7 @@ import net.minecraft.client.gui.screen.option.OptionsScreen;
 
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -32,6 +33,11 @@ public final class KoilRemoteScreenRegistry {
     public static Screen create(MinecraftClient client, Screen parent, String id, String data) {
         ScreenFactory factory = FACTORIES.get(normalize(id));
         return factory == null || client == null ? null : factory.open(client, parent, data == null ? "" : data);
+    }
+
+    /** Stable IDs currently exposed to /screen by Koil or compatible client mods. */
+    public static Set<String> registeredIds() {
+        return Set.copyOf(FACTORIES.keySet());
     }
 
     public static void registerBuiltins() {

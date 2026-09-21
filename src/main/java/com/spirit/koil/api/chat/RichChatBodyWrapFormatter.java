@@ -45,6 +45,15 @@ public final class RichChatBodyWrapFormatter {
     }
 
     public static Text format(Text message, RichChatRowType rowType) {
+        return format(message, rowType, currentWrapWidth());
+    }
+
+    /**
+     * Formats Rich Chat content against a caller-owned viewport width. This is
+     * used by non-ChatHud surfaces that still need the exact same structural
+     * wrapping semantics as native Rich Chat.
+     */
+    public static Text format(Text message, RichChatRowType rowType, int requestedWrapWidth) {
         if (message == null) {
             return null;
         }
@@ -53,7 +62,7 @@ public final class RichChatBodyWrapFormatter {
             return message;
         }
 
-        int wrapWidth = currentWrapWidth();
+        int wrapWidth = Math.max(8, requestedWrapWidth);
         RichChatRowType safeType = rowType == null ? RichChatRowType.UNKNOWN : rowType;
         String cacheKey = safeType.name()
                 + ":" + wrapWidth

@@ -60,6 +60,30 @@ public final class KtlCompilerService {
         return INSTANCE;
     }
 
+    /**
+     * Reloads the editable KTL library for a live execution request. If a hot-edited
+     * source becomes invalid after a previously valid registry was compiled, Koil
+     * keeps that last-known-good registry available instead of taking unrelated
+     * automation capabilities offline. First-load failures remain fatal because
+     * there is no verified registry to fall back to.
+     *
+     * @return true when the latest sources were accepted, false when the previous
+     *         verified registry was retained.
+     */
+    public synchronized boolean reloadForExecution() {
+        try {
+            reload();
+            return true;
+        } catch (RuntimeException failure) {
+            if (this.assets == null || this.assets.templates.isEmpty()) {
+                throw failure;
+            }
+            AutomationReporter.block("[block]", "KTL reload rejected; retaining last-known-good registry: "
+                    + (failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage()));
+            return false;
+        }
+    }
+
     public synchronized void reload() {
         ensureDirectories();
         KtlDevelopmentLibrarySynchronizer.syncIfDevelopmentInstance(ROOT);
@@ -138,7 +162,9 @@ public final class KtlCompilerService {
                 template.templateId(),
                 params,
                 Map.of("source", "typed_capability"),
-                request.executionId()
+                request.executionId(),
+                request.telemetryRequestId(),
+                request.telemetryParentSpanId()
         );
     }
 
@@ -848,7 +874,8 @@ public final class KtlCompilerService {
                         stringList(entry.get("side_effects")),
                         positiveInt(entry.get("timeout_ticks"), 1_200),
                         stringOrDefault(entry.get("failure_policy"), "fail"),
-                        string(entry.get("recovery_task"))
+                        string(entry.get("recovery_task")),
+                        executionContract(entry)
                 );
                 compiled.templateMetadata.put(metadata.templateId(), metadata);
             }
@@ -868,7 +895,8 @@ public final class KtlCompilerService {
                 stringList(document.body.get("side_effects")),
                 positiveInt(document.body.get("timeout_ticks"), 1_200),
                 stringOrDefault(document.body.get("failure_policy"), "fail"),
-                string(document.body.get("recovery_task"))
+                string(document.body.get("recovery_task")),
+                executionContract(document.body)
         );
         compiled.templateMetadata.put(metadata.templateId(), metadata);
     }
@@ -923,9 +951,31 @@ public final class KtlCompilerService {
                     stringList(embeddedMetadata.get("side_effects")),
                     positiveInt(embeddedMetadata.get("timeout_ticks"), 1_200),
                     stringOrDefault(embeddedMetadata.get("failure_policy"), "fail"),
-                    string(embeddedMetadata.get("recovery_task"))
+                    string(embeddedMetadata.get("recovery_task")),
+                    executionContract(embeddedMetadata)
             ));
         }
+    }
+
+    private static KtlExecutionContract executionContract(Map<String, Object> metadata) {
+        Map<String, Object> requires = map(metadata == null ? null : metadata.get("requires"));
+        Map<String, Object> cost = map(metadata == null ? null : metadata.get("cost"));
+        Map<String, Object> recovery = map(metadata == null ? null : metadata.get("recovery"));
+        return new KtlExecutionContract(
+                stringList(requires.get("facts")),
+                stringList(requires.get("states")),
+                stringList(metadata == null ? null : metadata.get("preconditions")),
+                stringList(metadata == null ? null : metadata.get("success_when")),
+                stringList(metadata == null ? null : metadata.get("failure_when")),
+                stringList(metadata == null ? null : metadata.get("produces")),
+                stringList(metadata == null ? null : metadata.get("invalidated_by")),
+                positiveInt(cost.get("base_ticks"), 0),
+                positiveInt(cost.get("risk"), 0),
+                positiveInt(cost.get("resource_cost"), 0),
+                positiveInt(recovery.get("retry"), 0),
+                string(recovery.get("alternate")),
+                booleanValue(recovery.get("replan"), false)
+        );
     }
 
     private List<Integer> stepSourceLines(String sourcePath, int expectedSteps) {
@@ -2410,7 +2460,8 @@ public final class KtlCompilerService {
             List<String> sideEffects,
             int timeoutTicks,
             String failurePolicy,
-            String recoveryTask
+            String recoveryTask,
+            KtlExecutionContract executionContract
     ) {
         public CompiledTemplateMetadata {
             semanticOperations = List.copyOf(semanticOperations);
@@ -2425,6 +2476,7 @@ public final class KtlCompilerService {
             timeoutTicks = Math.max(1, timeoutTicks);
             failurePolicy = failurePolicy == null || failurePolicy.isBlank() ? "fail" : failurePolicy;
             recoveryTask = recoveryTask == null ? "" : recoveryTask;
+            executionContract = executionContract == null ? KtlExecutionContract.empty() : executionContract;
         }
 
         public CompiledTemplateMetadata(
@@ -2449,8 +2501,60 @@ public final class KtlCompilerService {
                     List.of(),
                     1_200,
                     "fail",
-                    ""
+                    "",
+                    KtlExecutionContract.empty()
             );
+        }
+
+        public List<String> requiredFacts() {
+            return executionContract.requiredFacts();
+        }
+
+        public List<String> preconditions() {
+            return executionContract.preconditions();
+        }
+
+        public List<String> successWhen() {
+            return executionContract.successWhen();
+        }
+
+        public List<String> failureWhen() {
+            return executionContract.failureWhen();
+        }
+    }
+
+    public record KtlExecutionContract(
+            List<String> requiredFacts,
+            List<String> requiredStates,
+            List<String> preconditions,
+            List<String> successWhen,
+            List<String> failureWhen,
+            List<String> produces,
+            List<String> invalidatedBy,
+            int baseTicks,
+            int risk,
+            int resourceCost,
+            int retryLimit,
+            String alternateRecovery,
+            boolean replanOnFailure
+    ) {
+        public KtlExecutionContract {
+            requiredFacts = requiredFacts == null ? List.of() : List.copyOf(requiredFacts);
+            requiredStates = requiredStates == null ? List.of() : List.copyOf(requiredStates);
+            preconditions = preconditions == null ? List.of() : List.copyOf(preconditions);
+            successWhen = successWhen == null ? List.of() : List.copyOf(successWhen);
+            failureWhen = failureWhen == null ? List.of() : List.copyOf(failureWhen);
+            produces = produces == null ? List.of() : List.copyOf(produces);
+            invalidatedBy = invalidatedBy == null ? List.of() : List.copyOf(invalidatedBy);
+            baseTicks = Math.max(0, baseTicks);
+            risk = Math.max(0, risk);
+            resourceCost = Math.max(0, resourceCost);
+            retryLimit = Math.max(0, retryLimit);
+            alternateRecovery = alternateRecovery == null ? "" : alternateRecovery;
+        }
+
+        public static KtlExecutionContract empty() {
+            return new KtlExecutionContract(List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), 0, 0, 0, 0, "", false);
         }
     }
 

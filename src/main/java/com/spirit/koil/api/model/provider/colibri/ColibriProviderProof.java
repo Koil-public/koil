@@ -33,6 +33,8 @@ public final class ColibriProviderProof {
     }
 
     public static void main(String[] args) throws Exception {
+        proveInlineThinkPartitioning();
+        proveNativeThinkingPartitioning();
         ColibriStreamDecoder incomplete = new ColibriStreamDecoder(UUID.randomUUID(), new StreamingModelObserver() {});
         boolean rejected = false;
         try { incomplete.finishOpenBlocks(); }
@@ -56,6 +58,55 @@ public final class ColibriProviderProof {
             server.stop(0);
         }
         System.out.println("Colibri provider proof passed.");
+    }
+
+    private static void proveInlineThinkPartitioning() {
+        StringBuilder visible = new StringBuilder();
+        StringBuilder reasoning = new StringBuilder();
+        UUID id = UUID.randomUUID();
+        ColibriStreamDecoder decoder = new ColibriStreamDecoder(id, new StreamingModelObserver() {
+            @Override
+            public void onTextDelta(UUID requestId, String delta) {
+                visible.append(delta);
+            }
+
+            @Override
+            public void onReasoningDelta(UUID requestId, String delta) {
+                reasoning.append(delta);
+            }
+        });
+        decoder.accept("content_block_delta", "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"<think>private\"}}");
+        decoder.accept("content_block_delta", "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" work</think>Visible answer\"}}");
+        decoder.accept("message_stop", "{\"type\":\"message_stop\"}");
+        decoder.finishOpenBlocks();
+        require("private work".equals(reasoning.toString()), "inline think body leaked out of Colibri reasoning channel");
+        require("Visible answer".equals(visible.toString()), "Colibri visible answer after </think> was lost");
+        require("Visible answer".equals(decoder.text()), "Colibri decoder retained think markup in final text");
+        require("private work".equals(decoder.reasoningText()), "Colibri decoder did not retain isolated reasoning");
+    }
+
+    private static void proveNativeThinkingPartitioning() {
+        StringBuilder visible = new StringBuilder();
+        StringBuilder reasoning = new StringBuilder();
+        ColibriStreamDecoder decoder = new ColibriStreamDecoder(UUID.randomUUID(), new StreamingModelObserver() {
+            @Override
+            public void onTextDelta(UUID requestId, String delta) {
+                visible.append(delta);
+            }
+
+            @Override
+            public void onReasoningDelta(UUID requestId, String delta) {
+                reasoning.append(delta);
+            }
+        });
+        decoder.accept("content_block_delta", "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"private native thought\"}}");
+        decoder.accept("content_block_delta", "{\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Visible answer\"}}");
+        decoder.accept("message_stop", "{\"type\":\"message_stop\"}");
+        decoder.finishOpenBlocks();
+        require("private native thought".equals(reasoning.toString()),
+                "Colibri native thinking delta was not routed to the reasoning channel");
+        require("Visible answer".equals(visible.toString()),
+                "Colibri native thinking support swallowed visible output");
     }
 
     private static void proveProvider(int port, String apiKey) throws Exception {

@@ -1,29 +1,21 @@
 package com.spirit.koil.api.chat;
 
-import com.spirit.koil.api.chat.latex.RichChatLatexFormatter;
 import net.minecraft.text.Text;
 
+/**
+ * Compatibility facade for callers that only need formatted Rich Chat Text.
+ * Detached UI surfaces should prefer {@link RichChatSurfaceRenderer} when they
+ * also own wrapping/rendering, so formatting and final paint cannot diverge.
+ */
 public final class RichChatPreviewFormatter {
     private RichChatPreviewFormatter() {
     }
 
     public static Text format(Text message) {
-        if (message == null) {
-            return null;
-        }
-        Text rewritten = RichChatLatexFormatter.format(message);
-        rewritten = RichChatPrivateMessageBridge.observeAndRewrite(rewritten);
-        rewritten = RichChatCodeBlockBridge.rewrite(rewritten);
-        rewritten = RichChatTableBridge.rewrite(rewritten);
-        if (rewritten != null) {
-            RichChatRowType rowType = RichChatRowClassifier.classify(rewritten, null);
-            if (rowType == RichChatRowType.PLAYER_CHAT
-                    || rowType == RichChatRowType.PRIVATE_MESSAGE
-                    || rowType == RichChatRowType.MODEL_RESPONSE) {
-                rewritten = RichChatBodyWrapFormatter.format(rewritten, rowType);
-            }
-        }
-        rewritten = RichChatMaskedLinkBridge.rewrite(rewritten);
-        return RichChatSectionFormatting.styleBeforeWrapping(rewritten);
+        return format(message, null, -1);
+    }
+
+    public static Text format(Text message, RichChatRowType rowType, int wrapWidth) {
+        return RichChatSurfaceRenderer.format(message, rowType, wrapWidth);
     }
 }

@@ -12,10 +12,14 @@ import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
 import com.spirit.koil.api.console.ConsoleLevel;
 import com.spirit.koil.api.model.LocalModelRuntimeLog;
 import com.spirit.koil.api.model.LocalModelService;
+import com.spirit.koil.api.telemetry.TelemetryCapabilityState;
+import com.spirit.koil.api.telemetry.TelemetrySpanKind;
+import com.spirit.koil.api.telemetry.TelemetryStore;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.text.Text;
@@ -39,7 +43,10 @@ public final class AutomationRouter {
         return thread;
     });
     private static final ConcurrentLinkedQueue<PlannerOutcome> READY = new ConcurrentLinkedQueue<>();
+    private static final ConcurrentLinkedQueue<String> PENDING_WORKSPACE_OPENS = new ConcurrentLinkedQueue<>();
     private static final Map<Long, AutomationRequest> PENDING_REQUESTS = new ConcurrentHashMap<>();
+    private static final Map<Long, String> PENDING_PLAN_SPANS = new ConcurrentHashMap<>();
+    private static final Map<Long, Long> PENDING_PLAN_QUEUED_AT = new ConcurrentHashMap<>();
     private static final AtomicLong REQUEST_SEQUENCE = new AtomicLong();
     private static volatile long latestRequestedSequence;
 
@@ -48,6 +55,7 @@ public final class AutomationRouter {
 
     public static void registerClientCommands() {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(automationModeCommand("automate")));
+        ClientTickEvents.END_CLIENT_TICK.register(AutomationRouter::flushWorkspaceOpens);
     }
 
     static LiteralArgumentBuilder<FabricClientCommandSource> automationModeCommand(String commandName) {
@@ -165,9 +173,12 @@ public final class AutomationRouter {
                         .then(literal("persistent-history").executes(context -> togglePersistentExperiment(
                                 com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_CONVERSATION_HISTORY,
                                 "Persistent conversation history")))
+                        .then(literal("knowledge").executes(context -> togglePersistentExperiment(
+                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_KNOWLEDGE,
+                                "Persistent knowledge")))
                         .then(literal("associative-memory").executes(context -> togglePersistentExperiment(
-                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_ASSOCIATIVE_MEMORY,
-                                "Persistent associative memory")))
+                                com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.PERSISTENT_KNOWLEDGE,
+                                "Persistent knowledge")))
                         .then(literal("expert-prefetch").executes(context -> togglePersistentExperiment(
                                 com.spirit.koil.api.model.ModelExperimentalFeatures.Feature.EXPERT_PREFETCH,
                                 "Expert prefetch")))
@@ -393,7 +404,12 @@ public final class AutomationRouter {
         String focusedTraceId = traceId == null ? "" : traceId;
         LocalModelRuntimeLog.write("automation_workspace", "status=requested focus="
                 + (focusedTraceId.isBlank() ? "none" : focusedTraceId));
-        client.execute(() -> {
+        PENDING_WORKSPACE_OPENS.add(focusedTraceId);
+    }
+
+    private static void flushWorkspaceOpens(MinecraftClient client) {
+        String focusedTraceId;
+        while ((focusedTraceId = PENDING_WORKSPACE_OPENS.poll()) != null) {
             try {
                 client.setScreen(new AutomationWorkspaceScreen(client.currentScreen, focusedTraceId));
                 if (!(client.currentScreen instanceof AutomationWorkspaceScreen)) {
@@ -415,7 +431,7 @@ public final class AutomationRouter {
                     client.inGameHud.getChatHud().addMessage(Text.literal("Could not open Automation Workpad: " + detail));
                 }
             }
-        });
+        }
     }
 
     /** Opens the Workpad without requiring a model or Executor trace. */
@@ -574,24 +590,53 @@ public final class AutomationRouter {
                     "Automation accepts typed KTL task invocations only; natural-language prompts must be routed through Automation Mode."
             );
         }
-        AutomationCliViewModel.beginSession(request.rawInput(), actorOverride);
+        AutomationRequest routedRequest = request.telemetryRequestId() == null
+                ? request.withTelemetry(request.executionId(), "")
+                : request;
+        TelemetryStore.beginRequest(routedRequest.telemetryRequestId(), routedRequest.rawInput(),
+                actorOverride == null || actorOverride.isBlank() ? "automation" : actorOverride);
+        String planningSpanId = TelemetryStore.beginSpan(routedRequest.telemetryRequestId(),
+                routedRequest.telemetryParentSpanId(), TelemetrySpanKind.PLANNING, "automation planning",
+                Map.of("execution_id", routedRequest.executionId().toString(),
+                        "actor", actorOverride == null ? "" : actorOverride));
+        TelemetryStore.provenance(routedRequest.telemetryRequestId(), planningSpanId, "automation.request",
+                actorOverride == null || actorOverride.isBlank() ? "AutomationRouter" : actorOverride,
+                "planning", routedRequest.rawInput(), "Typed KTL request supplied to the automation planner");
+        TelemetryStore.capability(routedRequest.telemetryRequestId(), "automation", "planner",
+                TelemetryCapabilityState.ACTIVE, "planning", routedRequest.rawInput());
+        AutomationCliViewModel.beginSession(routedRequest.rawInput(), actorOverride);
         long sequence = REQUEST_SEQUENCE.incrementAndGet();
         latestRequestedSequence = sequence;
-        PENDING_REQUESTS.put(sequence, request);
+        PENDING_REQUESTS.put(sequence, routedRequest);
+        PENDING_PLAN_SPANS.put(sequence, planningSpanId);
+        PENDING_PLAN_QUEUED_AT.put(sequence, System.currentTimeMillis());
         AutomationCliViewModel.plannerGraph("queued", "graph_cluster", "[run ]", "planner.cluster", "background planning");
-        AutomationCliViewModel.plannerGraph("queued.input", "planner_input", "[info]", "planner.input", request.rawInput());
+        AutomationCliViewModel.plannerGraph("queued.input", "planner_input", "[info]", "planner.input", routedRequest.rawInput());
         AutomationCliViewModel.plannerGraph("queued.mode", "planner_event", "[info]", "planner.mode", "task_template");
         AutomationCliViewModel.activeState("thinking", "", "planning");
-        AutomationRuntimeStatus.planning(request.rawInput());
+        AutomationRuntimeStatus.planning(routedRequest.rawInput());
         AutomationReporter.run("[run ]", "planner = queued");
         PLANNER.submit(() -> {
+            Long queuedAt = PENDING_PLAN_QUEUED_AT.remove(sequence);
+            if (queuedAt != null) {
+                TelemetryStore.metric(routedRequest.telemetryRequestId(), planningSpanId, "planning_queue_wait_ms",
+                        Math.max(0L, System.currentTimeMillis() - queuedAt));
+                TelemetryStore.event(routedRequest.telemetryRequestId(), planningSpanId,
+                        "planner_started", "Background planner started processing the request.");
+            }
             try {
                 AutomationCliViewModel.plannerGraph("reload", "planner_cache", "[cache]", "planner.reload", "checking .ktl sources");
-                KtlCompilerService.getInstance().reload();
+                boolean latestSourcesAccepted = KtlCompilerService.getInstance().reloadForExecution();
+                if (!latestSourcesAccepted) {
+                    AutomationCliViewModel.plannerGraph("reload.fallback", "planner_cache", "[warn]",
+                            "planner.reload", "invalid hot-edit rejected; using last-known-good KTL registry");
+                }
                 AutomationCliViewModel.plannerGraph("interpret", "planner_event", "[run ]", "planner.interpret", "building execution plan");
-                READY.add(PlannerOutcome.success(sequence, request, KtlCompilerService.getInstance().interpret(request)));
+                var interpreted = KtlCompilerService.getInstance().interpret(routedRequest)
+                        .withTelemetryParent(routedRequest.telemetryRequestId(), planningSpanId);
+                READY.add(PlannerOutcome.success(sequence, routedRequest, interpreted));
             } catch (Exception exception) {
-                READY.add(PlannerOutcome.failure(sequence, request, exception));
+                READY.add(PlannerOutcome.failure(sequence, routedRequest, exception));
             }
         });
     }
@@ -654,7 +699,13 @@ public final class AutomationRouter {
         PlannerOutcome outcome;
         while ((outcome = READY.poll()) != null) {
             PENDING_REQUESTS.remove(outcome.sequence);
+            PENDING_PLAN_QUEUED_AT.remove(outcome.sequence);
+            String planningSpanId = PENDING_PLAN_SPANS.remove(outcome.sequence);
             if (outcome.sequence != latestRequestedSequence) {
+                if (outcome.request.telemetryRequestId() != null && planningSpanId != null) {
+                    TelemetryStore.finishSpan(outcome.request.telemetryRequestId(), planningSpanId,
+                            TelemetryCapabilityState.CANCELLED, "superseded", "automation request was superseded");
+                }
                 publishPlanningResult(outcome.request, "cancelled", "superseded", "automation request was superseded");
                 continue;
             }
@@ -665,6 +716,12 @@ public final class AutomationRouter {
                 AutomationRuntimeStatus.failed(failureMessage);
                 AutomationReporter.fail("[fail]", failureMessage);
                 AutomationCliViewModel.offerFeedbackPrompt("planning failed: " + failureMessage);
+                if (outcome.request.telemetryRequestId() != null && planningSpanId != null) {
+                    TelemetryStore.finishSpan(outcome.request.telemetryRequestId(), planningSpanId,
+                            TelemetryCapabilityState.FAILED, "planning_failed", failureMessage);
+                    TelemetryStore.capability(outcome.request.telemetryRequestId(), "automation", "planner",
+                            TelemetryCapabilityState.FAILED, "planning_failed", failureMessage);
+                }
                 publishPlanningResult(outcome.request, "failed", "planning_failed", failureMessage);
                 continue;
             }
@@ -672,6 +729,14 @@ public final class AutomationRouter {
             AutomationCliViewModel.activeState("running", "", outcome.result.selectedTemplateId());
             AutomationRuntimeStatus.running(outcome.result.selectedTemplateId());
             AutomationReporter.ok("[ok  ]", "planner = ready");
+            if (outcome.request.telemetryRequestId() != null && planningSpanId != null) {
+                TelemetryStore.annotate(outcome.request.telemetryRequestId(), planningSpanId,
+                        "selected_template", outcome.result.selectedTemplateId());
+                TelemetryStore.finishSpan(outcome.request.telemetryRequestId(), planningSpanId,
+                        TelemetryCapabilityState.AVAILABLE, "planned", outcome.result.selectedTemplateId());
+                TelemetryStore.capability(outcome.request.telemetryRequestId(), "automation", "planner",
+                        TelemetryCapabilityState.AVAILABLE, "planned", outcome.result.selectedTemplateId());
+            }
             INTERPRETER.executePrepared(outcome.result);
         }
         if (INTERPRETER.isActive()) {
@@ -688,9 +753,7 @@ public final class AutomationRouter {
         String reason = close ? "automation exit" : "automation off";
         latestRequestedSequence = REQUEST_SEQUENCE.incrementAndGet();
         READY.clear();
-        PENDING_REQUESTS.values().forEach(request ->
-                publishPlanningResult(request, "cancelled", "cancelled", reason));
-        PENDING_REQUESTS.clear();
+        cancelPendingPlanning(reason);
         INTERPRETER.cancel(reason);
         AutomationModeController.setAutomationMode(false);
         LocalModelService.cancelActiveWork();
@@ -708,11 +771,26 @@ public final class AutomationRouter {
         String detail = reason == null || reason.isBlank() ? "automation task cancelled" : reason;
         latestRequestedSequence = REQUEST_SEQUENCE.incrementAndGet();
         READY.clear();
-        PENDING_REQUESTS.values().forEach(request ->
-                publishPlanningResult(request, "cancelled", "cancelled", detail));
-        PENDING_REQUESTS.clear();
+        cancelPendingPlanning(detail);
         INTERPRETER.cancel(detail);
         AutomationRuntimeStatus.canceled(detail);
+    }
+
+    private static void cancelPendingPlanning(String detail) {
+        for (Map.Entry<Long, AutomationRequest> entry : PENDING_REQUESTS.entrySet()) {
+            AutomationRequest request = entry.getValue();
+            publishPlanningResult(request, "cancelled", "cancelled", detail);
+            String spanId = PENDING_PLAN_SPANS.get(entry.getKey());
+            if (request != null && request.telemetryRequestId() != null && spanId != null && !spanId.isBlank()) {
+                TelemetryStore.finishSpan(request.telemetryRequestId(), spanId,
+                        TelemetryCapabilityState.CANCELLED, "cancelled", detail);
+                TelemetryStore.capability(request.telemetryRequestId(), "automation", "planner",
+                        TelemetryCapabilityState.CANCELLED, "cancelled", detail);
+            }
+        }
+        PENDING_REQUESTS.clear();
+        PENDING_PLAN_SPANS.clear();
+        PENDING_PLAN_QUEUED_AT.clear();
     }
 
     private static void publishPlanningResult(

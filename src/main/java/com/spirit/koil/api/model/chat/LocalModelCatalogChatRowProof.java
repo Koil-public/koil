@@ -109,6 +109,10 @@ public final class LocalModelCatalogChatRowProof {
                         "Chat / tools: yes / "
                                 + (LocalModelAutomationEligibility.supportsAutomationTools(entry) ? "yes" : "no")),
                 "selected model misstated protocol-backed tool availability");
+        Text panelTooltip = LocalModelCatalogChatRow.panelTooltip(entry, compatibility, false, false);
+        require(panelTooltip.getString().contains("Use the visible model action buttons.")
+                        && !panelTooltip.getString().contains("Click to prefill:"),
+                "catalog-panel tooltip did not describe button actions truthfully");
 
         LocalModelCatalogView.Page firstPage = LocalModelCatalogView.page(LocalModelCatalog.entries(), 1, 10);
         LocalModelCatalogView.Page lastPage = LocalModelCatalogView.page(

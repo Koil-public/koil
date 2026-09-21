@@ -36,7 +36,7 @@ public final class RichChatModelFormattingContract {
     public static String askPrompt() {
         return """
             /ask response contract:
-            - Answer the user's question directly. /ask is conversational and has no action tools, so never claim that it executed a command, changed Minecraft, read a file, ran code, or verified a runtime result.
+            - Answer the user's question directly. /ask may use tool schemas Koil explicitly supplies for safe evidence gathering, and a supplied safe tool is permitted rather than forbidden. Never claim an unsupplied or unobserved action. File/workspace management, command or gameplay execution, code/KTL or process execution, and Automation control remain unavailable in /ask; read-only inspection/retrieval is allowed when supplied.
             - Use the smallest useful Rich Chat structure. A typical answer is one result line followed by a short explanation, list, table, code block, link, media item, or LaTeX only when needed.
             - In every substantive answer, color one key result, status, warning, or limitation with the shared semantic colors, then reset immediately. Greetings and answers with no meaningful status may remain uncolored.
             - When the user asks for an exact Minecraft command, provide the verified syntax as a masked suggestion such as `[Set the time to day](/time set day)`. Put it directly in chat, never inside triple backticks.

@@ -44,7 +44,7 @@ public final class LocalModelCatalogChatRow {
         return row.styled(style -> {
             var styled = style.withHoverEvent(new HoverEvent(
                     HoverEvent.Action.SHOW_TEXT,
-                    hoverText(entry, compatibility, installed, selected, command)
+                    tooltip(entry, compatibility, installed, selected)
             ));
             return command.isBlank() ? styled : styled.withClickEvent(
                     new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command));
@@ -61,12 +61,34 @@ public final class LocalModelCatalogChatRow {
         return BinaryStorageFormatter.format(bytes);
     }
 
-    private static Text hoverText(
+    /** Shared rich metadata used by the legacy chat row and the catalog panel. */
+    public static Text tooltip(
+            LocalModelCatalogEntry entry,
+            LocalModelCompatibility compatibility,
+            boolean installed,
+            boolean selected
+    ) {
+        String command = selectionCommand(entry, installed);
+        return tooltip(entry, compatibility, installed, selected, command, false);
+    }
+
+    /** Rich metadata for a panel whose lifecycle actions are visible buttons. */
+    public static Text panelTooltip(
+            LocalModelCatalogEntry entry,
+            LocalModelCompatibility compatibility,
+            boolean installed,
+            boolean selected
+    ) {
+        return tooltip(entry, compatibility, installed, selected, selectionCommand(entry, installed), true);
+    }
+
+    private static Text tooltip(
             LocalModelCatalogEntry entry,
             LocalModelCompatibility compatibility,
             boolean installed,
             boolean selected,
-            String command
+            String command,
+            boolean panelActions
     ) {
         boolean chats = entry.capabilityTags().contains(LocalModelCapabilityTag.CHAT);
         boolean automationEligible = LocalModelAutomationEligibility.supportsAutomationTools(entry);
@@ -90,6 +112,10 @@ public final class LocalModelCatalogChatRow {
                 .append(detail("Storage", formatStorage(entry.downloadBytes())))
                 .append(detail("Parameters", entry.parameterCount()))
                 .append(detail("Quantization", entry.quantization()))
+                .append(detail("Artifact source", entry.artifacts().stream().findFirst()
+                        .map(artifact -> "huggingbay.xyz".equalsIgnoreCase(artifact.downloadUri().getHost())
+                                ? "Hugging Bay" : artifact.downloadUri().getHost())
+                        .orElse("catalog metadata")))
                 .append(detail("Context", String.format(Locale.ROOT, "%,d tokens", entry.contextTokens())))
                 .append(detail(
                         "Memory",
@@ -105,6 +131,8 @@ public final class LocalModelCatalogChatRow {
                 .append(command.isBlank()
                         ? Text.literal("\nMetadata only; no compatible local runtime is currently resolvable.")
                                 .formatted(Formatting.DARK_GRAY)
+                        : panelActions
+                                ? Text.literal("\nUse the visible model action buttons.").formatted(Formatting.DARK_GRAY)
                         : Text.literal(resolvable
                                         ? "\nClick to resolve a verified Hugging Face GGUF and install: "
                                         : "\nClick to prefill: ")

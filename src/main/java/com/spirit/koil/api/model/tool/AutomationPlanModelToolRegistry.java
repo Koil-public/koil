@@ -9,6 +9,7 @@ import com.spirit.koil.api.automation.ktl.AutomationKtlSkillRegistry;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolDefinition;
 import com.spirit.koil.api.model.ModelToolResult;
+import com.spirit.koil.api.model.ModelToolSchemaValidator;
 
 import java.time.Duration;
 import java.util.LinkedHashSet;
@@ -23,10 +24,10 @@ import java.util.concurrent.CompletableFuture;
  */
 public final class AutomationPlanModelToolRegistry {
     public static final String TOOL_ID = "automation.plan";
-    private static final int MAXIMUM_STEPS = 24;
+    private static final int MAXIMUM_STEPS_PER_SEGMENT = 24;
     private static final ModelToolDefinition DEFINITION = new ModelToolDefinition(
             TOOL_ID,
-            "Create and validate a bounded structured plan for a complex objective. Use canonical dotted Koil tool identifiers inside steps and concrete arguments. This tool does not execute any step or grant approval.",
+            "Create and validate one bounded ordered plan segment for a complex objective against Koil's authoritative model-tool catalog. Every step must use a registered canonical tool id and satisfy that tool's input schema. Long objectives are intentionally continued through additional plan segments after the current segment is executed and verified; this tool never imposes a total-task limit. This tool does not execute steps or grant approval.",
             schema(),
             List.of("automation_mode_enabled"),
             Set.of(),
@@ -41,7 +42,7 @@ public final class AutomationPlanModelToolRegistry {
     }
 
     public static String version() {
-        return "automation-plan-tool-v3";
+        return "automation-plan-tool-v5-segmented";
     }
 
     public static List<ModelToolDefinition> modelTools() {
@@ -65,11 +66,11 @@ public final class AutomationPlanModelToolRegistry {
             return CompletableFuture.completedFuture(failure(call, "invalid_plan", "Plan steps must be an array."));
         }
         JsonArray inputSteps = arguments.getAsJsonArray("steps");
-        if (inputSteps.isEmpty() || inputSteps.size() > MAXIMUM_STEPS) {
+        if (inputSteps.isEmpty() || inputSteps.size() > MAXIMUM_STEPS_PER_SEGMENT) {
             return CompletableFuture.completedFuture(failure(
                     call,
                     "invalid_plan",
-                    "A plan requires between 1 and " + MAXIMUM_STEPS + " steps."
+                    "A plan segment requires between 1 and " + MAXIMUM_STEPS_PER_SEGMENT + " steps. Execute/verify this segment, then submit the next segment for any remaining ordered tasks."
             ));
         }
 
@@ -97,6 +98,23 @@ public final class AutomationPlanModelToolRegistry {
             JsonObject toolArguments = step.has("arguments") && step.get("arguments").isJsonObject()
                     ? step.getAsJsonObject("arguments")
                     : new JsonObject();
+            ModelToolDefinition toolDefinition = LocalModelToolCatalog.definition(toolId).orElse(null);
+            if (toolDefinition == null) {
+                return CompletableFuture.completedFuture(failure(
+                        call,
+                        "unknown_plan_tool",
+                        "Plan step " + (index + 1) + " is not present in the authoritative model tool catalog: " + toolId
+                ));
+            }
+            List<String> schemaFailures = ModelToolSchemaValidator.validate(toolDefinition.inputSchema(), toolArguments);
+            if (!schemaFailures.isEmpty()) {
+                return CompletableFuture.completedFuture(failure(
+                        call,
+                        "invalid_plan_arguments",
+                        "Plan step " + (index + 1) + " does not satisfy " + toolId
+                                + " schema: " + String.join(", ", schemaFailures)
+                ));
+            }
             if (AutomationCapabilityRegistry.definitions().containsKey(toolId)) {
                 try {
                     AutomationCapabilityRegistry.validateAndCompile(toolId, toolArguments, UUID.randomUUID());
@@ -148,7 +166,9 @@ public final class AutomationPlanModelToolRegistry {
             validated.addProperty("validationRequirement", validation);
             validated.addProperty("expectedObservation", string(step, "expectedObservation"));
             validated.addProperty("sideEffectClassification",
-                    LocalModelToolCatalog.requiresFreshApproval(toolId) ? "side_effect" : "read_only");
+                    toolDefinition.sideEffects().isEmpty() ? "read_only" : "side_effect");
+            validated.addProperty("confirmationRequired", toolDefinition.confirmationRequired());
+            validated.addProperty("reversible", toolDefinition.reversible());
             JsonArray dependencies = new JsonArray();
             if (index > 0) {
                 dependencies.add(planId + "-step-" + index);
@@ -161,6 +181,8 @@ public final class AutomationPlanModelToolRegistry {
         output.addProperty("planId", planId);
         output.addProperty("objective", objective);
         output.addProperty("stepCount", validatedSteps.size());
+        output.addProperty("segment", true);
+        output.addProperty("segmentCapacity", MAXIMUM_STEPS_PER_SEGMENT);
         output.addProperty("executable", true);
         output.addProperty("executed", false);
         output.add("steps", validatedSteps);
@@ -170,16 +192,16 @@ public final class AutomationPlanModelToolRegistry {
                 "completed",
                 output,
                 "",
-                "The structured plan is valid. No plan step was executed."
+                "The structured plan segment is valid. No plan step was executed."
         ));
     }
 
     private static Set<String> knownToolIds() {
-        LinkedHashSet<String> ids = new LinkedHashSet<>(AutomationCapabilityRegistry.definitions().keySet());
-        MinecraftKnowledgeModelToolRegistry.modelTools().forEach(tool -> ids.add(tool.id()));
-        ModelWorkspaceToolRegistry.modelTools().forEach(tool -> ids.add(tool.id()));
-        AutomationKtlSkillModelToolRegistry.modelTools().forEach(tool -> ids.add(tool.id()));
-        ProjectValidationModelToolRegistry.modelTools().forEach(tool -> ids.add(tool.id()));
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        for (ModelToolDefinition definition : LocalModelToolCatalog.automationModeTools()) {
+            if (definition == null || definition.id() == null || definition.id().isBlank()) continue;
+            if (!TOOL_ID.equals(definition.id())) ids.add(definition.id());
+        }
         return Set.copyOf(ids);
     }
 
@@ -234,7 +256,7 @@ public final class AutomationPlanModelToolRegistry {
         JsonObject steps = new JsonObject();
         steps.addProperty("type", "array");
         steps.addProperty("minItems", 1);
-        steps.addProperty("maxItems", MAXIMUM_STEPS);
+        steps.addProperty("maxItems", MAXIMUM_STEPS_PER_SEGMENT);
         JsonObject step = new JsonObject();
         step.addProperty("type", "object");
         step.addProperty("additionalProperties", false);

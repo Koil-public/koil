@@ -1,11 +1,11 @@
 package com.spirit.koil.api.model;
 
-import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.spirit.koil.api.model.runtime.universal.KoilExecutionAdapterDescriptor;
+import com.spirit.koil.api.model.runtime.universal.KoilUnifiedLocalModelProvider;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -18,12 +18,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public final class LocalModelRuntimeManager implements AutoCloseable {
     private final Object lock = new Object();
-    private final Map<String, LocalModelProvider> providers = new LinkedHashMap<>();
+    private LocalModelProvider runtimeProvider;
     private final ArrayDeque<QueuedRequest> queue = new ArrayDeque<>();
     private final ExecutorService controller;
     private final int maximumQueueDepth;
     private final AtomicBoolean draining = new AtomicBoolean();
-    private volatile String selectedProviderId = "";
     private volatile QueuedRequest active;
     private volatile boolean closed;
 
@@ -36,33 +35,53 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
         });
     }
 
+    /** Registers Koil's one externally visible inference provider. */
     public void registerProvider(LocalModelProvider provider) {
         Objects.requireNonNull(provider, "provider");
         synchronized (this.lock) {
             ensureOpen();
-            LocalModelProvider existing = this.providers.putIfAbsent(provider.id(), provider);
-            if (existing != null && existing != provider) {
-                throw new IllegalArgumentException("model provider already registered: " + provider.id());
+            if (this.runtimeProvider != null && this.runtimeProvider != provider) {
+                throw new IllegalStateException(
+                        "Koil exposes one inference provider; an inference runtime is already registered: "
+                                + this.runtimeProvider.id());
             }
-            if (this.selectedProviderId.isBlank()) {
-                this.selectedProviderId = provider.id();
-            }
+            this.runtimeProvider = provider;
         }
     }
 
+    /**
+     * Compatibility shim for older callers. Provider switching is no longer a runtime-manager feature.
+     * Internal execution implementation selection belongs inside the unified provider.
+     */
+    @Deprecated
     public void selectProvider(String providerId) {
         String normalized = providerId == null ? "" : providerId.trim();
         synchronized (this.lock) {
             ensureOpen();
-            if (!this.providers.containsKey(normalized)) {
-                throw new IllegalArgumentException("unknown model provider: " + normalized);
+            if (this.runtimeProvider == null || !this.runtimeProvider.id().equals(normalized)) {
+                throw new IllegalArgumentException(
+                        "provider switching is not supported by the unified Koil runtime: " + normalized);
             }
-            this.selectedProviderId = normalized;
         }
     }
 
     public String selectedProviderId() {
-        return this.selectedProviderId;
+        synchronized (this.lock) {
+            return this.runtimeProvider == null ? "" : this.runtimeProvider.id();
+        }
+    }
+
+    public KoilExecutionAdapterDescriptor selectedExecutionAdapter() {
+        synchronized (this.lock) {
+            if (this.runtimeProvider instanceof KoilUnifiedLocalModelProvider unified) {
+                return unified.executionAdapter();
+            }
+            return KoilExecutionAdapterDescriptor.fromLegacyProvider(this.runtimeProvider);
+        }
+    }
+
+    public String selectedExecutionAdapterId() {
+        return selectedExecutionAdapter().id();
     }
 
     public int queueDepth() {
@@ -119,7 +138,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
 
     public int selectedMaximumContextTokens() {
         synchronized (this.lock) {
-            LocalModelProvider provider = this.providers.get(this.selectedProviderId);
+            LocalModelProvider provider = this.runtimeProvider;
             if (provider == null || provider.capabilities() == null) {
                 return 0;
             }
@@ -129,7 +148,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
 
     public ModelCapabilityDescriptor selectedCapabilities() {
         synchronized (this.lock) {
-            LocalModelProvider provider = this.providers.get(this.selectedProviderId);
+            LocalModelProvider provider = this.runtimeProvider;
             return provider == null ? null : provider.capabilities();
         }
     }
@@ -137,7 +156,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
     public ModelHealthSnapshot health() {
         LocalModelProvider provider;
         synchronized (this.lock) {
-            provider = this.providers.get(this.selectedProviderId);
+            provider = this.runtimeProvider;
         }
         if (provider == null) {
             return new ModelHealthSnapshot(ModelHealthState.DISABLED, "no provider selected", queueDepth(), null, Map.of());
@@ -156,7 +175,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
         LocalModelProvider provider;
         synchronized (this.lock) {
             ensureOpen();
-            provider = this.providers.get(this.selectedProviderId);
+            provider = this.runtimeProvider;
         }
         if (provider == null) {
             return CompletableFuture.completedFuture(new ModelHealthSnapshot(
@@ -173,6 +192,24 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
         return provider.start().thenApply(ignored -> health());
     }
 
+    public CompletableFuture<ModelPerformanceBenchmarkResult> benchmarkSelectedProvider(
+            ModelPerformanceBenchmarkRequest request
+    ) {
+        LocalModelProvider provider;
+        synchronized (this.lock) {
+            ensureOpen();
+            provider = this.runtimeProvider;
+        }
+        if (!(provider instanceof LocalModelPerformanceBenchmarkProvider benchmarkProvider)) {
+            return CompletableFuture.failedFuture(new IllegalStateException(
+                    "selected local model provider does not expose native benchmark timings"));
+        }
+        if (provider.health().state() != ModelHealthState.READY) {
+            return prepareSelectedProvider().thenCompose(ignored -> benchmarkProvider.benchmark(request));
+        }
+        return benchmarkProvider.benchmark(request);
+    }
+
     public ManagedModelRequest submit(StreamingModelRequest request, StreamingModelObserver observer) {
         Objects.requireNonNull(request, "request");
         StreamingModelObserver safeObserver = observer == null ? new StreamingModelObserver() {
@@ -181,14 +218,14 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
         CompletableFuture<StreamingModelResponse> completion = new CompletableFuture<>();
         String providerId;
         synchronized (this.lock) {
-            providerId = this.selectedProviderId;
+            providerId = this.runtimeProvider == null ? "" : this.runtimeProvider.id();
         }
         QueuedRequest queued = new QueuedRequest(request, providerId, safeObserver, cancellation, completion);
         cancellation.owner.set(queued);
         synchronized (this.lock) {
             ensureOpen();
-            if (!this.providers.containsKey(this.selectedProviderId)) {
-                failBeforeQueue(queued, "provider_unavailable", "no model provider is selected");
+            if (this.runtimeProvider == null) {
+                failBeforeQueue(queued, "provider_unavailable", "no Koil inference runtime is registered");
                 return new ManagedModelRequest(request.id(), cancellation, completion);
             }
             if (this.queue.size() + (this.active == null ? 0 : 1) >= this.maximumQueueDepth) {
@@ -219,7 +256,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
                         return;
                     }
                     this.active = next;
-                    provider = this.providers.get(next.providerId);
+                    provider = this.runtimeProvider;
                 }
                 try {
                     execute(provider, next);
@@ -271,8 +308,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
         LocalModelRuntimeLog.write("model_pipeline", "request=" + queued.request.id()
                 + " display=" + queued.request.metadata().getOrDefault("display_request_id", "none")
                 + " conversation=" + queued.request.conversationId() + " provider=" + provider.id()
-                + " colibri=" + ("colibri".equals(provider.id()) ? "selected" : "not_applicable")
-                + " gigatoken=" + ("colibri".equals(provider.id()) ? "runtime_evidence_required" : "not_applicable")
+                + " executionAdapter=" + selectedExecutionAdapterId()
                 + " contextLimit=" + provider.capabilities().maximumContextTokens()
                 + " inputChars=" + (queued.request.systemPrompt().length()
                 + queued.request.messages().stream().mapToInt(message -> message.content().length()).sum()));
@@ -290,6 +326,20 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
             public void onTextDelta(UUID requestId, String delta) {
                 if (!ended.get() && delta != null && !delta.isEmpty()) {
                     queued.observer.onTextDelta(requestId, delta);
+                }
+            }
+
+            @Override
+            public void onReasoningDelta(UUID requestId, String delta) {
+                if (!ended.get() && delta != null && !delta.isEmpty()) {
+                    queued.observer.onReasoningDelta(requestId, delta);
+                }
+            }
+
+            @Override
+            public void onExposedData(UUID requestId, ModelExposedData exposed) {
+                if (!ended.get() && exposed != null && exposed.hasText()) {
+                    queued.observer.onExposedData(requestId, exposed);
                 }
             }
 
@@ -336,14 +386,23 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
             if (queued.cancellation.isCancellationRequested() && queued.providerCancellation != null) {
                 queued.providerCancellation.cancel(queued.cancellation.cancellationReason());
             }
-            boolean completed = terminal.await(Math.max(1L, queued.request.timeout().toMillis()), TimeUnit.MILLISECONDS);
-            if (!completed && ended.compareAndSet(false, true)) {
+            // Generation has no wall-clock or inactivity deadline. Some small reasoning models
+            // legitimately spend long periods in model-native reasoning before producing visible
+            // output. Only explicit cancellation or a provider-reported terminal condition ends
+            // an active request here. This keeps Stop responsive without treating slow thought as
+            // a crash or timeout.
+            while (!ended.get()) {
+                if (terminal.await(1L, TimeUnit.SECONDS) || ended.get()) break;
+                if (!queued.cancellation.isCancellationRequested()) continue;
                 if (queued.providerCancellation != null) {
-                    queued.providerCancellation.cancel("request timed out");
+                    queued.providerCancellation.cancel(queued.cancellation.cancellationReason());
                 }
-                String detail = "model request timed out after " + queued.request.timeout().toMillis() + " ms";
-                queued.observer.onFailure(queued.request.id(), "request_timed_out", detail, null);
-                queued.completion.completeExceptionally(new ModelRequestException("request_timed_out", detail, null));
+                if (ended.compareAndSet(false, true)) {
+                    String detail = queued.cancellation.cancellationReason();
+                    queued.observer.onFailure(queued.request.id(), "cancelled", detail, null);
+                    queued.completion.completeExceptionally(new ModelRequestException("cancelled", detail, null));
+                    terminal.countDown();
+                }
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
@@ -398,7 +457,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
 
     @Override
     public void close() {
-        Map<String, LocalModelProvider> snapshot;
+        LocalModelProvider providerSnapshot;
         List<QueuedRequest> queuedRequests = new ArrayList<>();
         QueuedRequest activeRequest;
         synchronized (this.lock) {
@@ -411,7 +470,7 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
                 queuedRequests.add(queued);
             }
             activeRequest = this.active;
-            snapshot = Map.copyOf(this.providers);
+            providerSnapshot = this.runtimeProvider;
         }
         for (QueuedRequest queued : queuedRequests) {
             if (queued.cancellation.cancel("runtime manager closed")) {
@@ -422,12 +481,12 @@ public final class LocalModelRuntimeManager implements AutoCloseable {
             activeRequest.cancellation.cancel("runtime manager closed");
         }
         this.controller.shutdownNow();
-        snapshot.values().forEach(provider -> {
+        if (providerSnapshot != null) {
             try {
-                provider.stop().get(5L, TimeUnit.SECONDS);
+                providerSnapshot.stop().get(5L, TimeUnit.SECONDS);
             } catch (Exception ignored) {
             }
-        });
+        }
     }
 
     private void ensureOpen() {

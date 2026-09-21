@@ -3,9 +3,14 @@ package com.spirit.koil.api.command;
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.context.CommandContextBuilder;
 import com.mojang.brigadier.suggestion.Suggestion;
+import com.mojang.brigadier.tree.ArgumentCommandNode;
+import com.mojang.brigadier.tree.CommandNode;
+import com.spirit.koil.api.util.text.FuzzyTextMatcher;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.command.CommandSource;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -18,6 +23,9 @@ import java.util.concurrent.CompletableFuture;
 public final class MinecraftCommandInspector {
     private static final int MAXIMUM_COMMAND_LENGTH = 2_048;
     private static final int MAXIMUM_SUGGESTIONS = 8;
+    private static final int MAXIMUM_DISCOVERY_MATCHES = 8;
+    private static final int MAXIMUM_DISCOVERY_SYNTAX = 16;
+    private static final int MAXIMUM_DISCOVERY_DEPTH = 7;
 
     private MinecraftCommandInspector() {
     }
@@ -38,6 +46,117 @@ public final class MinecraftCommandInspector {
         }
         client.execute(() -> inspectOnClientThread(client, command, result));
         return result;
+    }
+
+
+    /**
+     * Discovers command roots and bounded syntax directly from the active Brigadier tree.
+     * This intentionally does not maintain a vanilla command list: whatever the connected
+     * server exposes, including modded/plugin/datapack roots, is the source of truth.
+     */
+    public static CompletableFuture<Discovery> discover(String rawQuery) {
+        CompletableFuture<Discovery> result = new CompletableFuture<>();
+        String query = rawQuery == null ? "" : rawQuery.strip();
+        if (query.length() > MAXIMUM_COMMAND_LENGTH) {
+            result.complete(new Discovery(query, List.of(), List.of(), List.of(),
+                    "Query exceeds 2,048 characters."));
+            return result;
+        }
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client == null) {
+            result.complete(new Discovery(query, List.of(), List.of(), List.of(),
+                    "Minecraft client is unavailable."));
+            return result;
+        }
+        client.execute(() -> discoverOnClientThread(client, query, result));
+        return result;
+    }
+
+    private static void discoverOnClientThread(
+            MinecraftClient client,
+            String rawQuery,
+            CompletableFuture<Discovery> result
+    ) {
+        if (client.getNetworkHandler() == null || client.getNetworkHandler().getCommandDispatcher() == null) {
+            result.complete(new Discovery(rawQuery, List.of(), List.of(), List.of(),
+                    "The active connection has no command tree yet."));
+            return;
+        }
+        try {
+            var dispatcher = client.getNetworkHandler().getCommandDispatcher();
+            List<CommandNode<CommandSource>> roots = new ArrayList<>(dispatcher.getRoot().getChildren());
+            roots.sort(Comparator.comparing(node -> node.getName()));
+
+            String query = normalizeDiscoveryQuery(rawQuery);
+            String first = query.isBlank() ? "" : query.split("\\s+", 2)[0];
+            ArrayList<ScoredRoot> scored = new ArrayList<>();
+            for (CommandNode<CommandSource> root : roots) {
+                String name = root.getName();
+                int score = Math.max(FuzzyTextMatcher.score(query, name), FuzzyTextMatcher.score(first, name));
+                String normalizedQuery = FuzzyTextMatcher.normalize(query);
+                if (FuzzyTextMatcher.tokens(normalizedQuery).contains(FuzzyTextMatcher.normalize(name))) {
+                    score = Math.max(score, 960);
+                }
+                if (first.equalsIgnoreCase(name)) score = 1000;
+                if (query.isBlank()) score = 500;
+                if (score >= 360) scored.add(new ScoredRoot(root, score));
+            }
+            scored.sort(Comparator.comparingInt(ScoredRoot::score).reversed()
+                    .thenComparing(value -> value.root().getName()));
+            if (scored.size() > MAXIMUM_DISCOVERY_MATCHES) {
+                scored.subList(MAXIMUM_DISCOVERY_MATCHES, scored.size()).clear();
+            }
+
+            ArrayList<String> matches = new ArrayList<>();
+            ArrayList<String> syntax = new ArrayList<>();
+            for (ScoredRoot match : scored) {
+                String rootName = match.root().getName();
+                matches.add(rootName);
+                collectSyntax(match.root(), rootName, 0, syntax);
+                if (syntax.size() >= MAXIMUM_DISCOVERY_SYNTAX) break;
+            }
+
+            String completionSeed = query.isBlank() ? "" : query;
+            ParseResults<CommandSource> parse = dispatcher.parse(completionSeed, client.getNetworkHandler().getCommandSource());
+            dispatcher.getCompletionSuggestions(parse).whenComplete((suggestions, failure) -> {
+                LinkedHashSet<String> completions = new LinkedHashSet<>();
+                if (failure == null && suggestions != null) {
+                    for (Suggestion suggestion : suggestions.getList()) {
+                        String applied = suggestion.apply(completionSeed).strip();
+                        if (!applied.isBlank()) completions.add("/" + applied);
+                        if (completions.size() >= MAXIMUM_SUGGESTIONS) break;
+                    }
+                }
+                result.complete(new Discovery(rawQuery, List.copyOf(matches), List.copyOf(syntax),
+                        List.copyOf(completions), matches.isEmpty()
+                        ? "No close command root matched the query. Try a command/root name or a shorter intent word."
+                        : "Matches and syntax come from the active Brigadier command tree."));
+            });
+        } catch (RuntimeException failure) {
+            result.complete(new Discovery(rawQuery, List.of(), List.of(), List.of(),
+                    failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage()));
+        }
+    }
+
+    private static void collectSyntax(
+            CommandNode<CommandSource> node,
+            String path,
+            int depth,
+            List<String> out
+    ) {
+        if (out.size() >= MAXIMUM_DISCOVERY_SYNTAX || depth >= MAXIMUM_DISCOVERY_DEPTH) return;
+        if (node.getCommand() != null && !out.contains("/" + path)) out.add("/" + path);
+        for (CommandNode<CommandSource> child : node.getChildren()) {
+            if (out.size() >= MAXIMUM_DISCOVERY_SYNTAX) return;
+            String token = child instanceof ArgumentCommandNode<?, ?> ? "<" + child.getName() + ">" : child.getName();
+            collectSyntax(child, path + " " + token, depth + 1, out);
+        }
+    }
+
+    private static String normalizeDiscoveryQuery(String raw) {
+        String query = raw == null ? "" : raw.strip();
+        if (query.startsWith("/")) query = query.substring(1).stripLeading();
+        return query.replace('\n', ' ').replace('\r', ' ').replaceAll("\\s+", " ").strip();
     }
 
     private static void inspectOnClientThread(
@@ -152,6 +271,25 @@ public final class MinecraftCommandInspector {
         }
         return command;
     }
+
+
+    public record Discovery(
+            String query,
+            List<String> matchingRoots,
+            List<String> syntax,
+            List<String> completions,
+            String note
+    ) {
+        public Discovery {
+            query = query == null ? "" : query;
+            matchingRoots = matchingRoots == null ? List.of() : List.copyOf(matchingRoots);
+            syntax = syntax == null ? List.of() : List.copyOf(syntax);
+            completions = completions == null ? List.of() : List.copyOf(completions);
+            note = note == null ? "" : note;
+        }
+    }
+
+    private record ScoredRoot(CommandNode<CommandSource> root, int score) {}
 
     public record Inspection(
             String normalizedCommand,

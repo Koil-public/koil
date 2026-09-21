@@ -20,11 +20,17 @@ public final class LocalModelReliabilityProof {
         );
         LocalModelReliabilityStore.reset(entry);
         require(LocalModelAutomationEligibility.supportsAutomationTools(entry), "capable model started blocked");
+        LocalModelReliabilityStore.recordProtocolFailure(id, "model_reasoning_loop", "legacy thought repeat");
+        LocalModelReliabilityStore.recordProtocolFailure(id, "internal_reasoning_without_action", "legacy thought continuation");
+        require(LocalModelAutomationEligibility.supportsAutomationTools(entry),
+                "reasoning-only legacy codes incorrectly quarantined a capable model");
+        require(LocalModelReliabilityStore.snapshot(id).protocolFailureCount() == 0,
+                "reasoning-only legacy codes polluted protocol reliability evidence");
         LocalModelReliabilityStore.recordProtocolFailure(id, "empty_response", "first");
         LocalModelReliabilityStore.recordProtocolFailure(id, "empty_response", "second");
         require(LocalModelAutomationEligibility.supportsAutomationTools(entry), "model quarantined before threshold");
-        LocalModelReliabilityStore.recordProtocolFailure(id, "model_reasoning_loop", "third");
-        require(!LocalModelAutomationEligibility.supportsAutomationTools(entry), "repeated major failures were forgotten");
+        LocalModelReliabilityStore.recordProtocolFailure(id, "empty_response", "third");
+        require(!LocalModelAutomationEligibility.supportsAutomationTools(entry), "repeated genuine protocol failures were forgotten");
         require(LocalModelReliabilityStore.reset(entry), "reliability reset did not clear evidence");
         require(LocalModelAutomationEligibility.supportsAutomationTools(entry), "reset did not restore tool eligibility");
         LocalModelReliabilityStore.recordCrash(id, "sidecar crash");

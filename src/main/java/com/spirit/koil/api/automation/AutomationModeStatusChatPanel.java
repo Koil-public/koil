@@ -6,7 +6,6 @@ import com.spirit.koil.api.chat.ChatHudPanelContext;
 import com.spirit.koil.api.chat.ChatHudPanelPlacement;
 import com.spirit.koil.api.chat.ChatHudPanelVisualStyle;
 import com.spirit.koil.api.chat.SlidingStatusText;
-import com.spirit.koil.api.automation.cli.AutomationPresenceState;
 import com.spirit.koil.api.automation.cli.AutomationStateColors;
 import com.spirit.koil.api.design.uiColorVal;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
@@ -29,6 +28,7 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
     private static final int HEIGHT = 33;
     private static final int LOGO_SIZE = 24;
     private static final float TITLE_SCALE = 1.12F;
+    private static volatile CachedMetric cachedMetric;
 
     @Override
     public String id() {
@@ -133,16 +133,11 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
         }
         drawContext.getMatrices().pop();
 
-        Text metrics = metricLine(availableWidth, client);
-        if (!metrics.getString().isBlank()) {
-            net.minecraft.text.OrderedText renderedMetrics = client.textRenderer
-                    .wrapLines(metrics, Math.max(1, availableWidth))
-                    .stream()
-                    .findFirst()
-                    .orElse(Text.empty().asOrderedText());
+        CachedMetric metrics = metricLine(availableWidth, client, snapshot);
+        if (!metrics.plain().isBlank()) {
             drawContext.drawTextWithShadow(
                     client.textRenderer,
-                    renderedMetrics,
+                    metrics.line(),
                     textX,
                     bounds.y() + 19,
                     uiColorVal.uiColorAutomationModePopupText
@@ -151,11 +146,44 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
         }
     }
 
-    private static Text metricLine(int availableWidth, MinecraftClient client) {
-        return ModelRequestMetricsPresentation.automationSessionLine(
-                ModelGenerationHudState.visibleSnapshot(),
-                modeIndicators(AutomationModeController.snapshot())
+    private static CachedMetric metricLine(
+            int availableWidth,
+            MinecraftClient client,
+            AutomationModeController.Snapshot mode
+    ) {
+        // The Automation TOP popup owns only Automation session identity and
+        // mode badges. Request/model diagnostics belong to the bottom model
+        // popup and must never bleed into this row.
+        ModelGenerationHudState.Snapshot modelSnapshot = ModelGenerationHudState.metricsSnapshot();
+        com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot counters =
+                com.spirit.koil.api.model.KoilLifetimeCounters.snapshot();
+        String labels = modeIndicatorLabels(mode);
+        MetricKey key = new MetricKey(
+                Math.max(1, availableWidth),
+                counters,
+                labels,
+                null,
+                0,
+                "",
+                0,
+                0
         );
+        CachedMetric cached = cachedMetric;
+        if (cached != null && cached.key().equals(key)) {
+            return cached;
+        }
+        Text text = ModelRequestMetricsPresentation.automationSessionLine(
+                modelSnapshot,
+                modeIndicators(mode)
+        );
+        net.minecraft.text.OrderedText line = client.textRenderer
+                .wrapLines(text, key.width())
+                .stream()
+                .findFirst()
+                .orElse(Text.empty().asOrderedText());
+        CachedMetric next = new CachedMetric(key, text.getString(), line);
+        cachedMetric = next;
+        return next;
     }
 
     public static Text modeIndicators(AutomationModeController.Snapshot mode) {
@@ -256,6 +284,21 @@ public final class AutomationModeStatusChatPanel implements ChatHudPanel {
     private static String titleCase(String state) {
         String normalized = state == null || state.isBlank() ? "idle" : state.trim().replace('_', ' ');
         return Character.toUpperCase(normalized.charAt(0)) + normalized.substring(1);
+    }
+
+    private record MetricKey(
+            int width,
+            com.spirit.koil.api.model.KoilLifetimeCounters.Snapshot counters,
+            String labels,
+            com.spirit.koil.api.model.ModelUsage usage,
+            int toolCalls,
+            String modelId,
+            int queueDepth,
+            int contextWindow
+    ) {
+    }
+
+    private record CachedMetric(MetricKey key, String plain, net.minecraft.text.OrderedText line) {
     }
 
     private record StatusView(String state, String label) {

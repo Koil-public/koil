@@ -3,6 +3,9 @@ package com.spirit.koil.api.model.provider.colibri;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.spirit.koil.api.model.ModelExposedData;
+import com.spirit.koil.api.model.ModelReasoningMarkupParser;
+import com.spirit.koil.api.model.ModelRuntimeTelemetry;
 import com.spirit.koil.api.model.ModelToolArgumentParser;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelUsage;
@@ -10,19 +13,26 @@ import com.spirit.koil.api.model.StreamingModelObserver;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 final class ColibriStreamDecoder {
     private final UUID requestId;
     private final StreamingModelObserver observer;
     private final StringBuilder text = new StringBuilder();
+    private final StringBuilder reasoning = new StringBuilder();
+    private final ModelReasoningMarkupParser reasoningMarkup = new ModelReasoningMarkupParser();
     private final Map<Integer, ToolAccumulator> tools = new LinkedHashMap<>();
     private final List<ModelToolCall> completedTools = new ArrayList<>();
+    private final Set<String> observedUnknownDeltaTypes = new LinkedHashSet<>();
     private int promptTokens;
     private int completionTokens;
     private int streamedOutputUnits;
+    private int streamedReasoningUnits;
+    private int streamedTextUnits;
     private boolean stopped;
     private String finishReason = "";
 
@@ -68,12 +78,64 @@ final class ColibriStreamDecoder {
         JsonObject message = object(root, "message");
         JsonObject usage = object(message, "usage");
         this.promptTokens = integer(usage, "input_tokens", this.promptTokens);
+        this.observer.onTelemetry(this.requestId, ModelRuntimeTelemetry.of(
+                "provider_usage",
+                "Colibri input · " + Math.max(0, this.promptTokens) + " tokens",
+                Map.of(
+                        "promptTokens", Math.max(0, this.promptTokens),
+                        "provider", "colibri"
+                )
+        ));
+    }
+
+    private static ModelExposedData.Kind semanticKind(String raw) {
+        String value = raw == null ? "" : raw.strip().toLowerCase(java.util.Locale.ROOT)
+                .replace('-', '_');
+        if (value.endsWith("_delta")) value = value.substring(0, value.length() - 6);
+        if (value.endsWith("_block")) value = value.substring(0, value.length() - 6);
+        return switch (value) {
+            case "think", "thinking", "thought", "thoughts", "thinking_content", "thought_content" -> ModelExposedData.Kind.THOUGHT;
+            case "reason", "reasoning", "reasoning_content", "reasoning_text", "rationale", "deliberation" -> ModelExposedData.Kind.REASONING;
+            case "analysis", "analysis_content", "analysis_text" -> ModelExposedData.Kind.ANALYSIS;
+            case "scratchpad", "scratch_pad", "internal_notes", "working_notes" -> ModelExposedData.Kind.SCRATCHPAD;
+            case "plan", "planning", "plan_content" -> ModelExposedData.Kind.PLAN;
+            case "reflection", "self_reflection" -> ModelExposedData.Kind.REFLECTION;
+            case "critique", "self_critique" -> ModelExposedData.Kind.CRITIQUE;
+            case "commentary" -> ModelExposedData.Kind.COMMENTARY;
+            case "reasoning_summary", "thinking_summary" -> ModelExposedData.Kind.REASONING_SUMMARY;
+            case "confidence" -> ModelExposedData.Kind.CONFIDENCE;
+            case "refusal" -> ModelExposedData.Kind.REFUSAL;
+            default -> null;
+        };
+    }
+
+    private static String exposedValue(JsonObject root) {
+        if (root == null || root.entrySet().isEmpty()) return "";
+        return firstString(root,
+                "thinking", "thought", "reasoning", "rationale", "deliberation", "analysis",
+                "scratchpad", "internal_notes", "plan", "planning", "reflection", "critique",
+                "commentary", "summary", "confidence", "refusal", "content", "text");
     }
 
     private void readBlockStart(JsonObject root) {
         int index = integer(root, "index", -1);
         JsonObject block = object(root, "content_block");
-        if (index < 0 || !"tool_use".equals(string(block, "type", ""))) {
+        String blockType = string(block, "type", "");
+        if ("redacted_thinking".equals(blockType) || "redacted_reasoning".equals(blockType)) {
+            this.observer.onTelemetry(this.requestId, ModelRuntimeTelemetry.of(
+                    "redacted_reasoning",
+                    "Provider exposed a redacted reasoning block",
+                    Map.of("provider", "colibri", "blockType", blockType)
+            ));
+            return;
+        }
+        ModelExposedData.Kind blockKind = semanticKind(blockType);
+        if (blockKind != null) {
+            String value = exposedValue(block);
+            if (!value.isEmpty()) emitExposed(blockKind, value, blockType + "_block");
+            return;
+        }
+        if (index < 0 || !"tool_use".equals(blockType)) {
             return;
         }
         ToolAccumulator accumulator = new ToolAccumulator(
@@ -94,11 +156,50 @@ final class ColibriStreamDecoder {
         if ("text_delta".equals(deltaType)) {
             String value = string(delta, "text", "");
             if (!value.isEmpty()) {
-                this.text.append(value);
-                this.observer.onTextDelta(this.requestId, value);
+                int beforeText = this.text.length();
+                int beforeReasoning = this.reasoning.length();
+                this.reasoningMarkup.acceptTyped(
+                        value,
+                        this::emitVisible,
+                        chunk -> emitExposed(chunk.kind(), chunk.text(), chunk.nativeChannel())
+                );
+                if (this.text.length() > beforeText || this.reasoning.length() > beforeReasoning) {
+                    this.streamedOutputUnits++;
+                }
+            }
+            return;
+        }
+        ModelExposedData.Kind exposedKind = semanticKind(deltaType);
+        if (exposedKind != null) {
+            String value = exposedValue(delta);
+            if (!value.isEmpty()) {
+                emitExposed(exposedKind, value, deltaType);
                 this.streamedOutputUnits++;
             }
             return;
+        }
+        if ("signature_delta".equals(deltaType)) {
+            String signature = firstString(delta, "signature", "text");
+            this.observer.onTelemetry(this.requestId, ModelRuntimeTelemetry.of(
+                    "reasoning_signature",
+                    "Provider reasoning signature observed",
+                    signature.isBlank()
+                            ? Map.of("provider", "colibri")
+                            : Map.of("provider", "colibri", "signatureCharacters", signature.length())
+            ));
+            return;
+        }
+        if (!deltaType.isBlank() && this.observedUnknownDeltaTypes.add(deltaType)
+                && !"input_json_delta".equals(deltaType)) {
+            this.observer.onTelemetry(this.requestId, ModelRuntimeTelemetry.of(
+                    "unclassified_model_channel",
+                    "Unclassified Colibri delta type observed · " + deltaType,
+                    Map.of(
+                            "deltaType", deltaType,
+                            "provider", "colibri",
+                            "note", "Type name recorded for family discovery; payload was not reclassified as thought or answer."
+                    )
+            ));
         }
         if ("input_json_delta".equals(deltaType)) {
             ToolAccumulator accumulator = this.tools.get(index);
@@ -111,11 +212,44 @@ final class ColibriStreamDecoder {
         }
     }
 
+
+    private void emitVisible(String value) {
+        if (value == null || value.isEmpty()) return;
+        this.text.append(value);
+        this.observer.onTextDelta(this.requestId, value);
+        this.streamedTextUnits++;
+    }
+
+    private void emitReasoning(String value) {
+        emitExposed(ModelExposedData.Kind.REASONING, value, "legacy_reasoning");
+    }
+
+    private void emitExposed(ModelExposedData.Kind kind, String value, String nativeChannel) {
+        if (value == null || value.isEmpty()) return;
+        this.reasoning.append(value);
+        this.observer.onExposedData(
+                this.requestId,
+                ModelExposedData.of(kind, value, nativeChannel, "colibri")
+        );
+        this.streamedReasoningUnits++;
+    }
+
     private void readMessageDelta(JsonObject root) {
         JsonObject delta = object(root, "delta");
         this.finishReason = string(delta, "stop_reason", this.finishReason);
         JsonObject usage = object(root, "usage");
         this.completionTokens = integer(usage, "output_tokens", this.completionTokens);
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("completionTokens", Math.max(0, this.completionTokens));
+        fields.put("provider", "colibri");
+        if (!this.finishReason.isBlank()) fields.put("finishReason", this.finishReason);
+        this.observer.onTelemetry(this.requestId, ModelRuntimeTelemetry.of(
+                "provider_usage",
+                this.finishReason.isBlank()
+                        ? "Colibri output · " + Math.max(0, this.completionTokens) + " tokens"
+                        : "Colibri output · " + Math.max(0, this.completionTokens) + " tokens · " + this.finishReason,
+                fields
+        ));
     }
 
     private void finishTool(int index) {
@@ -139,6 +273,10 @@ final class ColibriStreamDecoder {
     }
 
     void finishOpenBlocks() {
+        this.reasoningMarkup.finishTyped(
+                this::emitVisible,
+                chunk -> emitExposed(chunk.kind(), chunk.text(), chunk.nativeChannel())
+        );
         if (!this.stopped) {
             throw new ProtocolException("incomplete_stream", "Colibri stream ended without message_stop", null);
         }
@@ -149,6 +287,22 @@ final class ColibriStreamDecoder {
 
     String text() {
         return this.text.toString();
+    }
+
+    String reasoningText() {
+        return this.reasoning.toString();
+    }
+
+    int streamedOutputUnits() {
+        return this.streamedOutputUnits;
+    }
+
+    int streamedReasoningUnits() {
+        return this.streamedReasoningUnits;
+    }
+
+    int streamedTextUnits() {
+        return this.streamedTextUnits;
     }
 
     List<ModelToolCall> toolCalls() {
@@ -196,6 +350,15 @@ final class ColibriStreamDecoder {
         } catch (Exception ignored) {
             return fallback;
         }
+    }
+
+    private static String firstString(JsonObject root, String... keys) {
+        if (keys == null) return "";
+        for (String key : keys) {
+            String value = string(root, key, "");
+            if (!value.isEmpty()) return value;
+        }
+        return "";
     }
 
     private static int integer(JsonObject root, String key, int fallback) {

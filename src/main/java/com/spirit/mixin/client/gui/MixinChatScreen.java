@@ -2,6 +2,7 @@ package com.spirit.mixin.client.gui;
 
 import com.spirit.koil.api.automation.AutomationModeController;
 import com.spirit.koil.api.model.LocalModelService;
+import com.spirit.koil.api.model.LocalModelCommandBridge;
 import com.spirit.koil.api.minecraft.MinecraftNbtSuggestionService;
 import com.mojang.brigadier.ParseResults;
 import com.mojang.brigadier.context.ParsedArgument;
@@ -125,6 +126,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
     @Unique private final PopupMenu koil$pmMenu = new PopupMenu();
     @Unique private final PopupMenu koil$pmTargetMenu = new PopupMenu();
     @Unique private final PopupMenu koil$pmOptionMenu = new PopupMenu();
+    @Unique private final PopupMenu koil$pmDeepOptionMenu = new PopupMenu();
     @Unique private CompletableFuture<Suggestions> koil$customSuggestionFuture;
     @Unique private String koil$customSuggestionRequestKey = "";
     @Unique private KoilDraftSuggestionContext koil$customSuggestionContext;
@@ -182,6 +184,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         koil$pmMenu.close();
         koil$pmTargetMenu.close();
         koil$pmOptionMenu.close();
+        koil$pmDeepOptionMenu.close();
         koil$clearCustomSuggestions();
     }
 
@@ -388,6 +391,21 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             }
         }
 
+        // /ask is a Fabric client command. Oversized or multiline Rich Chat
+        // submissions must remain on the client; sending them through the
+        // server command packet bypasses Fabric's client dispatcher and makes
+        // vanilla report the entire prompt as an unknown command. Handle it
+        // directly from the raw draft so newlines and long prompts are kept.
+        if (trimmedChatText.startsWith("/ask")
+                && LocalModelCommandBridge.tryExecuteRichClientCommand(chatText)) {
+            MinecraftClient minecraft = MinecraftClient.getInstance();
+            if (addToHistory && minecraft != null && minecraft.inGameHud != null) {
+                minecraft.inGameHud.getChatHud().addToMessageHistory(koil$truncateDraft(chatText));
+            }
+            cir.setReturnValue(true);
+            return;
+        }
+
         if (RichChatUploadDraft.hasPending()) {
             if (trimmedChatText.startsWith("/")) {
                 Matcher privateMatcher = KOIL_PRIVATE_COMMAND.matcher(trimmedChatText);
@@ -439,8 +457,15 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         String networkText = koil$networkSafeMultiline(chatText);
         if (networkText.length() > KOIL_MAX_VANILLA_CHAT_CHARS) {
             if (networkText.startsWith("/")) {
+                String commandBody = networkText.substring(1).trim();
+                if (RichChatSyncClientBridge.sendLongCommand(commandBody)) {
+                    cir.setReturnValue(true);
+                    return;
+                }
                 if (minecraft.inGameHud != null) {
-                    minecraft.inGameHud.getChatHud().addMessage(Text.literal("Long multiline commands still exceed vanilla chat limits. Rich packet sync is still pending."));
+                    minecraft.inGameHud.getChatHud().addMessage(Text.literal(
+                            "This command is longer than vanilla chat permits, and the connected server does not advertise Koil long-command transport."
+                    ));
                 }
                 cir.setReturnValue(true);
                 return;
@@ -939,6 +964,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             koil$pmMenu.render(context, mouseX, mouseY);
             koil$pmTargetMenu.render(context, mouseX, mouseY);
             koil$pmOptionMenu.render(context, mouseX, mouseY);
+            koil$pmDeepOptionMenu.render(context, mouseX, mouseY);
             RichChatAttachmentRenderer.renderChatHoverTooltip(context, mouseX, mouseY);
             ModelChatMessageBridge.renderTraceTooltip(context, MinecraftClient.getInstance(), mouseX, mouseY);
             return;
@@ -1003,6 +1029,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         koil$pmMenu.render(context, mouseX, mouseY);
         koil$pmTargetMenu.render(context, mouseX, mouseY);
         koil$pmOptionMenu.render(context, mouseX, mouseY);
+        koil$pmDeepOptionMenu.render(context, mouseX, mouseY);
         RichChatAttachmentRenderer.renderChatHoverTooltip(context, mouseX, mouseY);
         ModelChatMessageBridge.renderTraceTooltip(context, MinecraftClient.getInstance(), mouseX, mouseY);
     }
@@ -1016,20 +1043,64 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             }
         }
 
-        if (button == 0 && koil$pmOptionMenu.isOpen()) {
-            if (koil$pmOptionMenu.contains(mouseX, mouseY)) {
-                PopupMenu.MenuEntry selected = koil$pmOptionMenu.click(mouseX, mouseY);
+        if (button == 0 && koil$pmDeepOptionMenu.isOpen()) {
+            if (koil$pmDeepOptionMenu.contains(mouseX, mouseY)) {
+                PopupMenu.MenuEntry selected = koil$pmDeepOptionMenu.click(mouseX, mouseY);
                 if (selected != null) {
                     koil$applyComposerAction(ChatComposerMenuBridge.handleAction(selected.id()));
                 }
-                koil$pmMenu.close();
+                koil$pmOptionMenu.close();
                 koil$pmTargetMenu.close();
+                koil$pmMenu.close();
                 if (chatField != null) {
                     chatField.setFocused(true);
                 }
                 cir.setReturnValue(true);
                 return;
             }
+            koil$pmDeepOptionMenu.close();
+            if (!koil$pmOptionMenu.contains(mouseX, mouseY)
+                    && !koil$pmTargetMenu.contains(mouseX, mouseY)
+                    && !koil$pmMenu.contains(mouseX, mouseY)) {
+                koil$pmOptionMenu.close();
+                koil$pmTargetMenu.close();
+                koil$pmMenu.close();
+                cir.setReturnValue(true);
+                return;
+            }
+        }
+
+        if (button == 0 && koil$pmOptionMenu.isOpen()) {
+            if (koil$pmOptionMenu.contains(mouseX, mouseY)) {
+                PopupMenu.MenuEntry selected = koil$pmOptionMenu.clickKeepingOpen(mouseX, mouseY);
+                if (selected != null && ChatComposerMenuBridge.isNestedSelector(selected.id())) {
+                    koil$pmDeepOptionMenu.openBeside(
+                            koil$pmOptionMenu,
+                            mouseY,
+                            this.width,
+                            this.height,
+                            ChatComposerMenuBridge.nestedEntries(selected.id(), MinecraftClient.getInstance())
+                    );
+                    if (chatField != null) {
+                        chatField.setFocused(true);
+                    }
+                    cir.setReturnValue(true);
+                    return;
+                }
+                if (selected != null) {
+                    koil$applyComposerAction(ChatComposerMenuBridge.handleAction(selected.id()));
+                }
+                koil$pmDeepOptionMenu.close();
+                koil$pmOptionMenu.close();
+                koil$pmTargetMenu.close();
+                koil$pmMenu.close();
+                if (chatField != null) {
+                    chatField.setFocused(true);
+                }
+                cir.setReturnValue(true);
+                return;
+            }
+            koil$pmDeepOptionMenu.close();
             koil$pmOptionMenu.close();
             if (!koil$pmTargetMenu.contains(mouseX, mouseY) && !koil$pmMenu.contains(mouseX, mouseY)) {
                 koil$pmTargetMenu.close();
@@ -1043,6 +1114,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             if (koil$pmTargetMenu.contains(mouseX, mouseY)) {
                 PopupMenu.MenuEntry selected = koil$pmTargetMenu.clickKeepingOpen(mouseX, mouseY);
                 if (selected != null && ChatComposerMenuBridge.isNestedSelector(selected.id())) {
+                    koil$pmDeepOptionMenu.close();
                     koil$pmOptionMenu.openBeside(
                             koil$pmTargetMenu,
                             mouseY,
@@ -1059,6 +1131,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 if (selected != null) {
                     koil$applyComposerAction(ChatComposerMenuBridge.handleAction(selected.id()));
                 }
+                koil$pmDeepOptionMenu.close();
+                koil$pmOptionMenu.close();
                 koil$pmTargetMenu.close();
                 koil$pmMenu.close();
                 if (chatField != null) {
@@ -1067,6 +1141,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 cir.setReturnValue(true);
                 return;
             }
+            koil$pmDeepOptionMenu.close();
             koil$pmTargetMenu.close();
             koil$pmOptionMenu.close();
             if (!koil$pmMenu.contains(mouseX, mouseY)) {
@@ -1079,6 +1154,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (button == 0 && koil$pmMenu.isOpen()) {
             PopupMenu.MenuEntry selected = koil$pmMenu.clickKeepingOpen(mouseX, mouseY);
             if (selected != null && ChatComposerMenuBridge.isSection(selected.id())) {
+                koil$pmDeepOptionMenu.close();
                 koil$pmOptionMenu.close();
                 koil$pmTargetMenu.openBeside(
                         koil$pmMenu,
@@ -1095,6 +1171,9 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             }
             if (selected != null) {
                 koil$applyComposerAction(ChatComposerMenuBridge.handleAction(selected.id()));
+                koil$pmDeepOptionMenu.close();
+                koil$pmOptionMenu.close();
+                koil$pmTargetMenu.close();
                 koil$pmMenu.close();
                 if (chatField != null) {
                     chatField.setFocused(true);
@@ -1102,6 +1181,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
                 cir.setReturnValue(true);
                 return;
             }
+            koil$pmDeepOptionMenu.close();
             koil$pmMenu.close();
             koil$pmTargetMenu.close();
             koil$pmOptionMenu.close();
@@ -1145,6 +1225,7 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         }
 
         if (button == 0 && koil$mouseInsidePrivateMessageButton(mouseX, mouseY)) {
+            koil$pmDeepOptionMenu.close();
             koil$pmTargetMenu.close();
             koil$pmOptionMenu.close();
             koil$pmMenu.toggleAtPointer(mouseX, mouseY, this.width, this.height, ChatComposerMenuBridge.rootEntries());
@@ -1273,9 +1354,8 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
         if (result == null || chatField == null) {
             return;
         }
-        if (result == ChatComposerMenuBridge.ActionResult.OPEN_MODEL_SETUP_COMMAND) {
-            chatField.setText("/models setup");
-            chatField.setCursorToEnd();
+        if (result == ChatComposerMenuBridge.ActionResult.OPEN_MODEL_CATALOG) {
+            LocalModelCommandBridge.showCatalogPopup();
         }
     }
 
@@ -2324,10 +2404,17 @@ public abstract class MixinChatScreen extends Screen implements ChatSuggestionAn
             }
             if (trimmed.startsWith("/")) {
                 String command = trimmed.substring(1);
-                if (accumulatedDelayTicks > 0) {
-                    koil$sendTrackedChatCommand(minecraft, "sleep " + accumulatedDelayTicks + " run " + command);
+                String routedCommand = accumulatedDelayTicks > 0
+                        ? "sleep " + accumulatedDelayTicks + " run " + command
+                        : command;
+                if (routedCommand.length() > KOIL_MAX_VANILLA_CHAT_CHARS) {
+                    if (!RichChatSyncClientBridge.sendLongCommand(routedCommand) && minecraft.inGameHud != null) {
+                        minecraft.inGameHud.getChatHud().addMessage(Text.literal(
+                                "A command in this multiline sequence exceeds vanilla chat limits, and Koil long-command transport is unavailable on the connected server."
+                        ));
+                    }
                 } else {
-                    koil$sendTrackedChatCommand(minecraft, command);
+                    koil$sendTrackedChatCommand(minecraft, routedCommand);
                 }
             } else {
                 minecraft.player.networkHandler.sendChatMessage(trimmed);

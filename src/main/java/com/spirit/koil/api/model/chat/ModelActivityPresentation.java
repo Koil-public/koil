@@ -3,14 +3,12 @@ package com.spirit.koil.api.model.chat;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.spirit.koil.api.automation.cli.AutomationStateColors;
+import com.spirit.koil.api.chat.RichChatStructuralContinuation;
+import com.spirit.koil.api.model.ModelDebugMode;
 import com.spirit.koil.api.model.ModelDeepThoughtControl;
 import com.spirit.koil.api.model.ModelSemanticPalette;
 
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Shared presentation contract for model activity regions.
@@ -30,14 +28,19 @@ public final class ModelActivityPresentation {
     }
 
     public static String timelineEvent(ModelGenerationHudState.ActivityEvent event, boolean first) {
-        if (event == null) return "";
+        if (event == null || hiddenOutsideDebug(event.type())) return "";
         String label = switch (event.type()) {
-            case THOUGHT_SUMMARY -> "Thought";
+            case THOUGHT_SUMMARY -> ModelGenerationHudState.exposedLabel(event);
             case THOUGHT_STOPPED -> "Stopped thinking";
+            case MODEL_DATA -> "Model data";
+            case STATUS -> "Status";
             case PLAN_STEP -> "Plan update";
             case APPROVAL -> "Approval";
             case TOOL_START -> "Tool";
             case TOOL_PROGRESS -> "Progress";
+            case SKILL_START -> "SKILL";
+            case SKILL_PROGRESS -> "SKILL";
+            case SKILL_RESULT -> "SKILL";
             case FILE -> "File";
             case DIFF -> "Diff";
             case COMMAND -> "Command";
@@ -49,6 +52,9 @@ public final class ModelActivityPresentation {
             case CHECKPOINT -> "Saved";
         };
         String color = ModelSemanticPalette.section(event.activityState());
+        if (event.type() == ModelGenerationHudState.ActivityEventType.THOUGHT_SUMMARY) {
+            return thoughtEvent(label, event.summary(), color);
+        }
         return "-# §8" + ModelActivityTreeGlyphs.BRANCH + "§r " + color + label + "§r | " + event.summary();
     }
 
@@ -67,7 +73,13 @@ public final class ModelActivityPresentation {
                 .append("§r");
         boolean toolOpen = false;
         for (ModelGenerationHudState.ActivityEvent event : events) {
-            if (event == null) continue;
+            if (event == null || hiddenOutsideDebug(event.type())) continue;
+            if (event.type() == ModelGenerationHudState.ActivityEventType.SKILL_RESULT) {
+                rendered.append('\n').append(timelineEvent(event, false));
+                appendEventMetadata(rendered, event, requestStartedAtMillis, "│  ");
+                toolOpen = false;
+                continue;
+            }
             if (toolOpen && isToolEvidence(event.type())) {
                 rendered.append("\n-# §8").append(ModelActivityTreeGlyphs.RAIL).append("  ")
                         .append(ModelActivityTreeGlyphs.LAST_BRANCH).append("§r ")
@@ -76,7 +88,9 @@ public final class ModelActivityPresentation {
                                 : AutomationStateColors.section("observing"))
                         .append(event.type() == ModelGenerationHudState.ActivityEventType.VALIDATION ? "Validation" : "Result")
                         .append("§r | ").append(compact(evidenceSummary(event), 360));
-                appendEvidenceDetails(rendered, event.data(), "│     ");
+                if (ModelDebugMode.enabled()) {
+                    appendEvidenceDetails(rendered, event.data(), "│     ");
+                }
                 appendEventMetadata(rendered, event, requestStartedAtMillis, "│     ");
                 if (event.type() != ModelGenerationHudState.ActivityEventType.VALIDATION) {
                     toolOpen = false;
@@ -84,29 +98,43 @@ public final class ModelActivityPresentation {
                 continue;
             }
             rendered.append('\n').append(timelineEvent(event, false));
-            if (event.type() == ModelGenerationHudState.ActivityEventType.TOOL_START) {
-                String toolId = string(event.data(), "toolId");
-                if (!toolId.isBlank()) {
-                    appendEvidenceField(rendered, "│     ", "Tool ID", toolId, false);
-                }
-                String source = string(event.data(), "source");
-                if (!source.isBlank()) {
-                    appendEvidenceField(rendered, "│     ", "Source", source, false);
-                }
-                String arguments = event.data() == null || !event.data().has("arguments")
-                        || !event.data().get("arguments").isJsonObject()
-                        ? ""
-                        : ModelToolCallPresentation.arguments(event.data().getAsJsonObject("arguments"));
-                if (!arguments.isBlank()) {
-                    rendered.append("\n-# §8").append(ModelActivityTreeGlyphs.RAIL).append("  ")
-                            .append(ModelActivityTreeGlyphs.BRANCH).append("§r ")
-                            .append(AutomationStateColors.section("preparing"))
-                            .append("Request§r | ").append(compact(arguments, 360));
+            if (event.type() == ModelGenerationHudState.ActivityEventType.TOOL_START
+                    || event.type() == ModelGenerationHudState.ActivityEventType.SKILL_START) {
+                if (ModelDebugMode.enabled()) {
+                    String toolId = string(event.data(), "toolId");
+                    String skillId = string(event.data(), "skillId");
+                    if (!skillId.isBlank()) {
+                        appendEvidenceField(rendered, "│     ", "Skill ID", skillId, false);
+                    } else if (!toolId.isBlank()) {
+                        appendEvidenceField(rendered, "│     ", event.type() == ModelGenerationHudState.ActivityEventType.SKILL_START ? "Skill tool" : "Tool ID", toolId, false);
+                    }
+                    String source = string(event.data(), "source");
+                    if (!source.isBlank()) {
+                        appendEvidenceField(rendered, "│     ", "Source", source, false);
+                    }
+                    String arguments = event.data() == null || !event.data().has("arguments")
+                            || !event.data().get("arguments").isJsonObject()
+                            ? ""
+                            : ModelToolCallPresentation.arguments(event.data().getAsJsonObject("arguments"));
+                    if (!arguments.isBlank()) {
+                        rendered.append("\n-# §8").append(ModelActivityTreeGlyphs.RAIL).append("  ")
+                                .append(ModelActivityTreeGlyphs.BRANCH).append("§r ")
+                                .append(AutomationStateColors.section("preparing"))
+                                .append("Request§r | ").append(compact(arguments, 360));
+                    }
                 }
                 appendEventMetadata(rendered, event, requestStartedAtMillis, "│     ");
-                toolOpen = true;
+                toolOpen = event.type() == ModelGenerationHudState.ActivityEventType.TOOL_START
+                        || (event.type() == ModelGenerationHudState.ActivityEventType.SKILL_START
+                        && !string(event.data(), "toolId").isBlank());
             } else {
-                appendEvidenceDetails(rendered, event.data(), "│  ");
+                // A model-exposed THOUGHT/REASONING/ANALYSIS row is user-facing content,
+                // but its provider/model/channel counters are diagnostics. Keep the semantic
+                // tag and full model-authored text visible while hiding its structured
+                // telemetry unless Koil debug mode is enabled.
+                if (ModelDebugMode.enabled()) {
+                    appendEvidenceDetails(rendered, event.data(), "│  ");
+                }
                 appendEventMetadata(rendered, event, requestStartedAtMillis, "│  ");
             }
         }
@@ -119,8 +147,37 @@ public final class ModelActivityPresentation {
         return rendered.toString();
     }
 
+    /**
+     * Keeps every model-authored reasoning line inside the compact trace style.
+     * Rich Chat formatting is line-scoped, so raw newlines inside a thought summary
+     * must receive their own structural token instead of falling back to body text.
+     * Use the non-rendering Koil subtext token rather than the user-authored `-# ` syntax
+     * so a paragraph boundary can never leak structural marker characters into the popup.
+     */
+    private static String thoughtEvent(String label, String summary, String color) {
+        String normalized = summary == null ? "" : summary.replace("\r\n", "\n").replace('\r', '\n');
+        String[] lines = normalized.split("\n", -1);
+        // Use the public structural syntax here rather than a private-use glyph.
+        // The popup consumes `-# ` as parser metadata before TextRenderer ever sees it,
+        // so there is no unsupported PUA character that can render as a white square.
+        String subtext = RichChatStructuralContinuation.subtextPrefix("");
+        StringBuilder out = new StringBuilder(subtext).append("§8")
+                .append(ModelActivityTreeGlyphs.BRANCH).append("§r ")
+                .append(color).append(label).append("§r | ");
+        if (lines.length == 0) return out.toString();
+        out.append(lines[0]);
+        for (int i = 1; i < lines.length; i++) {
+            out.append('\n').append(subtext).append("§8")
+                    .append(ModelActivityTreeGlyphs.RAIL).append("  §r§8");
+            if (!lines[i].isEmpty()) out.append(lines[i]);
+            out.append("§r");
+        }
+        return out.toString();
+    }
+
     private static boolean isToolEvidence(ModelGenerationHudState.ActivityEventType type) {
         return type == ModelGenerationHudState.ActivityEventType.RESULT
+                || type == ModelGenerationHudState.ActivityEventType.SKILL_RESULT
                 || type == ModelGenerationHudState.ActivityEventType.FAILURE
                 || type == ModelGenerationHudState.ActivityEventType.VALIDATION
                 || type == ModelGenerationHudState.ActivityEventType.FILE
@@ -147,6 +204,8 @@ public final class ModelActivityPresentation {
         addNamed(rows, consumed, data, "Command", "command", "normalizedCommand", "submittedCommand");
         addNamed(rows, consumed, data, "Problem", "problem", "error", "failure");
         addNamed(rows, consumed, data, "Suggestion", "suggestion", "suggestions", "recovery");
+        addNamed(rows, consumed, data, "Hook", "hook", "hookOutput", "lifecycleOutput");
+        addNamed(rows, consumed, data, "Tail", "tail", "stderrTail", "stdoutTail");
         addNamed(rows, consumed, data, "Target", "target", "targetId", "block", "entity");
         addNamed(rows, consumed, data, "Evidence", "fact", "observation", "validationEvidence");
         for (var entry : data.entrySet()) {
@@ -172,7 +231,10 @@ public final class ModelActivityPresentation {
             long requestStartedAtMillis,
             String rail
     ) {
-        if (event == null) return;
+        // Event ids/timestamps are diagnostic trace metadata, not part of the
+        // normal activity narrative. The compact session k*s-* line remains
+        // independently visible in every panel.
+        if (!ModelDebugMode.enabled() || event == null) return;
         if (!event.eventId().isBlank()) {
             appendEvidenceField(rendered, rail, "Event", event.eventId(), false);
         }
@@ -429,6 +491,7 @@ public final class ModelActivityPresentation {
             long createdAtMillis,
             long completedAtMillis
     ) {
+        if (!ModelDebugMode.enabled()) return "";
         if (usage == null) usage = com.spirit.koil.api.model.ModelUsage.empty();
         long end = completedAtMillis > 0L ? completedAtMillis : System.currentTimeMillis();
         long elapsed = createdAtMillis <= 0L ? 0L : Math.max(0L, end - createdAtMillis);
@@ -437,9 +500,15 @@ public final class ModelActivityPresentation {
                 && usage.tokensPerSecond() <= 0.0D && elapsed <= 0L) return "";
         StringBuilder value = new StringBuilder("-# §8").append(ModelActivityTreeGlyphs.BRANCH).append("§r ")
             .append(AutomationStateColors.section("observing")).append("Request metrics§r");
+        int evaluatedPromptTokens = Math.max(0, usage.promptTokens() - usage.reusedPrefixTokens());
+        double cacheHitPercent = usage.promptTokens() <= 0 ? 0.0D
+            : Math.min(100.0D, usage.reusedPrefixTokens() * 100.0D / usage.promptTokens());
         value.append("\n-# §8│  ├─§r §7Prompt tokens§r | ").append(usage.promptTokens());
+        value.append("\n-# §8│  ├─§r §7Cached prompt§r | ").append(usage.reusedPrefixTokens()).append(" tokens");
+        value.append("\n-# §8│  ├─§r §7Evaluated prompt§r | ").append(evaluatedPromptTokens).append(" tokens");
+        value.append("\n-# §8│  ├─§r §7Cache hit§r | ")
+            .append(String.format(Locale.ROOT, "%.1f%%", cacheHitPercent));
         value.append("\n-# §8│  ├─§r §7Output tokens§r | ").append(usage.completionTokens());
-        value.append("\n-# §8│  ├─§r §7Reused prefix§r | ").append(usage.reusedPrefixTokens()).append(" tokens");
         value.append("\n-# §8│  ├─§r §7Queue§r | ").append(formatDuration(usage.queueMillis()));
         value.append("\n-# §8│  ├─§r §7First token§r | ").append(formatDuration(usage.timeToFirstTokenMillis()));
         value.append("\n-# §8│  ├─§r §7Average speed§r | ")
@@ -484,6 +553,11 @@ public final class ModelActivityPresentation {
             return new TraceSnapshot("", List.of(), null, null, false,
                     com.spirit.koil.api.model.ModelUsage.empty(), 0L, 0L);
         }
+    }
+
+
+    private static boolean hiddenOutsideDebug(ModelGenerationHudState.ActivityEventType type) {
+        return !ModelGenerationHudState.isPresentationEventVisible(type);
     }
 
     private static String stepColor(ModelGenerationHudState.PlanStepStatus status) {

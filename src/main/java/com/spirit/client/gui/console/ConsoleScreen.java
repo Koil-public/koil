@@ -3,13 +3,7 @@ package com.spirit.client.gui.console;
 import com.spirit.client.gui.UiSoundHelper;
 import com.spirit.koil.api.automation.AutomationRouter;
 import com.spirit.koil.api.chat.RichChatCommandOutputBridge;
-import com.spirit.koil.api.console.ConsoleChannel;
-import com.spirit.koil.api.console.ConsoleDisplayService;
-import com.spirit.koil.api.console.ConsoleFormatter;
-import com.spirit.koil.api.console.ConsoleRecord;
-import com.spirit.koil.api.console.ConsoleRepository;
-import com.spirit.koil.api.console.ConsoleStyledLine;
-import com.spirit.koil.api.console.ConsoleStyledSpan;
+import com.spirit.koil.api.console.*;
 import com.spirit.koil.api.design.KoilVanillaScreenChrome;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -22,7 +16,7 @@ import net.minecraft.screen.ScreenTexts;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.MathHelper;
 
-import java.awt.Color;
+import java.awt.*;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,8 +25,6 @@ import java.util.List;
 
 import static com.spirit.koil.api.design.uiColorVal.uiColorBackgroundBorder;
 import static com.spirit.koil.api.design.uiColorVal.uiColorContentBase;
-import static com.spirit.koil.api.design.uiColorVal.uiColorContentBaseTitleText;
-import static com.spirit.koil.api.design.uiColorVal.uiColorHeader;
 
 /** Log-only console. Executor/KTL inspection lives in Automation Workspace. */
 @Environment(EnvType.CLIENT)
@@ -81,7 +73,6 @@ public final class ConsoleScreen extends Screen implements ConsoleRepository.Lis
 
         int x = this.width - 252;
         addChannelButton("Koil", ConsoleChannel.KOIL, x); x += 62;
-        addChannelButton("Package", ConsoleChannel.PACKAGE, x); x += 82;
         addChannelButton("Minecraft", ConsoleChannel.MINECRAFT, x);
         reloadSnapshot();
         ConsoleRepository.getInstance().subscribe(this.activeChannel, this);

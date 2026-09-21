@@ -1,11 +1,13 @@
 package com.spirit.koil.api.model.tool;
 
 import com.spirit.koil.api.util.file.KoilInstancePaths;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -52,6 +54,23 @@ public final class ModelWorkspaceRegistry {
     }
 
     public static ResolvedPath resolve(String workspaceId, String relativePath, boolean forWrite) throws IOException {
+        return resolveInternal(workspaceId, relativePath, forWrite, true);
+    }
+
+    /**
+     * Side-effect-free path resolution for tool preflight. Unlike {@link #resolve},
+     * this method never creates a missing workspace root.
+     */
+    public static ResolvedPath inspect(String workspaceId, String relativePath, boolean forWrite) throws IOException {
+        return resolveInternal(workspaceId, relativePath, forWrite, false);
+    }
+
+    private static ResolvedPath resolveInternal(
+            String workspaceId,
+            String relativePath,
+            boolean forWrite,
+            boolean createWorkspaceRoot
+    ) throws IOException {
         Map<String, Workspace> available = workspaces();
         Workspace workspace = available.get(canonicalWorkspaceId(workspaceId, available));
         if (workspace == null) {
@@ -75,7 +94,11 @@ public final class ModelWorkspaceRegistry {
             throw new IOException("Absolute paths are not accepted; choose a named workspace and relative path.");
         }
         Path root = workspace.root().toAbsolutePath().normalize();
-        Files.createDirectories(root);
+        if (createWorkspaceRoot) {
+            Files.createDirectories(root);
+        } else if (!Files.isDirectory(root)) {
+            throw new IOException("Workspace root is unavailable: " + workspace.id());
+        }
         Path target = root.resolve(relative).normalize();
         if (!target.startsWith(root)) {
             throw new IOException("Path escapes workspace '" + workspace.id() + "'.");
@@ -144,6 +167,17 @@ public final class ModelWorkspaceRegistry {
         return id;
     }
 
+    /** Code investigation defaults to the development source root when it is available. */
+    public static String preferredCodeWorkspaceId(String value, Map<String, Workspace> available) {
+        String requested = cleanId(value);
+        if ((requested.isBlank() || requested.equals("default") || requested.equals("current")
+                || requested.equals("workspace") || requested.equals("root") || requested.equals("instance_root"))
+                && available != null && available.containsKey("project")) {
+            return "project";
+        }
+        return canonicalWorkspaceId(requested, available == null ? Map.of() : available);
+    }
+
     private static Path runDirectory() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client != null && client.runDirectory != null) {
@@ -152,19 +186,91 @@ public final class ModelWorkspaceRegistry {
         return Path.of(".").toAbsolutePath().normalize();
     }
 
+    /**
+     * Resolve the live Koil development checkout without assuming Loom's run
+     * directory is literally {@code <project>/run}. Launchers, IDEs, custom
+     * runDir settings, and Gradle invocations can all place Minecraft
+     * elsewhere. The lookup is deliberately bounded and only accepts a root
+     * that looks like Koil source, so an unrelated parent Gradle project is
+     * never exposed as the model's source workspace.
+     */
     private static Path developmentProjectRoot(Path runRoot) {
-        if (runRoot == null || runRoot.getFileName() == null
-                || !"run".equalsIgnoreCase(runRoot.getFileName().toString())) {
+        LinkedHashSet<Path> starts = new LinkedHashSet<>();
+        addCandidate(starts, runRoot);
+        addCandidate(starts, systemPath("user.dir"));
+        addCandidate(starts, codeLocation());
+
+        // In a development environment Fabric's Koil metadata normally lives
+        // under src/main/resources or build/resources/main. That gives us one
+        // more deterministic anchor when the Minecraft run directory was
+        // customized. This remains best-effort and never affects installed
+        // production jars.
+        try {
+            FabricLoader.getInstance().getModContainer("koil")
+                    .flatMap(container -> container.findPath("fabric.mod.json"))
+                    .ifPresent(path -> addCandidate(starts, path));
+        } catch (RuntimeException ignored) {
+            // Workspace discovery must never make model startup depend on the
+            // Fabric loader lifecycle being fully initialized.
+        }
+
+        for (Path start : starts) {
+            Path root = findKoilProjectAncestor(start, 10);
+            if (root != null) return root;
+        }
+        return null;
+    }
+
+    private static void addCandidate(LinkedHashSet<Path> candidates, Path path) {
+        if (candidates == null || path == null) return;
+        try {
+            Path normalized = path.toAbsolutePath().normalize();
+            candidates.add(Files.isRegularFile(normalized) ? normalized.getParent() : normalized);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
+    private static Path systemPath(String property) {
+        try {
+            String value = System.getProperty(property, "").strip();
+            return value.isBlank() ? null : Path.of(value);
+        } catch (RuntimeException ignored) {
             return null;
         }
-        Path parent = runRoot.getParent();
-        if (parent == null
-                || !Files.isDirectory(parent.resolve("src/main/java"))
-                || !Files.exists(parent.resolve("build.gradle"))
-                && !Files.exists(parent.resolve("build.gradle.kts"))) {
+    }
+
+    private static Path codeLocation() {
+        try {
+            var domain = ModelWorkspaceRegistry.class.getProtectionDomain();
+            var source = domain == null ? null : domain.getCodeSource();
+            if (source == null || source.getLocation() == null) return null;
+            return Path.of(source.getLocation().toURI());
+        } catch (Exception ignored) {
             return null;
         }
-        return parent.toAbsolutePath().normalize();
+    }
+
+    private static Path findKoilProjectAncestor(Path start, int maximumDepth) {
+        Path current = start;
+        for (int depth = 0; current != null && depth <= maximumDepth; depth++, current = current.getParent()) {
+            if (looksLikeKoilProject(current)) {
+                return current.toAbsolutePath().normalize();
+            }
+        }
+        return null;
+    }
+
+    private static boolean looksLikeKoilProject(Path root) {
+        if (root == null || !Files.isDirectory(root.resolve("src/main/java"))) return false;
+        boolean build = Files.exists(root.resolve("build.gradle"))
+                || Files.exists(root.resolve("build.gradle.kts"));
+        if (!build) return false;
+
+        // The source package is the strongest stable marker available in the
+        // checkout. Also accept the Fabric metadata in case source packages are
+        // temporarily being refactored.
+        return Files.isDirectory(root.resolve("src/main/java/com/spirit"))
+                || Files.exists(root.resolve("src/main/resources/fabric.mod.json"));
     }
 
     public record Workspace(String id, Path root, boolean writable, String description) {

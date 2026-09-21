@@ -62,9 +62,15 @@ public final class ModelAgentPlatformProof {
     private static void proveObjectiveLedger() {
         ModelObjectiveLedger ledger = ModelObjectiveLedger.parse("Walk forward, then walk backward, then jump.");
         require(ledger.snapshot().size() == 3, "distinct repeated imperative objectives were collapsed");
+        ModelToolCall one = new ModelToolCall("one", "movement.walk_relative", new JsonObject());
+        require(ledger.bindCall(one).bound(), "first walk objective did not bind to its concrete call");
         ledger.record(completed("one", "movement.walk_relative", new JsonObject()));
         require(ledger.pendingToolIds().contains("movement.walk_relative"), "one result incorrectly satisfied two walk objectives");
+        ModelToolCall two = new ModelToolCall("two", "movement.walk_relative", new JsonObject());
+        require(ledger.bindCall(two).bound(), "second walk objective did not bind independently");
         ledger.record(completed("two", "movement.walk_relative", new JsonObject()));
+        ModelToolCall three = new ModelToolCall("three", "player.jump", new JsonObject());
+        require(ledger.bindCall(three).bound(), "jump objective did not bind after both walks");
         ledger.record(completed("three", "player.jump", new JsonObject()));
         require(ledger.satisfied(), "objective ledger did not consume structured completion evidence");
     }
@@ -123,9 +129,10 @@ public final class ModelAgentPlatformProof {
                         .equals(ModelWorkspaceRegistry.workspaces().get("instance").root()),
                 "instance workspace and Koil-owned data directory were not represented as distinct roots");
         ModelToolResult defaultListing = execute("workspace.list", new JsonObject());
+        String expectedReadWorkspace = ModelWorkspaceRegistry.workspaces().containsKey("project") ? "project" : "instance";
         require(defaultListing.completedAndValidated()
-                        && "instance".equals(defaultListing.output().get("workspace").getAsString()),
-                "workspace.list did not repair an omitted compact-model workspace to instance");
+                        && expectedReadWorkspace.equals(defaultListing.output().get("workspace").getAsString()),
+                "workspace.list did not default read-only inspection to the preferred available workspace");
         String path = "proof/model-agent-" + UUID.randomUUID() + ".txt";
         JsonObject create = args("instance", path); create.addProperty("content", "alpha\nbeta\n");
         ModelToolResult created = execute("workspace.create", create);

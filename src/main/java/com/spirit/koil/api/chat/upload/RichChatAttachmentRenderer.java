@@ -65,6 +65,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -128,6 +129,8 @@ public final class RichChatAttachmentRenderer {
     private static long lastVideoClickTime;
     private static UUID lastVideoClickAttachmentId;
     private static final Pattern MASKED_LINK = Pattern.compile("\\[([^\\]\\n]+)]\\(([^)\\n]+)\\)");
+    private static final int ORDERED_TEXT_PLAIN_CACHE_LIMIT = 2_048;
+    private static final Map<OrderedText, String> ORDERED_TEXT_PLAIN_CACHE = new IdentityHashMap<>();
 
     private RichChatAttachmentRenderer() {
     }
@@ -389,7 +392,7 @@ public final class RichChatAttachmentRenderer {
     }
 
     private static int renderOrDrawText(DrawContext context, TextRenderer renderer, OrderedText orderedText, int x, int y, int color, boolean previewMode) {
-        String text = RichChatLatexTextureRenderer.plainText(orderedText);
+        String text = cachedPlainText(orderedText);
         String displayText = RichChatPrivateMessageBridge.displayText(text);
         RichChatPrivateMessageBridge.VisualStyle style = previewMode
                 ? RichChatPrivateMessageBridge.VisualStyle.NORMAL
@@ -453,15 +456,16 @@ public final class RichChatAttachmentRenderer {
                 return Math.max(blockX, right);
             }
         }
+        boolean attachmentMarkers = LocalRichAttachmentBridge.containsMarker(displayText);
         OrderedText effectiveOrderedText;
         if (displayText.equals(text) && !italicizeDimmed) {
             effectiveOrderedText = orderedText;
-        } else if (italicizeDimmed && !LocalRichAttachmentBridge.containsMarker(displayText)) {
+        } else if (italicizeDimmed && !attachmentMarkers) {
             effectiveOrderedText = Text.literal(displayText).formatted(Formatting.ITALIC).asOrderedText();
         } else {
             effectiveOrderedText = Text.literal(displayText).asOrderedText();
         }
-        if (!LocalRichAttachmentBridge.containsMarker(displayText) && containsRichFormatting(displayText)) {
+        if (!attachmentMarkers && containsRichFormatting(displayText)) {
             String formattedSource = displayText.equals(text)
                     ? RichChatSectionFormatting.controlSource(effectiveOrderedText)
                     : displayText;
@@ -469,8 +473,14 @@ public final class RichChatAttachmentRenderer {
             RichChatTimestampBridge.render(context, renderer, text, x, y);
             return right;
         }
-        if (!LocalRichAttachmentBridge.containsMarker(displayText)) {
-            int right = RichChatLatexTextureRenderer.renderOrDrawText(context, renderer, effectiveOrderedText, x, y, effectiveColor);
+        if (!attachmentMarkers) {
+            // The LaTeX renderer begins by walking OrderedText back into a plain
+            // String. We already have that string here, so ordinary popup/chat
+            // lines can skip the second full glyph traversal entirely.
+            int right = RichChatLatexTextureCache.containsMarker(displayText)
+                    ? RichChatLatexTextureRenderer.renderOrDrawText(
+                            context, renderer, effectiveOrderedText, x, y, effectiveColor)
+                    : context.drawTextWithShadow(renderer, effectiveOrderedText, x, y, effectiveColor);
             RichChatTimestampBridge.render(context, renderer, text, x, y);
             return right;
         }
@@ -511,6 +521,23 @@ public final class RichChatAttachmentRenderer {
         }
         RichChatTimestampBridge.render(context, renderer, text, x, y);
         return maxRight;
+    }
+
+
+    private static String cachedPlainText(OrderedText orderedText) {
+        if (orderedText == null) return "";
+        synchronized (ORDERED_TEXT_PLAIN_CACHE) {
+            String cached = ORDERED_TEXT_PLAIN_CACHE.get(orderedText);
+            if (cached != null) return cached;
+        }
+        String value = RichChatLatexTextureRenderer.plainText(orderedText);
+        synchronized (ORDERED_TEXT_PLAIN_CACHE) {
+            if (ORDERED_TEXT_PLAIN_CACHE.size() >= ORDERED_TEXT_PLAIN_CACHE_LIMIT) {
+                ORDERED_TEXT_PLAIN_CACHE.clear();
+            }
+            ORDERED_TEXT_PLAIN_CACHE.put(orderedText, value);
+        }
+        return value;
     }
 
     private static boolean italicize(RichChatPrivateMessageBridge.VisualStyle style) {
@@ -1141,7 +1168,7 @@ public final class RichChatAttachmentRenderer {
         if (orderedText == null) {
             return lineHeight;
         }
-        String text = RichChatLatexTextureRenderer.plainText(orderedText);
+        String text = cachedPlainText(orderedText);
         String visiblePrefix = detectVisibleTextPrefix(text);
         String content = visiblePrefix.isEmpty() ? text : text.substring(visiblePrefix.length());
         HeaderStyle header = detectHeaderStyle(content);
@@ -1696,7 +1723,7 @@ public final class RichChatAttachmentRenderer {
             return lineX;
         }
         int drawX = lineX + 1 + renderer.getWidth(block.chatIndent());
-        int width = Math.min(273, Math.max(24, RichChatLatexTextureCache.currentChatContentWidth() - Math.max(0, drawX) - 2));
+        int width = Math.min(273, Math.max(24, RichChatLatexTextureCache.currentChatContentWidth() - Math.max(0, drawX - lineX) - 2));
         int rowHeight = Math.max(renderer.fontHeight, RichChatLatexTextureCache.currentChatLineHeight());
         int drawY = y + 2;
         int viewportTop = RichChatRenderContext.currentChatViewportTop();
@@ -1798,7 +1825,7 @@ public final class RichChatAttachmentRenderer {
                 )
                 : 0;
         int drawX = lineX + 1 + firstRowAlignment;
-        int width = Math.min(273, Math.max(24, RichChatLatexTextureCache.currentChatContentWidth() - Math.max(0, drawX) - 2));
+        int width = Math.min(273, Math.max(24, RichChatLatexTextureCache.currentChatContentWidth() - Math.max(0, drawX - lineX) - 2));
         int gap = columns >= 6 ? 1 : 2;
         int available = Math.max(columns, width - gap * (columns - 1));
         int baseColumnWidth = Math.max(1, available / columns);

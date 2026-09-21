@@ -11,17 +11,48 @@ import com.spirit.koil.api.command.MinecraftCommandFeedbackTracker;
 import com.spirit.koil.api.command.MinecraftCommandInspector;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolResult;
+import com.spirit.koil.api.model.ModelToolDefinition;
+import com.spirit.koil.api.model.ModelToolSchemaValidator;
+import com.spirit.koil.api.model.ToolPreconditionEvaluator;
+import com.spirit.koil.api.model.ToolExecutionPolicy;
+import com.spirit.koil.api.model.ToolPreflight;
+import com.spirit.koil.api.model.PreparedToolInvocation;
+import com.spirit.koil.api.model.StagedToolPayload;
+import com.spirit.koil.api.model.ToolPostconditionVerifier;
+import com.spirit.koil.api.model.tool.LocalModelToolCatalog;
 import com.spirit.koil.api.model.LocalModelService;
+import com.spirit.koil.api.model.LocalModelRuntimeLog;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
+import com.spirit.koil.api.telemetry.TelemetryCapabilityState;
+import com.spirit.koil.api.telemetry.TelemetrySpanKind;
+import com.spirit.koil.api.telemetry.TelemetryStore;
 import com.spirit.koil.api.automation.cli.AutomationChatHudState;
 import com.spirit.koil.api.model.tool.MinecraftCommandModelToolRegistry;
 import com.spirit.koil.api.model.tool.MinecraftKnowledgeModelToolRegistry;
 import com.spirit.koil.api.model.tool.ModelWorkspaceToolRegistry;
 import com.spirit.koil.api.model.tool.AutomationPlanModelToolRegistry;
+import com.spirit.koil.api.model.tool.AutomationGoalModelToolRegistry;
 import com.spirit.koil.api.model.tool.AutomationKtlSkillModelToolRegistry;
+import com.spirit.koil.api.model.tool.AgentSkillModelToolRegistry;
+import com.spirit.koil.api.model.tool.ToolDiscoveryModelToolRegistry;
 import com.spirit.koil.api.model.tool.ProjectValidationModelToolRegistry;
 import com.spirit.koil.api.model.tool.InternetResearchModelToolRegistry;
+import com.spirit.koil.api.model.tool.ContentIntelligenceModelToolRegistry;
+import com.spirit.koil.api.model.tool.BrowserIntelligenceModelToolRegistry;
+import com.spirit.koil.api.model.tool.DatasetIntelligenceModelToolRegistry;
 import com.spirit.koil.api.model.tool.KoilDocumentationModelToolRegistry;
+import com.spirit.koil.api.model.tool.CodeIntelligenceModelToolRegistry;
+import com.spirit.koil.api.model.tool.DynamicMcpToolRegistry;
+import com.spirit.koil.api.model.tool.McpCatalogueModelToolRegistry;
+import com.spirit.koil.api.model.tool.AutomationTimerModelToolRegistry;
+import com.spirit.koil.api.model.tool.WorkspaceExecutionModelToolRegistry;
+import com.spirit.koil.api.model.tool.WorkspaceProcessModelToolRegistry;
+import com.spirit.koil.api.model.tool.WorkspacePackageModelToolRegistry;
+import com.spirit.koil.api.model.tool.WorkspaceDatabaseModelToolRegistry;
+import com.spirit.koil.api.model.tool.WorkspaceGitArchiveModelToolRegistry;
+import com.spirit.koil.api.model.tool.SystemNetworkModelToolRegistry;
+import com.spirit.koil.api.model.tool.DataContextIndexModelToolRegistry;
+import com.spirit.koil.api.model.tool.BackgroundAutomationModelToolRegistry;
 import net.minecraft.client.MinecraftClient;
 
 import java.util.Map;
@@ -36,6 +67,261 @@ public final class AutomationToolCoordinator {
     private AutomationToolCoordinator() {
     }
 
+    /**
+     * Returns whether a registered model tool id has an authoritative execution
+     * owner in the same dispatcher used by execute(). Keep runtime diagnostics
+     * pointed at this method so catalog growth cannot drift away from verification.
+     */
+    public static boolean hasExecutableOwner(String toolId) {
+        if (toolId == null || toolId.isBlank()) return false;
+        return MinecraftCommandModelToolRegistry.supports(toolId)
+                || MinecraftKnowledgeModelToolRegistry.supports(toolId)
+                || InternetResearchModelToolRegistry.supports(toolId)
+                || DatasetIntelligenceModelToolRegistry.supports(toolId)
+                || BrowserIntelligenceModelToolRegistry.supports(toolId)
+                || ContentIntelligenceModelToolRegistry.supports(toolId)
+                || KoilDocumentationModelToolRegistry.supports(toolId)
+                || CodeIntelligenceModelToolRegistry.supports(toolId)
+                || com.spirit.koil.api.context.ContextIntelligenceService.supports(toolId)
+                || McpCatalogueModelToolRegistry.supports(toolId)
+                || AutomationTimerModelToolRegistry.supports(toolId)
+                || WorkspaceExecutionModelToolRegistry.supports(toolId)
+                || WorkspaceProcessModelToolRegistry.supports(toolId)
+                || WorkspacePackageModelToolRegistry.supports(toolId)
+                || WorkspaceDatabaseModelToolRegistry.supports(toolId)
+                || WorkspaceGitArchiveModelToolRegistry.supports(toolId)
+                || SystemNetworkModelToolRegistry.supports(toolId)
+                || DataContextIndexModelToolRegistry.supports(toolId)
+                || BackgroundAutomationModelToolRegistry.supports(toolId)
+                || DynamicMcpToolRegistry.supports(toolId)
+                || AutomationPlanModelToolRegistry.supports(toolId)
+                || AutomationGoalModelToolRegistry.supports(toolId)
+                || AutomationKtlSkillModelToolRegistry.supportsCatalog(toolId)
+                || AutomationKtlSkillModelToolRegistry.supportsRun(toolId)
+                || AgentSkillModelToolRegistry.supports(toolId)
+                || ToolDiscoveryModelToolRegistry.supports(toolId)
+                || ModelWorkspaceToolRegistry.supports(toolId)
+                || ProjectValidationModelToolRegistry.supports(toolId)
+                || AutomationCapabilityRegistry.definitions().containsKey(toolId);
+    }
+
+    /**
+     * Inspect a call using the same authoritative catalog and global execution
+     * gates used by execute(). This method has no side effects and never grants
+     * confirmation. Registry-specific semantic checks that cannot be proven
+     * generically are retained as deferred preconditions instead of being
+     * silently treated as satisfied.
+     */
+    public static ToolPreflight inspect(ModelToolCall call, long observationEpoch) {
+        String toolId = call == null ? "" : call.toolId();
+        java.util.ArrayList<String> blockers = new java.util.ArrayList<>();
+        ModelToolDefinition definition = LocalModelToolCatalog.definition(toolId).orElse(null);
+        if (definition == null) {
+            blockers.add(toolId.isBlank() ? "tool_name_missing" : "unknown_tool");
+            return new ToolPreflight(
+                    toolId, false, false, false, false, false, false,
+                    false, false, observationEpoch, blockers, java.util.List.of(),
+                    java.util.List.of(), ToolExecutionPolicy.conservative()
+            );
+        }
+        if (!AutomationModeController.isAutomationMode()) blockers.add("automation_disabled");
+        var eligibility = LocalModelService.selectedAutomationEligibility();
+        if (!eligibility.eligible() && !LocalModelService.experimentalAutomationAllowed()) {
+            blockers.add("automation_model_complexity");
+        }
+        blockers.addAll(ModelToolSchemaValidator.validate(
+                definition.inputSchema(),
+                call == null ? null : call.arguments()
+        ));
+        ToolPreconditionEvaluator.Assessment preconditions = ToolPreconditionEvaluator.evaluate(definition, call);
+        blockers.addAll(preconditions.blockers());
+
+        ToolExecutionPolicy policy = definition.executionPolicy();
+        boolean readOnly = definition.sideEffects().isEmpty();
+        boolean speculativeRead = readOnly
+                && !definition.confirmationRequired()
+                && policy.allowsSpeculativeRead();
+        boolean prepare = !readOnly && policy.allowsPreparation();
+        return new ToolPreflight(
+                toolId,
+                true,
+                blockers.isEmpty(),
+                preconditions.fullyEvaluated(),
+                readOnly,
+                speculativeRead,
+                prepare,
+                definition.confirmationRequired(),
+                definition.reversible(),
+                observationEpoch,
+                blockers,
+                preconditions.deferred(),
+                definition.preconditions(),
+                policy
+        );
+    }
+
+    /**
+     * Performs side-effect-free validation/preparation of one exact mutating
+     * invocation. VALIDATE_ONLY preparation is intentionally not described as a
+     * staged transaction: no mutation payload is created and approval/commit
+     * remain entirely in execute().
+     */
+    public static java.util.Optional<PreparedToolInvocation> prepare(ModelToolCall call, long observationEpoch) {
+        ToolPreflight preflight = inspect(call, observationEpoch);
+        if (preflight.blocked() || !preflight.fullyEvaluated() || !preflight.preparationAllowed()) {
+            return java.util.Optional.empty();
+        }
+        StagedToolPayload staged = null;
+        if (preflight.executionPolicy().preparation() == ToolExecutionPolicy.PreparationMode.STAGE_PAYLOAD) {
+            try {
+                if (ModelWorkspaceToolRegistry.supports(call.toolId())) {
+                    staged = ModelWorkspaceToolRegistry.stageMutation(call).orElse(null);
+                }
+            } catch (Exception failure) {
+                return java.util.Optional.empty();
+            }
+            if (staged == null) return java.util.Optional.empty();
+        }
+        String resourceFingerprint = staged == null
+                ? ""
+                : Integer.toHexString(staged.resourceFingerprints().hashCode());
+        String fingerprint = observationEpoch + "|" + call.toolId() + "|" + call.arguments() + "|" + resourceFingerprint;
+        return java.util.Optional.of(new PreparedToolInvocation(
+                call, preflight, observationEpoch, System.currentTimeMillis(), fingerprint,
+                staged, staged == null ? java.util.List.of() : staged.postconditions()
+        ));
+    }
+
+    /**
+     * Commits an invocation that was prepared against the same observation
+     * epoch. Staged filesystem fingerprints are revalidated before approval,
+     * and predicted postconditions are verified after the authoritative tool
+     * executor returns. Preparation never bypasses the normal approval path.
+     */
+    public static CompletableFuture<ModelToolResult> executePrepared(
+            UUID displayRequestId,
+            ModelToolCall call,
+            PreparedToolInvocation prepared,
+            long currentEpoch,
+            boolean preapproved
+    ) {
+        AutomationChatHudState.toolStarted(call);
+        CompletableFuture<ModelToolResult> execution;
+        try {
+            ToolPreflight preflight = inspect(call, currentEpoch);
+            if (prepared == null || !prepared.matches(call, currentEpoch)) {
+                execution = CompletableFuture.completedFuture(failure(
+                        call, "prepared_invocation_stale",
+                        "Prepared invocation no longer matches the current observation state."
+                ));
+            } else if (preflight.blocked()) {
+                execution = CompletableFuture.completedFuture(failure(
+                        call,
+                        preflight.blockers().isEmpty() ? "preflight_blocked" : preflight.blockers().get(0),
+                        "Tool preflight rejected prepared execution: " + String.join(", ", preflight.blockers())
+                ));
+            } else if (prepared.staged() && ModelWorkspaceToolRegistry.supports(call.toolId())
+                    && !ModelWorkspaceToolRegistry.stagedMutationStillFresh(prepared.stagedPayload(), call)) {
+                LocalModelRuntimeLog.write(
+                        "tool_prepared_state_changed",
+                        call.toolId() + " | fingerprint=" + prepared.fingerprint()
+                );
+                execution = CompletableFuture.completedFuture(new ModelToolResult(
+                        call.id(), call.toolId(), "stale", new JsonObject(),
+                        "prepared_state_changed",
+                        "The staged mutation's source state changed before commit; restage from current state.",
+                        System.currentTimeMillis(), System.currentTimeMillis(), "failed",
+                        java.util.List.of(), true, false, "not_required"
+                ));
+            } else {
+                execution = executeWithStandardApprovalBoundary(
+                        displayRequestId,
+                        call,
+                        preflight,
+                        preapproved,
+                        approved -> {
+                            CompletableFuture<ModelToolResult> committed;
+                            if (prepared.staged() && ModelWorkspaceToolRegistry.supports(call.toolId())) {
+                                committed = ModelWorkspaceToolRegistry.execute(
+                                        displayRequestId, call, approved, prepared.stagedPayload()
+                                );
+                            } else {
+                                committed = executeInternal(displayRequestId, call, approved);
+                            }
+                            return committed.thenApply(result -> verifyPreparedPostconditions(prepared, result));
+                        }
+                );
+            }
+        } catch (RuntimeException exception) {
+            execution = CompletableFuture.completedFuture(failure(call, "tool_execution_failed", message(exception)));
+        }
+        return execution.whenComplete((result, error) -> AutomationChatHudState.toolFinished(
+                call,
+                error == null ? result : failure(call, "tool_execution_failed", message(error))
+        ));
+    }
+
+    private static ModelToolResult verifyPreparedPostconditions(
+            PreparedToolInvocation prepared,
+            ModelToolResult result
+    ) {
+        if (prepared == null || result == null || !result.completedAndValidated()
+                || prepared.postconditions().isEmpty()) {
+            return result;
+        }
+        ToolPostconditionVerifier.Verification verification =
+                ToolPostconditionVerifier.verify(prepared.postconditions());
+        if (verification.passed()) {
+            LocalModelRuntimeLog.write(
+                    "tool_postconditions_verified",
+                    result.toolId() + " | count=" + prepared.postconditions().size()
+            );
+            return result;
+        }
+        LocalModelRuntimeLog.write(
+                "tool_postconditions_failed",
+                result.toolId() + " | failures=" + String.join("; ", verification.failures())
+        );
+        String detail = result.detail()
+                + " Postcondition verification failed: "
+                + String.join("; ", verification.failures());
+        return new ModelToolResult(
+                result.callId(), result.toolId(), result.status(), result.output(),
+                "postcondition_failed", detail,
+                result.startedAtMillis(), result.completedAtMillis(), "failed",
+                result.changedTargets(), true, result.cancelled(), result.approvalStatus()
+        );
+    }
+
+    /**
+     * Executes a coordinator-approved read-only speculative observation without
+     * publishing a user-visible tool lifecycle event. The same executeInternal
+     * path remains authoritative, so speculation cannot gain capabilities that
+     * normal execution does not have. Mutating, confirmation-gated, or otherwise
+     * unsafe calls are rejected by inspect() before reaching the runtime.
+     */
+    public static CompletableFuture<ModelToolResult> executeSpeculative(
+            UUID displayRequestId,
+            ModelToolCall call,
+            long observationEpoch
+    ) {
+        ToolPreflight preflight = inspect(call, observationEpoch);
+        if (preflight.blocked() || !preflight.fullyEvaluated()
+                || !preflight.speculativeReadAllowed() || !preflight.readOnly()
+                || preflight.confirmationRequired()) {
+            return CompletableFuture.completedFuture(failure(
+                    call,
+                    "speculation_not_allowed",
+                    "This capability is not eligible for speculative read execution."
+            ));
+        }
+        try {
+            return executeInternal(displayRequestId, call, false);
+        } catch (RuntimeException exception) {
+            return CompletableFuture.completedFuture(failure(call, "tool_execution_failed", message(exception)));
+        }
+    }
+
     public static CompletableFuture<ModelToolResult> execute(UUID displayRequestId, ModelToolCall call) {
         return execute(displayRequestId, call, false);
     }
@@ -48,7 +334,23 @@ public final class AutomationToolCoordinator {
         AutomationChatHudState.toolStarted(call);
         CompletableFuture<ModelToolResult> execution;
         try {
-            execution = executeInternal(displayRequestId, call, preapproved);
+            ToolPreflight preflight = inspect(call, 0L);
+            if (preflight.blocked()) {
+                String code = preflight.blockers().isEmpty() ? "preflight_blocked" : preflight.blockers().get(0);
+                execution = CompletableFuture.completedFuture(failure(
+                        call,
+                        code,
+                        "Tool preflight rejected execution: " + String.join(", ", preflight.blockers())
+                ));
+            } else {
+                execution = executeWithStandardApprovalBoundary(
+                        displayRequestId,
+                        call,
+                        preflight,
+                        preapproved,
+                        approved -> executeInternal(displayRequestId, call, approved)
+                );
+            }
         } catch (RuntimeException exception) {
             execution = CompletableFuture.completedFuture(failure(call, "tool_execution_failed", message(exception)));
         }
@@ -58,6 +360,46 @@ public final class AutomationToolCoordinator {
         ));
     }
 
+
+    /**
+     * Global deny-by-default boundary for model-driven side effects.
+     *
+     * <p>The user-facing approval UI is owned by LocalModelService, which can
+     * present the existing formatted single/batch Automation approval card.
+     * This coordinator deliberately does not create a second approval surface.
+     * Calls reaching this boundary in STANDARD mode must therefore already be
+     * preapproved. Direct/nested callers that bypass the model service are
+     * rejected rather than silently executing or opening a differently styled
+     * popup. UNRESTRICTED remains the explicit session-wide bypass.</p>
+     */
+    private static CompletableFuture<ModelToolResult> executeWithStandardApprovalBoundary(
+            UUID displayRequestId,
+            ModelToolCall call,
+            ToolPreflight preflight,
+            boolean preapproved,
+            java.util.function.Function<Boolean, CompletableFuture<ModelToolResult>> executor
+    ) {
+        if (preflight == null || preflight.readOnly() || preapproved || AutomationModeController.isUnrestrictedMode()) {
+            return executor.apply(preapproved || AutomationModeController.isUnrestrictedMode());
+        }
+        return CompletableFuture.completedFuture(failure(
+                call,
+                "approval_required",
+                "STANDARD Automation Mode requires this side-effecting action to be approved through the existing Automation approval flow before execution."
+        ));
+    }
+
+
+    private static CompletableFuture<ModelToolResult> recordExternalEvidence(
+            UUID displayRequestId, ModelToolCall call, CompletableFuture<ModelToolResult> execution
+    ) {
+        return execution.whenComplete((result, failure) -> {
+            if (failure == null && result != null && displayRequestId != null) {
+                com.spirit.koil.api.model.retrieval.KoilKnowledgeRuntime.research()
+                        .ifPresent(evidence -> evidence.record(displayRequestId.toString(), call, result));
+            }
+        });
+    }
     private static CompletableFuture<ModelToolResult> executeInternal(
             UUID displayRequestId,
             ModelToolCall call,
@@ -89,19 +431,77 @@ public final class AutomationToolCoordinator {
             return MinecraftKnowledgeModelToolRegistry.execute(call);
         }
         if (InternetResearchModelToolRegistry.supports(call.toolId())) {
-            return InternetResearchModelToolRegistry.execute(call);
+            return recordExternalEvidence(displayRequestId, call, InternetResearchModelToolRegistry.execute(call));
+        }
+        if (DatasetIntelligenceModelToolRegistry.supports(call.toolId())) {
+            return recordExternalEvidence(displayRequestId, call, DatasetIntelligenceModelToolRegistry.execute(call));
+        }
+        if (BrowserIntelligenceModelToolRegistry.supports(call.toolId())) {
+            return recordExternalEvidence(displayRequestId, call, BrowserIntelligenceModelToolRegistry.execute(call));
+        }
+        if (ContentIntelligenceModelToolRegistry.supports(call.toolId())) {
+            return recordExternalEvidence(displayRequestId, call, ContentIntelligenceModelToolRegistry.execute(call));
         }
         if (KoilDocumentationModelToolRegistry.supports(call.toolId())) {
             return KoilDocumentationModelToolRegistry.execute(call);
         }
+        if (CodeIntelligenceModelToolRegistry.supports(call.toolId())) {
+            return CodeIntelligenceModelToolRegistry.execute(displayRequestId, call);
+        }
+        if (com.spirit.koil.api.context.ContextIntelligenceService.supports(call.toolId())) {
+            return com.spirit.koil.api.context.ContextIntelligenceService.execute(
+                    displayRequestId == null ? "local" : displayRequestId.toString(), call);
+        }
+        if (McpCatalogueModelToolRegistry.supports(call.toolId())) {
+            return McpCatalogueModelToolRegistry.execute(call);
+        }
+        if (AutomationTimerModelToolRegistry.supports(call.toolId())) {
+            return CompletableFuture.completedFuture(AutomationTimerModelToolRegistry.execute(call));
+        }
+        if (WorkspaceExecutionModelToolRegistry.supports(call.toolId())) {
+            return WorkspaceExecutionModelToolRegistry.execute(displayRequestId, call, preapproved);
+        }
+        if (WorkspaceProcessModelToolRegistry.supports(call.toolId())) {
+            return WorkspaceProcessModelToolRegistry.execute(displayRequestId, call, preapproved);
+        }
+        if (WorkspacePackageModelToolRegistry.supports(call.toolId())) {
+            return WorkspacePackageModelToolRegistry.execute(displayRequestId, call, preapproved);
+        }
+        if (WorkspaceDatabaseModelToolRegistry.supports(call.toolId())) {
+            return WorkspaceDatabaseModelToolRegistry.execute(displayRequestId, call, preapproved);
+        }
+        if (WorkspaceGitArchiveModelToolRegistry.supports(call.toolId())) {
+            return WorkspaceGitArchiveModelToolRegistry.execute(displayRequestId, call, preapproved);
+        }
+        if (SystemNetworkModelToolRegistry.supports(call.toolId())) {
+            return SystemNetworkModelToolRegistry.execute(call);
+        }
+        if (DataContextIndexModelToolRegistry.supports(call.toolId())) {
+            return DataContextIndexModelToolRegistry.execute(displayRequestId, call, preapproved);
+        }
+        if (BackgroundAutomationModelToolRegistry.supports(call.toolId())) {
+            return BackgroundAutomationModelToolRegistry.execute(displayRequestId, call, preapproved);
+        }
+        if (DynamicMcpToolRegistry.supports(call.toolId())) {
+            return DynamicMcpToolRegistry.execute(call);
+        }
         if (AutomationPlanModelToolRegistry.supports(call.toolId())) {
             return AutomationPlanModelToolRegistry.execute(call);
+        }
+        if (AutomationGoalModelToolRegistry.supports(call.toolId())) {
+            return executeAutomationGoal(displayRequestId, call, preapproved);
         }
         if (AutomationKtlSkillModelToolRegistry.supportsCatalog(call.toolId())) {
             return AutomationKtlSkillModelToolRegistry.executeCatalog(call);
         }
         if (AutomationKtlSkillModelToolRegistry.supportsRun(call.toolId())) {
             return executeKtlSkill(displayRequestId, call, preapproved);
+        }
+        if (ToolDiscoveryModelToolRegistry.supports(call.toolId())) {
+            return ToolDiscoveryModelToolRegistry.execute(call);
+        }
+        if (AgentSkillModelToolRegistry.supports(call.toolId())) {
+            return AgentSkillModelToolRegistry.execute(call);
         }
         if (ModelWorkspaceToolRegistry.supports(call.toolId())) {
             return ModelWorkspaceToolRegistry.execute(displayRequestId, call, preapproved);
@@ -136,7 +536,19 @@ public final class AutomationToolCoordinator {
                         call.id(), call.toolId(), "not_running", new JsonObject(), "", "No automation task is running."
                 ));
             }
-            client.execute(() -> AutomationRouter.cancelCurrentTask("cancelled by model tool"));
+            String mainThreadSpan = beginMainThreadTelemetry(displayRequestId, call, "automation cancellation");
+            long queuedAtMillis = System.currentTimeMillis();
+            client.execute(() -> {
+                markMainThreadStarted(displayRequestId, mainThreadSpan, queuedAtMillis);
+                try {
+                    AutomationRouter.cancelCurrentTask("cancelled by model tool");
+                    finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.AVAILABLE,
+                            "cancel_submitted", "Automation cancellation executed on the client thread.");
+                } catch (RuntimeException exception) {
+                    finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.FAILED,
+                            "cancel_failed", message(exception));
+                }
+            });
             return CompletableFuture.completedFuture(new ModelToolResult(
                     call.id(), call.toolId(), "completed", new JsonObject(), "", "The current automation task was cancelled."
             ));
@@ -150,10 +562,17 @@ public final class AutomationToolCoordinator {
         }
 
         CompletableFuture<AutomationExecutionResult> execution = AutomationExecutionResults.register(executionId);
+        String mainThreadSpan = beginMainThreadTelemetry(displayRequestId, call, "automation dispatch");
+        long queuedAtMillis = System.currentTimeMillis();
         client.execute(() -> {
+            markMainThreadStarted(displayRequestId, mainThreadSpan, queuedAtMillis);
             try {
-                AutomationRouter.handleInput(plan.request(), "local-model");
+                String telemetryParent = TelemetryStore.latestSpan(displayRequestId,
+                        TelemetrySpanKind.TOOL_INVOCATION, "call_id", call.id());
+                AutomationRouter.handleInput(plan.request().withTelemetry(displayRequestId, telemetryParent), "local-model");
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.AVAILABLE, "submitted", "Automation request submitted to planner.");
             } catch (RuntimeException exception) {
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.FAILED, "submission_failed", message(exception));
                 AutomationExecutionResults.publish(new AutomationExecutionResult(
                         executionId,
                         "failed",
@@ -176,6 +595,62 @@ public final class AutomationToolCoordinator {
         return execution.handle((result, error) -> error == null
                 ? toToolResult(call, result)
                 : failure(call, "tool_execution_failed", message(error)));
+    }
+
+    private static CompletableFuture<ModelToolResult> executeAutomationGoal(
+            UUID displayRequestId,
+            ModelToolCall call,
+            boolean preapproved
+    ) {
+        if (!AutomationGoalModelToolRegistry.requestsExecution(call)) {
+            return AutomationGoalModelToolRegistry.execute(call, false);
+        }
+
+        // Resolve facts and the bounded recipe graph before asking for approval.
+        // Already-satisfied or still-blocked goals never need a mutation prompt.
+        return AutomationGoalModelToolRegistry.execute(call, false).thenCompose(preview -> {
+            if (!"approval_required".equals(preview.failureCode())) {
+                return CompletableFuture.completedFuture(preview);
+            }
+            if (preapproved || AutomationModeController.isUnrestrictedMode()) {
+                return AutomationGoalModelToolRegistry.execute(call, true);
+            }
+            if (displayRequestId == null) {
+                return CompletableFuture.completedFuture(failure(
+                        call,
+                        "approval_unavailable",
+                        "The high-level goal has no chat-panel approval surface for inventory-changing execution."
+                ));
+            }
+            JsonObject arguments = call.arguments() == null ? new JsonObject() : call.arguments();
+            String target = arguments.has("target") ? arguments.get("target").getAsString() : "";
+            int count = arguments.has("count") ? arguments.get("count").getAsInt() : 1;
+            String detail = "Koil resolved a high-level obtain goal for " + count + " x " + target
+                    + ".\n\nExecution may craft synchronized recipes and change your inventory. "
+                    + "Every internal craft remains guarded by screen, cursor, and inventory verification.";
+            ModelGenerationHudState.state(
+                    displayRequestId,
+                    com.spirit.koil.api.model.ModelRequestState.EXECUTING_TOOL,
+                    "waiting for goal execution approval"
+            );
+            return ModelGenerationHudState.requestApproval(
+                            displayRequestId,
+                            "Automation goal approval",
+                            detail,
+                            "Run Goal",
+                            "Deny"
+                    )
+                    .thenCompose(approved -> approved
+                            ? AutomationGoalModelToolRegistry.execute(call, true)
+                            : CompletableFuture.completedFuture(new ModelToolResult(
+                                    call.id(),
+                                    call.toolId(),
+                                    "rejected",
+                                    new JsonObject(),
+                                    "user_declined",
+                                    "The player declined high-level goal execution."
+                            )));
+        });
     }
 
     private static CompletableFuture<ModelToolResult> executeKtlSkill(
@@ -216,7 +691,7 @@ public final class AutomationToolCoordinator {
             ));
         }
         if (preapproved || AutomationModeController.isUnrestrictedMode()) {
-            return submitKtlSkill(client, call, prepared);
+            return submitKtlSkill(client, displayRequestId, call, prepared);
         }
         if (displayRequestId == null) {
             return CompletableFuture.completedFuture(failure(
@@ -242,7 +717,7 @@ public final class AutomationToolCoordinator {
                         "Deny"
                 )
                 .thenCompose(approved -> approved
-                        ? submitKtlSkill(client, call, prepared)
+                        ? submitKtlSkill(client, displayRequestId, call, prepared)
                         : CompletableFuture.completedFuture(new ModelToolResult(
                         call.id(),
                         call.toolId(),
@@ -255,14 +730,19 @@ public final class AutomationToolCoordinator {
 
     private static CompletableFuture<ModelToolResult> submitKtlSkill(
             MinecraftClient client,
+            UUID displayRequestId,
             ModelToolCall call,
             AutomationKtlSkillRegistry.PreparedSkill prepared
     ) {
         UUID executionId = prepared.request().executionId();
         CompletableFuture<AutomationExecutionResult> execution =
                 AutomationExecutionResults.register(executionId);
+        String mainThreadSpan = beginMainThreadTelemetry(displayRequestId, call, "KTL skill dispatch");
+        long queuedAtMillis = System.currentTimeMillis();
         client.execute(() -> {
+            markMainThreadStarted(displayRequestId, mainThreadSpan, queuedAtMillis);
             if (!AutomationModeController.isAutomationMode()) {
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.UNAVAILABLE, "automation_disabled", "Automation Mode was disabled before KTL dispatch.");
                 AutomationExecutionResults.publish(new AutomationExecutionResult(
                         executionId,
                         "failed",
@@ -278,8 +758,12 @@ public final class AutomationToolCoordinator {
                 return;
             }
             try {
-                AutomationRouter.handleInput(prepared.request(), "local-model-skill");
+                String telemetryParent = TelemetryStore.latestSpan(displayRequestId,
+                        TelemetrySpanKind.TOOL_INVOCATION, "call_id", call.id());
+                AutomationRouter.handleInput(prepared.request().withTelemetry(displayRequestId, telemetryParent), "local-model-skill");
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.AVAILABLE, "submitted", "KTL skill submitted to AutomationRouter.");
             } catch (RuntimeException exception) {
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.FAILED, "submission_failed", message(exception));
                 AutomationExecutionResults.publish(new AutomationExecutionResult(
                         executionId,
                         "failed",
@@ -325,7 +809,7 @@ public final class AutomationToolCoordinator {
                 ));
             }
             if (preapproved || !definition.confirmationRequired() || AutomationModeController.isUnrestrictedMode()) {
-                return submitCurrentPlayerCommand(client, call, command);
+                return submitCurrentPlayerCommand(client, displayRequestId, call, command);
             }
             if (displayRequestId == null) {
                 return CompletableFuture.completedFuture(failure(
@@ -359,19 +843,24 @@ public final class AutomationToolCoordinator {
                                     "The player declined the Minecraft command."
                             ));
                         }
-                        return submitCurrentPlayerCommand(client, call, command);
+                        return submitCurrentPlayerCommand(client, displayRequestId, call, command);
                     });
         });
     }
 
     private static CompletableFuture<ModelToolResult> submitCurrentPlayerCommand(
             MinecraftClient client,
+            UUID displayRequestId,
             ModelToolCall call,
             String command
     ) {
         CompletableFuture<ModelToolResult> result = new CompletableFuture<>();
+        String mainThreadSpan = beginMainThreadTelemetry(displayRequestId, call, "command dispatch");
+        long queuedAtMillis = System.currentTimeMillis();
         client.execute(() -> {
+            markMainThreadStarted(displayRequestId, mainThreadSpan, queuedAtMillis);
             if (!AutomationModeController.isAutomationMode()) {
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.UNAVAILABLE, "automation_disabled", "Automation Mode disabled before command dispatch.");
                 result.complete(failure(
                         call,
                         "automation_disabled",
@@ -380,6 +869,7 @@ public final class AutomationToolCoordinator {
                 return;
             }
             if (client.player == null || client.getNetworkHandler() == null) {
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.UNAVAILABLE, "world_unavailable", "Player connection closed before command dispatch.");
                 result.complete(failure(call, "world_unavailable", "The player connection closed before command submission."));
                 return;
             }
@@ -387,6 +877,8 @@ public final class AutomationToolCoordinator {
             try {
                 MinecraftCommandFeedbackTracker.begin(feedbackId, command);
                 AutomationRouter.sendRawCommand(command);
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.AVAILABLE,
+                        "submitted", "Minecraft command submitted on the client thread.");
                 MinecraftCommandFeedbackTracker.await(feedbackId, 750L).thenAccept(feedback -> {
                     JsonObject output = commandFeedbackOutput(command, feedback);
                     if ("failed".equals(feedback.assessment())) {
@@ -408,22 +900,98 @@ public final class AutomationToolCoordinator {
                                 "Minecraft returned command output confirming the submitted action."
                         ));
                     } else {
-                        result.complete(new ModelToolResult(
-                                call.id(),
-                                call.toolId(),
-                                "submitted",
-                                output,
-                                "",
-                                "Koil submitted the command through the current player's normal command path, but no correlated feedback was observed."
-                        ));
+                        // Some integrated/server command paths do not echo correlated
+                        // feedback even when the command has already taken effect. For
+                        // commands whose post-state is directly observable on the client,
+                        // verify that state instead of leaving the durable objective stuck
+                        // in "submitted" forever.
+                        java.util.concurrent.CompletableFuture.delayedExecutor(
+                                180L, java.util.concurrent.TimeUnit.MILLISECONDS).execute(() -> client.execute(() -> {
+                            ModelToolResult stateVerified = verifySubmittedCommandState(client, call, command, output);
+                            if (stateVerified != null) {
+                                result.complete(stateVerified);
+                            } else {
+                                result.complete(new ModelToolResult(
+                                        call.id(),
+                                        call.toolId(),
+                                        "submitted",
+                                        output,
+                                        "",
+                                        "Koil submitted the command through the current player's normal command path, but no correlated feedback was observed."
+                                ));
+                            }
+                        }));
                     }
                 });
             } catch (RuntimeException exception) {
+                finishMainThreadTelemetry(displayRequestId, mainThreadSpan, TelemetryCapabilityState.FAILED,
+                        "command_submission_failed", message(exception));
                 MinecraftCommandFeedbackTracker.finish(feedbackId);
                 result.complete(failure(call, "command_submission_failed", message(exception)));
             }
         });
         return result;
+    }
+
+    private static ModelToolResult verifySubmittedCommandState(
+            MinecraftClient client,
+            ModelToolCall call,
+            String command,
+            JsonObject output
+    ) {
+        if (client == null || call == null || command == null) return null;
+        String normalized = command.strip().toLowerCase(java.util.Locale.ROOT);
+        JsonObject verifiedOutput = output == null ? new JsonObject() : output.deepCopy();
+
+        if ("world.set_time".equals(call.toolId()) && client.world != null && normalized.startsWith("time set ")) {
+            String target = normalized.substring("time set ".length()).strip();
+            long expected = switch (target) {
+                case "day" -> 1000L;
+                case "noon" -> 6000L;
+                case "night" -> 13000L;
+                case "midnight" -> 18000L;
+                default -> -1L;
+            };
+            if (expected >= 0L) {
+                long actual = Math.floorMod(client.world.getTimeOfDay(), 24000L);
+                long distance = Math.min(Math.floorMod(actual - expected, 24000L), Math.floorMod(expected - actual, 24000L));
+                if (distance <= 240L) {
+                    verifiedOutput.addProperty("stateVerified", true);
+                    verifiedOutput.addProperty("verificationKind", "client_world_time");
+                    verifiedOutput.addProperty("observedTimeOfDay", actual);
+                    verifiedOutput.add("structuredResult", commandStructuredResult(
+                            "SUCCESS", call.toolId(), "client_state_verified", true, true,
+                            command, 0, "state_verified"));
+                    return new ModelToolResult(
+                            call.id(), call.toolId(), "completed", verifiedOutput, "",
+                            "Minecraft command feedback was not correlated, but the requested world time is observable in client state."
+                    );
+                }
+            }
+        }
+
+        if ("minecraft.command".equals(call.toolId()) && client.interactionManager != null
+                && normalized.startsWith("gamemode ")) {
+            String requested = normalized.substring("gamemode ".length()).strip();
+            int separator = requested.indexOf(' ');
+            if (separator >= 0) requested = requested.substring(0, separator);
+            String actual = client.interactionManager.getCurrentGameMode() == null
+                    ? ""
+                    : client.interactionManager.getCurrentGameMode().getName().toLowerCase(java.util.Locale.ROOT);
+            if (!requested.isBlank() && requested.equals(actual)) {
+                verifiedOutput.addProperty("stateVerified", true);
+                verifiedOutput.addProperty("verificationKind", "client_gamemode");
+                verifiedOutput.addProperty("observedGameMode", actual);
+                verifiedOutput.add("structuredResult", commandStructuredResult(
+                        "SUCCESS", call.toolId(), "client_state_verified", true, true,
+                        command, 0, "state_verified"));
+                return new ModelToolResult(
+                        call.id(), call.toolId(), "completed", verifiedOutput, "",
+                        "Minecraft command feedback was not correlated, but the requested game mode is observable in client state."
+                );
+            }
+        }
+        return null;
     }
 
     private static JsonObject commandInspectionOutput(MinecraftCommandInspector.Inspection inspection) {
@@ -632,6 +1200,28 @@ public final class AutomationToolCoordinator {
         } else if (value != null) {
             output.addProperty(key, value.toString());
         }
+    }
+
+    private static String beginMainThreadTelemetry(UUID requestId, ModelToolCall call, String name) {
+        if (requestId == null) return "";
+        String parent = call == null ? "" : TelemetryStore.latestSpan(
+                requestId, TelemetrySpanKind.TOOL_INVOCATION, "call_id", call.id());
+        return TelemetryStore.beginSpan(requestId, parent, TelemetrySpanKind.MAIN_THREAD, name,
+                call == null ? Map.of() : Map.of("call_id", call.id(), "tool_id", call.toolId()));
+    }
+
+    private static void markMainThreadStarted(UUID requestId, String spanId, long queuedAtMillis) {
+        if (requestId == null || spanId == null || spanId.isBlank()) return;
+        TelemetryStore.metric(requestId, spanId, "main_thread_queue_wait_ms",
+                Math.max(0L, System.currentTimeMillis() - queuedAtMillis));
+        TelemetryStore.event(requestId, spanId, "main_thread_started", "Client-thread dispatch began.");
+    }
+
+    private static void finishMainThreadTelemetry(
+            UUID requestId, String spanId, TelemetryCapabilityState state, String reason, String detail
+    ) {
+        if (requestId == null || spanId == null || spanId.isBlank()) return;
+        TelemetryStore.finishSpan(requestId, spanId, state, reason, detail);
     }
 
     private static ModelToolResult failure(ModelToolCall call, String code, String detail) {

@@ -36,6 +36,11 @@ public final class AutomationKtlSkillRegistry {
         return search(KtlCompilerService.getInstance().assets(), query, requestedLimit);
     }
 
+    /** Complete model-callable descriptor view for bounded capability discovery. */
+    public static List<SkillDescriptor> descriptors() {
+        return descriptors(KtlCompilerService.getInstance().assets());
+    }
+
     public static List<SkillDescriptor> search(
             KtlCompilerService.CompiledAssets assets,
             String query,

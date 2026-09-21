@@ -10,6 +10,7 @@ import com.spirit.koil.api.chat.RichChatPrivacyNoticeClient;
 import com.spirit.koil.api.chat.sync.RichChatSyncClientBridge;
 import com.spirit.koil.api.command.ExitCommandBridge;
 import com.spirit.koil.api.console.ConsoleRequestBridge;
+import com.spirit.koil.api.design.particle.ScreenSpriteClientBridge;
 import com.spirit.koil.api.development.command.DevelopmentCommandBridge;
 import com.spirit.koil.api.f3.F3CommandBridge;
 import com.spirit.koil.api.f3.F3SnapshotService;
@@ -25,8 +26,8 @@ import com.spirit.koil.api.performance.PerformanceMonitor;
 import com.spirit.koil.api.performance.PerformanceOptimizationTestService;
 import com.spirit.koil.api.registry.client.ActiveWorldContentResourceBridge;
 import com.spirit.koil.api.screen.KoilRemoteScreenClientBridge;
-import com.spirit.koil.api.design.particle.KoilScreenSpriteClientBridge;
 import com.spirit.koil.api.stats.global.GlobalActivityClient;
+import com.spirit.koil.api.util.console.log.SubFileLogger;
 import com.spirit.koil.api.world.WorldCommandBridge;
 import com.spirit.koil.api.world.WorldInstanceResourceProfileService;
 import net.fabricmc.api.ClientModInitializer;
@@ -36,9 +37,8 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
-import org.lwjgl.glfw.GLFW;
 import net.minecraft.text.Text;
-import com.spirit.koil.api.util.console.log.SubFileLogger;
+import org.lwjgl.glfw.GLFW;
 
 public class Client implements ClientModInitializer {
 
@@ -71,7 +71,7 @@ public class Client implements ClientModInitializer {
         RichChatPrivacyNoticeClient.register();
         RichChatSyncClientBridge.registerReceiver();
         KoilRemoteScreenClientBridge.registerReceiver();
-        KoilScreenSpriteClientBridge.registerReceiver();
+        ScreenSpriteClientBridge.registerReceiver();
         ClientTickEvents.START_CLIENT_TICK.register(client -> AutomationRouter.tick());
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(() -> {
             LocalModelService.cancelActiveWork();

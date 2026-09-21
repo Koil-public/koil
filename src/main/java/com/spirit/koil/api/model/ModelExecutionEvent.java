@@ -20,10 +20,10 @@ public record ModelExecutionEvent(
         requestId = requestId == null ? new UUID(0L, 0L) : requestId;
         sessionId = clean(sessionId);
         eventId = clean(eventId);
-        type = type == null ? Type.THOUGHT_SUMMARY : type;
+        type = type == null ? Type.STATUS : type;
         state = state == null ? ModelRequestState.THINKING : state;
         activity = activity == null ? activityFor(state, type, summary) : activity;
-        summary = safeSummary(summary);
+        summary = safeSummary(type, summary);
         data = data == null ? new JsonObject() : data.deepCopy();
         timestampMillis = timestampMillis <= 0L ? System.currentTimeMillis() : timestampMillis;
     }
@@ -43,6 +43,7 @@ public record ModelExecutionEvent(
     }
 
     public enum Type {
+        STATUS,
         THOUGHT_SUMMARY,
         PLAN_CREATED,
         PLAN_VALIDATED,
@@ -78,8 +79,12 @@ public record ModelExecutionEvent(
         return value == null ? "" : value.trim();
     }
 
-    private static String safeSummary(String value) {
-        String clean = value == null ? "" : value.replace('\r', ' ').replace('\n', ' ')
+    private static String safeSummary(Type type, String value) {
+        if (value == null) return "";
+        if (type == Type.THOUGHT_SUMMARY) {
+            return value.replace("\r\n", "\n").replace('\r', '\n').strip();
+        }
+        String clean = value.replace('\r', ' ').replace('\n', ' ')
                 .replaceAll("\\s+", " ").strip();
         return clean.length() <= 420 ? clean : clean.substring(0, 419) + "…";
     }

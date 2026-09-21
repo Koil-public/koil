@@ -11,7 +11,6 @@ public final class RichChatModelFinalFormatValidator {
             "(?is)```(?:latex|tex)\\s*\\n(.*?)\\n```"
     );
     private static final Pattern INLINE_CODE = Pattern.compile("`([^`\\n]+)`");
-    private static final Pattern HEADING = Pattern.compile("(?m)^(\\s*)#{1,6}\\s+");
     private static final Pattern ANY_FENCE = Pattern.compile("(?is)```([^\\n`]*)\\n(.*?)\\n```");
 
     private RichChatModelFinalFormatValidator() {
@@ -23,10 +22,8 @@ public final class RichChatModelFinalFormatValidator {
         boolean changed = sanitized.changed();
         List<String> issues = new ArrayList<>();
 
-        String withoutHeadings = stripHeadingsOutsideFences(value);
-        changed |= !withoutHeadings.equals(value);
-        value = withoutHeadings;
-
+        // Headings are part of the Rich Chat presentation contract. Preserve them so
+        // generated Markdown reaches the same renderer used by normal chat.
         Matcher latex = LATEX_FENCE.matcher(value);
         StringBuffer recovered = new StringBuffer(value.length());
         while (latex.find()) {
@@ -83,22 +80,6 @@ public final class RichChatModelFinalFormatValidator {
                 || text.matches(".*[=+*/^].*[0-9a-zA-Z)].*");
     }
 
-    private static String stripHeadingsOutsideFences(String value) {
-        StringBuilder result = new StringBuilder(value.length());
-        boolean fenced = false;
-        String[] lines = value.split("\\n", -1);
-        for (int index = 0; index < lines.length; index++) {
-            String line = lines[index];
-            if (line.stripLeading().startsWith("```")) {
-                fenced = !fenced;
-            } else if (!fenced) {
-                line = HEADING.matcher(line).replaceFirst("$1");
-            }
-            result.append(line);
-            if (index + 1 < lines.length) result.append('\n');
-        }
-        return result.toString();
-    }
 
     public record Result(String text, boolean changed, List<String> issues) {
         public Result {

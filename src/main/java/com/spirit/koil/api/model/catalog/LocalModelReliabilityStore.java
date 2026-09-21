@@ -28,6 +28,10 @@ public final class LocalModelReliabilityStore {
     }
 
     public static synchronized void recordProtocolFailure(String modelKey, String code, String detail) {
+        // Older Koil builds treated repeated/internal reasoning as a protocol failure and could
+        // quarantine perfectly usable small models. Reasoning is model-authored work, not a
+        // reliability failure. Keep these legacy codes inert even if an old caller still emits one.
+        if (deprecatedReasoningFailure(code)) return;
         record(modelKey, code, detail, false);
     }
 
@@ -82,7 +86,10 @@ public final class LocalModelReliabilityStore {
         if (!Files.isRegularFile(PATH)) return;
         try {
             State state = GSON.fromJson(Files.readString(PATH, StandardCharsets.UTF_8), State.class);
-            if (state != null && state.entries != null) ENTRIES.putAll(state.entries);
+            if (state != null && state.entries != null) {
+                ENTRIES.putAll(state.entries);
+                if (migrateLegacyReasoningQuarantines()) persist();
+            }
         } catch (Exception ignored) {
             // A corrupt reliability file must not prevent Koil/model startup.
         }
@@ -102,6 +109,28 @@ public final class LocalModelReliabilityStore {
         } catch (Exception ignored) {
             // In-memory protection remains active when persistence is unavailable.
         }
+    }
+
+    private static boolean migrateLegacyReasoningQuarantines() {
+        boolean changed = false;
+        for (Entry entry : ENTRIES.values()) {
+            if (entry == null || entry.crashCount > 0 || !deprecatedReasoningFailure(entry.lastCode)) continue;
+            // The historical aggregate counter cannot distinguish genuine protocol failures from
+            // the now-invalid reasoning-loop classifications. If the quarantine's latest cause is
+            // one of those classifications and there was no runtime crash, discard that aggregate
+            // so old false positives cannot keep the model blocked forever. New genuine failures
+            // will build fresh evidence under the current rules.
+            entry.protocolFailureCount = 0;
+            entry.quarantined = false;
+            changed = true;
+        }
+        return changed;
+    }
+
+    private static boolean deprecatedReasoningFailure(String code) {
+        String normalized = normalize(code);
+        return "model_reasoning_loop".equals(normalized)
+                || "internal_reasoning_without_action".equals(normalized);
     }
 
     private static String normalize(String value) {

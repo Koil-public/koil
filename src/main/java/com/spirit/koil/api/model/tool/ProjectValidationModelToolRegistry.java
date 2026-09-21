@@ -6,6 +6,7 @@ import com.spirit.koil.api.automation.AutomationModeController;
 import com.spirit.koil.api.model.ModelToolCall;
 import com.spirit.koil.api.model.ModelToolDefinition;
 import com.spirit.koil.api.model.ModelToolResult;
+import com.spirit.koil.api.model.ToolExecutionPolicy;
 import com.spirit.koil.api.model.chat.ModelGenerationHudState;
 
 import java.io.ByteArrayOutputStream;
@@ -37,7 +38,11 @@ public final class ProjectValidationModelToolRegistry {
                     LIST_TOOL_ID,
                     "List bounded Koil compilation, test, and proof operations available in the project workspace.",
                     objectSchema(Map.of(), List.of()), List.of("project_workspace_available"), Set.of(),
-                    false, Duration.ofSeconds(5), false, false, Set.of("completed", "unsupported")
+                    false, Duration.ofSeconds(5), false, false, Set.of("completed", "unsupported"),
+                    ToolExecutionPolicy.readOnly(
+                            ToolExecutionPolicy.FreshnessMode.WORKSPACE,
+                            ToolExecutionPolicy.CostClass.CHEAP
+                    )
             ),
             new ModelToolDefinition(
                     RUN_TOOL_ID,

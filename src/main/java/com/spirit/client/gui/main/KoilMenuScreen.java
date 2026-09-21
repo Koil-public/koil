@@ -751,7 +751,7 @@ public class KoilMenuScreen extends Screen {
             ButtonWidget debugVisButton2 = this.addDrawableChild(ButtonWidget.builder(Text.literal("Test Message Toasts"), button -> {
                 KoilMessageToast.add(client.getToastManager(), KoilMessageToast.Type.MUSIC, Text.of("MUSIC"), Text.of("toast"));
                 KoilMessageToast.add(client.getToastManager(), KoilMessageToast.Type.ANNOUNCEMENT, Text.of("ANNOUNCEMENT"), Text.of("toast"));
-                KoilMessageToast.add(client.getToastManager(), KoilMessageToast.Type.KORO_MESSAGE, Text.of("KORO_MESSAGE"), Text.of("toast"));
+                KoilMessageToast.add(client.getToastManager(), KoilMessageToast.Type.BLANK_TOAST, Text.of("BLANK_TOAST"), Text.of("toast"));
             }).dimensions(140, 142, 150, 20).build());
 
             ButtonWidget debugVisButton3 = this.addDrawableChild(ButtonWidget.builder(Text.literal("Test Update Toasts"), button -> {

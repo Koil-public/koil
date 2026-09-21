@@ -1,6 +1,7 @@
 package com.spirit.koil.api.model.hardware;
 
 import com.spirit.koil.api.model.catalog.LocalModelSelection;
+import com.spirit.koil.api.model.catalog.LocalModelRuntimePlatform;
 import com.spirit.koil.api.model.provider.colibri.ColibriConfiguration;
 import com.sun.management.OperatingSystemMXBean;
 
@@ -48,9 +49,7 @@ public final class LocalModelHardwarePreflight {
         long availableMemory = availableMemory();
         boolean metal = os.toLowerCase(Locale.ROOT).contains("mac");
         boolean supportedArchitecture = isSupportedArchitecture(architecture);
-        boolean runtimePresent = executable != null
-                && Files.isRegularFile(executable)
-                && Files.isExecutable(executable);
+        boolean runtimePresent = LocalModelRuntimePlatform.isLaunchable(executable);
         boolean modelDirectoryPresent = modelDirectory != null && Files.isDirectory(modelDirectory);
         DirectoryMeasurement model = modelDirectoryPresent ? measureDirectory(modelDirectory) : new DirectoryMeasurement(0L, 0L);
         StorageMeasurement storage = measureStorage(modelDirectory);

@@ -13,6 +13,7 @@ public final class RichChatTimestampBridge {
     private static final int MAX_CACHE = 512;
     private static final int TIMESTAMP_COLOR = 0xFF5F646C;
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("h:mm a");
+    private static final ThreadLocal<Integer> RENDER_SUPPRESSION_DEPTH = ThreadLocal.withInitial(() -> 0);
     private static final Map<String, TimestampMeta> FIRST_LINE_TIMESTAMPS = new LinkedHashMap<>(MAX_CACHE, 0.75F, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, TimestampMeta> eldest) {
@@ -61,6 +62,7 @@ public final class RichChatTimestampBridge {
     }
 
     public static void render(DrawContext context, TextRenderer renderer, String visibleLine, int x, int y) {
+        if (renderingSuppressed()) return;
         if (context == null || renderer == null || visibleLine == null || visibleLine.isBlank()) {
             return;
         }
@@ -91,6 +93,27 @@ public final class RichChatTimestampBridge {
                 false
         );
         context.getMatrices().pop();
+    }
+
+    /**
+     * Suppresses timestamp painting for a nested rendering surface without altering
+     * timestamp capture or normal ChatHud behavior. Callers must pair begin/end.
+     */
+    public static void beginRenderSuppression() {
+        RENDER_SUPPRESSION_DEPTH.set(RENDER_SUPPRESSION_DEPTH.get() + 1);
+    }
+
+    public static void endRenderSuppression() {
+        int depth = Math.max(0, RENDER_SUPPRESSION_DEPTH.get() - 1);
+        if (depth == 0) {
+            RENDER_SUPPRESSION_DEPTH.remove();
+        } else {
+            RENDER_SUPPRESSION_DEPTH.set(depth);
+        }
+    }
+
+    public static boolean renderingSuppressed() {
+        return RENDER_SUPPRESSION_DEPTH.get() > 0;
     }
 
     public static String timestampForLine(String visibleLine) {

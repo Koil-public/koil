@@ -22,10 +22,10 @@ import com.spirit.koil.api.chat.RichChatSectionFormatting;
 import com.spirit.koil.api.chat.RichChatTimestampBridge;
 import com.spirit.koil.api.chat.RichChatTableBridge;
 import com.spirit.koil.api.chat.latex.RichChatLatexFormatter;
-import com.spirit.koil.api.chat.latex.RichChatLatexTextureCache;
 import com.spirit.koil.api.chat.upload.LocalRichAttachmentBridge;
 import com.spirit.koil.api.chat.upload.RichChatAttachmentRenderer;
 import com.spirit.koil.api.model.chat.LocalModelControlChatFeedback;
+import com.spirit.koil.api.model.chat.ModelOutputHarvestField;
 import com.spirit.koil.api.chat.upload.RichChatUploadDraft;
 import com.spirit.koil.api.chat.upload.RichChatWebAttachmentBridge;
 import com.spirit.koil.api.chat.sync.RichChatSyncedMessageBridge;
@@ -126,6 +126,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
     @Inject(method = "render", at = @At("HEAD"))
     private void koil$beginAutomationHudRender(DrawContext context, int currentTick, int mouseX, int mouseY, CallbackInfo ci) {
         RichChatAttachmentRenderer.beginFrame(mouseX, mouseY);
+        ModelOutputHarvestField.beginFrame();
         koil$shiftedForAutomationHud = false;
         koil$chatVerticalShift = 0;
         int reservedHeight = ChatHudPanelStack.reservedHeight(client)
@@ -165,6 +166,7 @@ public abstract class MixinChatHud implements ChatHudRefreshBridge {
     private int koil$renderLatexTextures(DrawContext context, TextRenderer renderer, OrderedText orderedText, int x, int y, int color) {
         if (koil$hasVisibleContent(orderedText)) {
             ChatHudPanelStack.observeChatLine(context, y);
+            ModelOutputHarvestField.observeLine(context, renderer, orderedText, x, y);
         }
         if (!RichChatSettings.enabled() || (!RichChatSettings.mediaEnabled() && !RichChatSettings.latexEnabled() && !RichChatSettings.effectsEnabled())) {
             return context.drawTextWithShadow(renderer, orderedText, x, y, color);

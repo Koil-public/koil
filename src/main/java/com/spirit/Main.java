@@ -12,7 +12,7 @@ import com.spirit.koil.api.registry.ContentCommandBridge;
 import com.spirit.koil.api.registry.DynamicContentHolderRegistry;
 import com.spirit.koil.api.registry.DynamicRegistryManager;
 import com.spirit.koil.api.screen.KoilRemoteScreenServerBridge;
-import com.spirit.koil.api.design.particle.KoilScreenSpriteServerBridge;
+import com.spirit.koil.api.design.particle.ScreenSpriteServerBridge;
 import com.spirit.koil.api.stats.global.KoilGlobalActivityServer;
 import com.spirit.koil.api.util.console.log.SubFileLogger;
 import com.spirit.koil.api.util.console.log.KoilThreadLogger;
@@ -373,7 +373,7 @@ public class Main implements ModInitializer {
         KoilGlobalActivityServer.register();
         RichChatSyncServerBridge.register();
         KoilRemoteScreenServerBridge.registerCommands();
-        KoilScreenSpriteServerBridge.registerCommands();
+        ScreenSpriteServerBridge.registerCommands();
         KoilCommandPauseBridge.register();
         AttentionCommandBridge.register();
         AutomationPresenceServerBridge.register();

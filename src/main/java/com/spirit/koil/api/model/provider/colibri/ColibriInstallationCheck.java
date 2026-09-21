@@ -1,5 +1,7 @@
 package com.spirit.koil.api.model.provider.colibri;
 
+import com.spirit.koil.api.model.catalog.LocalModelRuntimePlatform;
+
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
@@ -26,7 +28,7 @@ public record ColibriInstallationCheck(boolean compatible, List<String> failures
                 // Legacy manual mode: the user owns the executable entirely.
                 if (configuration.executable() == null || !Files.isRegularFile(configuration.executable())) {
                     failures.add("Colibri executable is missing");
-                } else if (!Files.isExecutable(configuration.executable())) {
+                } else if (!LocalModelRuntimePlatform.isLaunchable(configuration.executable())) {
                     failures.add("Colibri executable is not executable");
                 }
             }
