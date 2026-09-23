@@ -1,0 +1,108 @@
+{
+  "background": [
+    {
+      "tags": ["halloween"],
+      "fileSuffix": "_halloween",
+      "holidayCheck": true,
+      "month": 10
+    },
+    {
+      "tags": ["christmas"],
+      "fileSuffix": "_christmas",
+      "holidayCheck": true,
+      "month": 12
+    },
+    {
+      "tags": ["ignite"],
+      "fileSuffix": "_ignite"
+    },
+    {
+      "tags": ["analiea"],
+      "fileSuffix": "_analiea"
+    },
+    {
+      "tags": ["grynn"],
+      "fileSuffix": "_grynn"
+    },
+    {
+      "tags": ["split", "inpart", "in part", "in_part"],
+      "fileSuffix": "_split"
+    },
+    {
+      "tags": ["day"],
+      "fileSuffix": "_day"
+    },
+    {
+      "tags": ["night"],
+      "fileSuffix": "_night"
+    },
+    {
+      "tags": ["beach"],
+      "fileSuffix": "_beach"
+    },
+    {
+      "tags": ["birch forest", "birch_forest"],
+      "fileSuffix": "_birch_forest"
+    },
+    {
+      "tags": ["cherry blossom", "cherry_blossom"],
+      "fileSuffix": "_cherry_blossom"
+    },
+    {
+      "tags": ["copper shaft", "copper_shaft"],
+      "fileSuffix": "_copper_shaft"
+    },
+    {
+      "tags": ["desert"],
+      "fileSuffix": "_desert"
+    },
+    {
+      "tags": ["mangrove", "mangrove swamp", "mangrove_swamp"],
+      "fileSuffix": "_mangrove"
+    },
+    {
+      "tags": ["mineshaft"],
+      "fileSuffix": "_mineshaft"
+    },
+    {
+      "tags": ["mountain"],
+      "fileSuffix": "_mountain"
+    },
+    {
+      "tags": ["ocean day boat", "ocean_day_boat", "ocean boat day", "ocean_boat_day", "boat day", "boat_day"],
+      "fileSuffix": "_ocean_day_boat"
+    },
+    {
+      "tags": ["ocean night boat", "ocean_night_boat", "ocean boat night", "ocean_boat_night", "boat_night", "boat night"],
+      "fileSuffix": "_ocean_night_boat"
+    },
+    {
+      "tags": ["ocean split boat", "ocean_split_boat", "ocean boat split", "ocean_boat_ split", "boat_split", "boat split"],
+      "fileSuffix": "_ocean_split_boat"
+    },
+    {
+      "tags": ["ocean night", "ocean_night"],
+      "fileSuffix": "_ocean_night"
+    },
+    {
+      "tags": ["savanna"],
+      "fileSuffix": "_savanna"
+    },
+    {
+      "tags": ["snowy slope", "snowy_slope"],
+      "fileSuffix": "_snowy_slope"
+    },
+    {
+      "tags": ["swamp"],
+      "fileSuffix": "_swamp"
+    },
+    {
+      "tags": ["taiga"],
+      "fileSuffix": "_taiga"
+    },
+    {
+      "tags": ["underwater"],
+      "fileSuffix": "_underwater"
+    }
+  ]
+}

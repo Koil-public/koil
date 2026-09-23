@@ -1,0 +1,5 @@
+/home/deck/Development/koil/src/main/resources/native/turbovec-bridge/target/x86_64-pc-windows-gnu/release/deps/windows_x86_64_gnu-e2d7858397cc4134.d: /home/deck/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows_x86_64_gnu-0.42.2/src/lib.rs
+
+/home/deck/Development/koil/src/main/resources/native/turbovec-bridge/target/x86_64-pc-windows-gnu/release/deps/libwindows_x86_64_gnu-e2d7858397cc4134.rmeta: /home/deck/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows_x86_64_gnu-0.42.2/src/lib.rs
+
+/home/deck/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/windows_x86_64_gnu-0.42.2/src/lib.rs:

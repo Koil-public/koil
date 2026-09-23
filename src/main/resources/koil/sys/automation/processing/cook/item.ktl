@@ -1,0 +1,39 @@
+version: 2
+kind: task_template
+id: template.processing_cook_item
+template_id: processing/cook/item
+semantic_operation: sem.processing.cook_item
+params: [item.id, count.value, recipe.id, process.kind, fuel.id, fuel.burn_ticks, cook.ticks]
+metadata:
+  semantic_operations: [sem.processing.cook_item]
+  target_kinds: [item]
+  required_params: [item.id, recipe.id, process.kind, fuel.id, fuel.burn_ticks, cook.ticks]
+  optional_params: [count.value]
+  tags: [processing, furnace, smelting, blasting, smoking, inventory, transaction]
+  description: Process an exact synchronized cooking recipe in the already-open matching processor and verify the resulting inventory delta
+  visibility: internal
+  model_callable: false
+  resource_locks: [screen, cursor, inventory]
+  side_effects: [inventory, uses_screen]
+  timeout_ticks: 7200
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.processing.prepare_exact_recipe
+    params:
+      item.id: ${item.id}
+      count.value: ${count.value}
+      recipe.id: ${recipe.id}
+      process.kind: ${process.kind}
+      fuel.id: ${fuel.id}
+      fuel.burn_ticks: ${fuel.burn_ticks}
+      cook.ticks: ${cook.ticks}
+  - type: run_primitive
+    action: cap.processing.verify_exact_recipe
+    params:
+      item.id: ${item.id}
+      count.value: ${count.value}
+  - type: delegate
+    delegate: flow/core/close_screen.ktl
+  - type: return
+    label: processed

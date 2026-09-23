@@ -1,0 +1,25 @@
+version: 2
+kind: task_template
+id: template.movement_core_check_safety
+template_id: movement/core/movement_check_safety
+semantic_operation: sem.task.move_to_target
+params: []
+metadata:
+  semantic_operations: [sem.task.move_to_target]
+  target_kinds: [location]
+  required_params: []
+  optional_params: []
+  tags: [movement, core, safety]
+  description: Movement Check Safety
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input]
+  side_effects: [moves_player, changes_orientation]
+  timeout_ticks: 3600
+  failure_policy: fail
+steps:
+  - type: run_primitive
+    action: cap.movement.check_safety
+    params: {}
+  - type: return
+    label: done

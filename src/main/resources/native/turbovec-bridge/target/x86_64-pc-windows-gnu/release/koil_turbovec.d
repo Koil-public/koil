@@ -1,0 +1,1 @@
+/home/deck/Development/koil/src/main/resources/native/turbovec-bridge/target/x86_64-pc-windows-gnu/release/koil_turbovec.dll: /home/deck/Development/koil/src/main/resources/native/turbovec-bridge/src/lib.rs

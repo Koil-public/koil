@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "scannedAt": "2026-09-21T15:55:59.817036626Z",
+  "savesRoot": "/home/everest/IdeaProjects/koil/run/saves",
+  "worlds": [
+    {
+      "worldId": "New World",
+      "displayName": "New World",
+      "worldPath": "/home/everest/IdeaProjects/koil/run/saves/New World",
+      "minecraftVersion": "1.20.1",
+      "dataVersion": 3465,
+      "lastPlayed": 1785628522220,
+      "packs": [],
+      "validation": []
+    }
+  ],
+  "validation": []
+}

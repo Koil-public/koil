@@ -1,0 +1,28 @@
+version: 2
+kind: task_template
+id: template.goal_processor_open_nearby
+template_id: goal/processor/open_nearby
+semantic_operation: sem.task.open_target
+params: [target.id, target.selector, radius, stop.distance]
+metadata:
+  semantic_operations: [sem.task.open_target]
+  target_kinds: [block]
+  required_params: [target.id]
+  optional_params: [target.selector, radius, stop.distance]
+  tags: [goal, processor, furnace, movement, interaction, screen]
+  description: Move to an authoritatively observed nearby processor and open its synchronized screen for a goal transaction
+  visibility: internal
+  model_callable: false
+  resource_locks: [movement, look, input, world, screen]
+  side_effects: [moves_player, changes_orientation, uses_block, uses_screen]
+  timeout_ticks: 3600
+  failure_policy: recover
+  recovery_task: movement/recovery/recover_stuck.ktl
+steps:
+  - type: delegate
+    delegate: movement/navigation/move_to_interactable.ktl target.id=${target.id} target.selector=${target.selector} radius=${radius} stop.distance=${stop.distance}
+  - type: run_primitive
+    action: cap.interaction.open_target
+    params: {}
+  - type: return
+    label: processor_opened

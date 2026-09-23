@@ -1,0 +1,77 @@
+=============================================================================================
+    ██╗  ██╗ ██████╗ ██╗██╗       File: koil/logs/latest.log
+    ██║ ██╔╝██╔═══██╗██║██║       ----------------------------------
+    █████╔╝ ██║   ██║██║██║       Minecraft: 1.20.1
+    ██╔═██╗ ██║   ██║██║██║       Fabric Loader: 0.15.9
+    ██║  ██╗╚██████╔╝██║███████╗  Koil: v0.70.25
+    ╚═╝  ╚═╝ ╚═════╝ ╚═╝╚══════╝  -----------------------------------
+=============================================================================================
+
+[-] | [13:44:11] [Start-up thread/Info]: Starting...
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/config.json
+[-] | [13:44:11] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./koil/sys/config.json. Skipping download.
+[-] | [13:44:11] [File-Management thread/Info]: Getting updates for file: config.json from URL: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/config.json
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/config.json
+[-] | [13:44:11] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/koil-temp-file
+[-] | [13:44:11] [File-Management thread/Info]: No new entries found. No update necessary.
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json
+[-] | [13:44:11] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/sys.json
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/koil.json
+[-] | [13:44:11] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./config/koil.json. Skipping download.
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/key.json
+[-] | [13:44:11] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./koil/sys/key.json. Skipping download.
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/catcher.json
+[-] | [13:44:11] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/catcher.json
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/design.json
+[-] | [13:44:11] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./koil/sys/design/default/design.json. Skipping download.
+[-] | [13:44:11] [File-Management thread/Info]: Getting updates for file: design.json from URL: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/design.json
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/design.json
+[-] | [13:44:11] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/design/default/koil-temp-file
+[-] | [13:44:11] [File-Management thread/Info]: No new entries found. No update necessary.
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data.json
+[-] | [13:44:11] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/data.json
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/music.json
+[-] | [13:44:11] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./koil/sys/design/default/files/music.json. Skipping download.
+[-] | [13:44:11] [File-Management thread/Info]: Getting updates for file: music.json from URL: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/music.json
+[-] | [13:44:11] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/music.json
+[-] | [13:44:12] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/design/default/files/koil-temp-file
+[-] | [13:44:12] [File-Management thread/Info]: No new entries found. No update necessary.
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/background.json
+[-] | [13:44:12] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./koil/sys/design/default/files/background.json. Skipping download.
+[-] | [13:44:12] [File-Management thread/Info]: Getting updates for file: background.json from URL: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/background.json
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/content/sys/design/files/background.json
+[-] | [13:44:12] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/design/default/files/koil-temp-file
+[-] | [13:44:12] [File-Management thread/Info]: No new entries found. No update necessary.
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/wiki/help_book.json
+[-] | [13:44:12] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/wiki/help_book.json
+[-] | [13:44:12] [File-Management thread/Info]: Keys match. No download necessary.
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json
+[-] | [13:44:12] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./koil/auth/validDigits.json. Skipping download.
+[-] | [13:44:12] [File-Management thread/Info]: Getting updates for file: validDigits.json from URL: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validDigits.json
+[-] | [13:44:12] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/auth/koil-temp-file
+[-] | [13:44:12] [File-Management thread/Info]: No new entries found. No update necessary.
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json
+[-] | [13:44:12] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./koil/auth/validSerial.json. Skipping download.
+[-] | [13:44:12] [File-Management thread/Info]: Getting updates for file: validSerial.json from URL: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/validSerial.json
+[-] | [13:44:12] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/auth/koil-temp-file
+[-] | [13:44:12] [File-Management thread/Info]: No new entries found. No update necessary.
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json
+[-] | [13:44:12] [File-Management thread/Info]: File already exists at: /home/everest/IdeaProjects/koil/run/./koil/auth/verifiedAuthors.json. Skipping download.
+[-] | [13:44:12] [File-Management thread/Info]: Getting updates for file: verifiedAuthors.json from URL: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/auth/verifiedAuthors.json
+[-] | [13:44:12] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/auth/koil-temp-file
+[-] | [13:44:12] [File-Management thread/Info]: No new entries found. No update necessary.
+[-] | [13:44:12] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data/player_data/Dev/uuid.json
+[*] | [13:44:12] [File-Management thread/Error]: Download failed: java.io.FileNotFoundException: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/data/player_data/Dev/uuid.json
+[-] | [13:44:12] [Start-up thread/Info]: Beginning Initialization Threads...
+[-] | [13:44:12] [Content Registry/Info]: Indexed 1 worlds and 0 Content definitions.
+[-] | [13:44:12] [Content Registry/Info]: Registered 0 startup physical Content holder(s).
+[-] | [13:44:14] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json
+[-] | [13:44:14] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/sys.json
+[-] | [13:44:17] [File-Management thread/Info]: Requesting Online Download for: https://raw.githubusercontent.com/Koil-public/koil-online-data/main/sys.json
+[-] | [13:44:17] [File-Management thread/Info]: Downloaded file to: /home/everest/IdeaProjects/koil/run/./koil/sys/sys.json
+[-] | [13:44:27] [Content Registry/Info]: Indexed 1 worlds and 0 Content definitions.
+[-] | [13:44:27] [Content Registry/Info]: Activated 0 definitions for world New World from 0 enabled world datapacks.
+[~] | [13:47:23] [Shut-down thread/Fatal]: Ending All Processes.

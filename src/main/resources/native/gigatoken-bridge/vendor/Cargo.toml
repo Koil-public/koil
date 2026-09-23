@@ -1,0 +1,27 @@
+# Koil Gigatoken bridge — a thin CLI around the pinned upstream Gigatoken crate.
+#
+# This crate is only a protocol adapter. The tokenizer implementation is
+# entirely upstream marcelroed/gigatoken 0.10.0, pinned by commit
+# fac0114b37120ec8a76362e9ee8e1c742aaafaef. The managed installer places the
+# verified upstream source tree at vendor/gigatoken before building.
+
+[package]
+name = "koil-gigatoken-bridge"
+version = "0.10.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "gigatoken-bridge"
+path = "src/main.rs"
+
+[dependencies]
+gigatoken = { path = "vendor/gigatoken" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

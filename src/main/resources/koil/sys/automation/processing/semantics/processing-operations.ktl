@@ -1,0 +1,8 @@
+version: 2
+kind: semantic_operation_pack
+id: semantics.processing
+operations:
+  - id: sem.processing.cook_item
+    intent: cook_item
+    target_kinds: [item]
+    preferred_templates: [processing/cook/item]

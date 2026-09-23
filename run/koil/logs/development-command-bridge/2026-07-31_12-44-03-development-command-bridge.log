@@ -1,0 +1,11 @@
+=============================================================================================
+    ██╗  ██╗ ██████╗ ██╗██╗       File: /home/everest/IdeaProjects/koil/run/koil/logs/development-command-bridge/latest.log
+    ██║ ██╔╝██╔═══██╗██║██║       ----------------------------------
+    █████╔╝ ██║   ██║██║██║       Minecraft: 1.20.1
+    ██╔═██╗ ██║   ██║██║██║       Fabric Loader: 0.15.9
+    ██║  ██╗╚██████╔╝██║███████╗  Koil: v0.70.25
+    ╚═╝  ╚═╝ ╚═════╝ ╚═╝╚══════╝  -----------------------------------
+=============================================================================================
+
+[-] | [12:42:42] [Development command bridge/Info]: Bridge initialized at /home/everest/IdeaProjects/koil/run/koil/sys/development/command-bridge; developmentEnvironment=true, enabled=true.
+[-] | [12:42:42] [Development command bridge/Info]: Readiness changed: ready=false, reason=No world is loaded.

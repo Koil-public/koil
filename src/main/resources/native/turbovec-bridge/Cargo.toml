@@ -1,0 +1,21 @@
+[package]
+name = "koil-turbovec-bridge"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.89"
+license = "MIT"
+publish = false
+
+[lib]
+name = "koil_turbovec"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "=0.21.1"
+turbovec = { git = "https://github.com/RyanCodrai/turbovec", rev = "ccab9f325e6ce2a270a87daf01ae4e443bcf2d49" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"

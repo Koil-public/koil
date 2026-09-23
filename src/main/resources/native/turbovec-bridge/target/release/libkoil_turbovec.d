@@ -1,0 +1,1 @@
+/Users/default/Downloads/MC\ mods/koil/src/main/resources/native/turbovec-bridge/target/release/libkoil_turbovec.dylib: /Users/default/Downloads/MC\ mods/koil/src/main/resources/native/turbovec-bridge/src/lib.rs
