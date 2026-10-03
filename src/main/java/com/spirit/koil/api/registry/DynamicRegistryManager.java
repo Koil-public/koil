@@ -1,6 +1,7 @@
 package com.spirit.koil.api.registry;
 
 import com.spirit.koil.api.registry.definition.ContentDefinition;
+import com.spirit.koil.api.jmixin.DatapackGate;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.MinecraftServer;
@@ -156,6 +157,7 @@ public final class DynamicRegistryManager {
     }
 
     private synchronized void activateServerWorld(MinecraftServer server, String reason) {
+        DatapackGate.update(server);
         WorldContentIndex.ActiveWorldSnapshot previousSnapshot = runtimeStore.snapshot();
         Map<String, WorldContentIndex.DefinitionEntry> previousDefinitions =
                 Map.copyOf(runtimeStore.definitions());
@@ -198,6 +200,7 @@ public final class DynamicRegistryManager {
     }
 
     private synchronized void deactivateWorld() {
+        DatapackGate.clear();
         WorldContentIndex.ActiveWorldSnapshot previousSnapshot = runtimeStore.snapshot();
         Map<String, WorldContentIndex.DefinitionEntry> previousDefinitions =
                 Map.copyOf(runtimeStore.definitions());

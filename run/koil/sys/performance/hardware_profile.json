@@ -1,5 +1,5 @@
 {
-  "scannedAtMillis": 1785505775429,
+  "scannedAtMillis": 1790974700322,
   "operatingSystem": "Linux 6.12.95+deb13-amd64",
   "architecture": "amd64",
   "cpuThreads": 8,
@@ -7,13 +7,13 @@
   "gpuVendor": "NVIDIA Corporation",
   "gpuRenderer": "NVIDIA GeForce RTX 2070/PCIe/SSE2",
   "gpuVersion": "3.2.0 NVIDIA 580.142",
-  "vramStatus": "unknown",
-  "storageProbeMbPerSecond": 1827.5,
+  "vramStatus": "unavailable",
+  "storageProbeMbPerSecond": 617.4,
   "monitorWidth": 2016,
-  "monitorHeight": 1109,
+  "monitorHeight": 1134,
   "refreshRate": 165,
   "batteryStatus": "unknown",
-  "minecraftVersion": "0.70.26-unfinished.12",
+  "minecraftVersion": "1.20.1",
   "loadedMods": [
     "fabric-api-base@0.4.30+7abfd51577",
     "fabric-api-lookup-api-v1@1.6.35+4d8536c977",
@@ -69,11 +69,11 @@
     "fabric-sound-api-v1@1.0.12+b3afc78b77",
     "fabric-transfer-api-v1@3.3.3+c81d263177",
     "fabric-transitive-access-wideners-v1@4.3.0+6c31357e77",
-    "fabricloader@0.15.9",
+    "fabricloader@0.16.10",
     "java@17",
-    "koil@0.70.26-unfinished.12",
+    "koil@0.70.26-unfinished.14",
     "minecraft@1.20.1",
-    "mixinextras@0.3.5"
+    "mixinextras@0.4.1"
   ],
   "optimizationMods": [],
   "enabledResourcePacks": [
